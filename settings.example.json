@@ -1,0 +1,24 @@
+// OPTIONAL belt-and-suspenders. Copy to .claude/settings.json yourself if you
+// want test-tamper protection enforced at the PERMISSION layer in addition to
+// loop.ps1's SHA-256 gate (which is the authoritative check and needs no config).
+//
+// loop.ps1 already passes the `allow` tools as --allowedTools CLI flags, so the
+// loop runs unattended WITHOUT this file. This only adds the `deny` rules.
+//
+//   cp settings.example.json .claude/settings.json
+//
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(bun test)",
+      "Bash(bun test:*)"
+    ],
+    "deny": [
+      "Edit(src/roman.test.ts)",
+      "Write(src/roman.test.ts)"
+    ]
+  }
+}

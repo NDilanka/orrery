@@ -1,0 +1,4 @@
+node_modules/
+.loop/log.jsonl
+*.log
+bun.lockb
