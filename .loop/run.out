@@ -1,3 +1,7 @@
 Baseline: 0 pass / 3 fail  green=False  tests=3
 
 === iteration 1 / 15  (cum $0) ===
+  -> 3/3 pass  iter_cost=$0.283072  cum=$0.2831
+
+[OK] all tests green at iter 1
+    iters=1  cumulative=$0.2831
