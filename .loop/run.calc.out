@@ -1,3 +1,7 @@
 Baseline: 3/9 pass  green=False  task=TASK.calc.md
 
 === iteration 1/8  (cum $0  best 3/9) ===
+  -> 9/9 pass  iter_cost=$0.30258599999999997  cum=$0.3026  [stop]
+
+[OK] all tests green at iter 1
+    iters=1  cumulative=$0.3026  bestPass=3/9
