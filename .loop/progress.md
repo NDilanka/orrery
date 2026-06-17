@@ -1,19 +1,26 @@
 # Progress
 
-## Status: DONE
+## Status: DONE (TASK.calc.md) — bun test green
 
 ## Done
-- Replaced naive additive `toRoman` with a value/symbol table (high→low,
-  including subtractive forms CM/CD/XC/XL/IX/IV) using greedy subtraction.
-- Implemented `fromRoman` by scanning the same table in order, consuming each
-  symbol with `startsWith(symbol, i)`.
-- `bun test`: 3 pass, 0 fail (4025 expect() calls). All three original tests
-  present and unmodified.
+- Replaced the `Number(expr)` stub in `src/calc.ts` with a precedence-climbing
+  recursive-descent parser:
+  - `expr` = `+ -` (left-assoc) over `term`
+  - `term` = `* /` (left-assoc, real division) over `power`
+  - `power` = `^` right-associative, binds above `* /`
+  - `unary` = leading `-`
+  - `primary` = number | `( expr )`
+  - whitespace skipped between tokens; throws on trailing/unexpected input.
+- Did NOT touch `src/roman.*` or any `*.test.ts`.
+
+## Result
+`bun test`: 9 pass / 0 fail (6 calc + 3 roman). All original tests present
+and unmodified.
 
 ## Failing / Next
-Nothing failing. Definition of done met (0 failures, all tests intact).
+Nothing failing. Task complete. If extending: add support for decimals in
+input is already handled; could add modulo/`%` or function calls if a future
+TASK requires it.
 
 ## Notes
-This file is the loop's memory. Each iteration runs with FRESH context (no
-session resume), so the only state that survives is what is written here, in
-git history, and in .loop/log.jsonl. Keep this concise and current.
+calc is independent of roman, so no regression risk across modules.
