@@ -150,6 +150,7 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   # 6. ACT on the verdict
   switch ($dec.Action) {
     'stop' {
+      if ($g.Pass -gt $BestPass) { $BestPass = $g.Pass }   # keep summary/log accurate on one-shot green
       if ($dec.Green -and $UseGit -and $changed) {
         git add -A *>$null; git commit -q -m "loop $($script:Iter): GREEN $($g.Pass)/$($g.Total)" *>$null
       }
