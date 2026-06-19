@@ -601,3 +601,96 @@ function New-HandoffEvent {
     consecutive = $Consecutive
   }
 }
+
+# ===========================================================================
+# E4: RESILIENCE — pure cores for per-iteration timeout, consecutive-failure
+# recover-once -> handoff, and the plateau trend-alert.
+#
+# The real spawn+kill (Invoke-ClaudeExecute) and the real timer live in an
+# ISOLATED wrapper in loop.ps1 so tests stub it (no real claude, no real wait).
+# Everything decidable WITHOUT a process or a clock lives here and is
+# unit-tested by selftest-resilience.ps1.
+# ===========================================================================
+
+function New-PhaseTimeoutEvent {
+  # PURE. Build the EXACT PROTOCOL §2 `phase-timeout` event object:
+  #   { "event": "phase-timeout", "label": string, "timeoutSec": int }
+  # Raised when an iteration's claude call is killed for exceeding its wall-clock
+  # budget. label = e.g. "iter 4"; timeoutSec = the budget that was breached.
+  param([string] $Label, [int] $TimeoutSec)
+  [pscustomobject]@{
+    event      = 'phase-timeout'
+    label      = $Label
+    timeoutSec = $TimeoutSec
+  }
+}
+
+function New-PlateauEvent {
+  # PURE. Build the EXACT PROTOCOL §2 `plateau` event object:
+  #   { "event": "plateau", "item"?: string, "k": int }
+  # Raised ONCE when a plateau episode is first detected (pass-count flat across
+  # K changed-but-no-gain iters). k = the plateau run length at first detection.
+  param([string] $Item, [int] $K)
+  [pscustomobject]@{
+    event = 'plateau'
+    item  = $Item
+    k     = $K
+  }
+}
+
+function Update-ConsecutiveFail {
+  # PURE consecutive-failure tracker — a small addition to the decision inputs.
+  # Counts CONSECUTIVE non-green iterations that made NO net progress (pass count
+  # did not exceed the best seen so far). After -Limit such iters we do ONE
+  # "recover" attempt; if the very next iter ALSO fails-with-no-progress, the
+  # budget is exhausted and the loop must hand off.
+  #
+  # State carried between iters: -Count (consecutive fails so far) and -Recovered
+  # (whether the one-shot recover has already been spent for THIS streak).
+  #
+  # This iter's outcome is supplied as -Green and -MadeProgress (pass > best).
+  # A green OR a progress iter RESETS the streak (and re-arms the recover token).
+  #
+  # Returns @{ Count; Recovered; Recover=<bool>; Handoff=<bool>; Reason=<str> }
+  #   Recover = $true  -> take the ONE recover action this iter (reset-to-best hint)
+  #   Handoff = $true  -> recover already spent and still failing -> raise handoff
+  # Recover and Handoff are mutually exclusive. Defaults (Limit=3) never fire on a
+  # progressing/green run, so existing selftest outcomes are unchanged.
+  param(
+    [bool] $Green,
+    [bool] $MadeProgress,
+    [int]  $Count = 0,
+    [bool] $Recovered = $false,
+    [int]  $Limit = 3
+  )
+  # A good iteration (green or net progress) clears the streak entirely.
+  if ($Green -or $MadeProgress) {
+    return [pscustomobject]@{ Count = 0; Recovered = $false; Recover = $false; Handoff = $false; Reason = '' }
+  }
+
+  $count   = $Count + 1
+  $recover = $false
+  $handoff = $false
+  $reason  = ''
+
+  if ($count -ge $Limit) {
+    if (-not $Recovered) {
+      # First time we hit the limit: spend the ONE recover attempt.
+      $recover   = $true
+      $Recovered = $true
+      $reason    = "consecutive no-progress failures ($count/$Limit) — recover-once"
+    } else {
+      # Recover already spent and we are STILL failing -> hand off.
+      $handoff = $true
+      $reason  = "consecutive no-progress failures ($count) after recover — handoff"
+    }
+  }
+
+  [pscustomobject]@{
+    Count     = $count
+    Recovered = $Recovered
+    Recover   = $recover
+    Handoff   = $handoff
+    Reason    = $reason
+  }
+}

@@ -83,6 +83,8 @@ param(
   [switch]    $NoQuotaWait,            # E3: disable wait-and-resume (fail fast on a limit)
   [int]       $MaxQuotaWaits = 30,     # E3: give-up backstop on repeated quota waits
   [int]       $DefaultQuotaWaitMin = 30, # E3: wait minutes when no reset time is parseable
+  [int]       $IterTimeoutMin = 0,     # E4: per-iteration wall-clock cap (0 = disabled; >0 kills a hung claude)
+  [int]       $ConsecutiveFailLimit = 3, # E4: consecutive no-progress iters -> recover-once -> handoff
   [switch]   $DryRun,
   [switch]   $Fresh,
   [switch]   $AllowConcurrent
@@ -168,6 +170,41 @@ function Invoke-QuotaProbe {
 function Start-QuotaSleep([int]$Seconds) {
   # ISOLATED real sleep. Tests override this with a no-op so zero real time passes.
   Start-Sleep -Seconds $Seconds
+}
+
+# --- E4: per-iteration wall-clock timeout ----------------------------------
+# The ONE place the main execute call spawns a real `claude` process AND the ONE
+# place a real wall-clock timer runs. Isolated so selftest-resilience.ps1 stubs
+# it (no real claude, no real WaitForExit). Adapted from bmad-loop.ps1's
+# Invoke-ClaudeTimed: spawn detached, async-read stdout, WaitForExit(ms); on
+# breach kill the WHOLE process tree (taskkill /T /F) and report timedOut.
+#
+# Returns @{ Raw=<stdout string>; TimedOut=<bool> }. When -TimeoutSec <= 0 the
+# wait is unbounded (timeout disabled) — preserves pre-E4 behavior exactly.
+function Invoke-ClaudeExecute {
+  param([string[]] $CliArgs, [int] $TimeoutSec = 0)
+  $claudeExe = (Get-Command claude -ErrorAction SilentlyContinue).Source
+  if (-not $claudeExe) { $claudeExe = 'claude' }
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $claudeExe; $psi.WorkingDirectory = $PSScriptRoot
+  foreach ($a in $CliArgs) { [void]$psi.ArgumentList.Add($a) }
+  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $outTask = $proc.StandardOutput.ReadToEndAsync()
+  if ($TimeoutSec -gt 0) {
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+      # Hung past the budget — kill the whole tree so no orphaned child lingers.
+      try { taskkill /T /F /PID $proc.Id *>$null } catch {}
+      try { $proc.Kill() } catch {}
+      return @{ Raw = ''; TimedOut = $true }
+    }
+  } else {
+    $proc.WaitForExit()
+  }
+  $raw = ''
+  try { $raw = $outTask.Result } catch {}
+  return @{ Raw = $raw; TimedOut = $false }
 }
 
 function Wait-ForQuota([string]$Label) {
@@ -319,6 +356,11 @@ $Stale       = 0
 $Plateau     = 0
 $RegressCount = 0
 $AlertFired  = @()              # cost thresholds already fired (each fires once)
+# E4 resilience state:
+$IterTimeoutSec = if ($IterTimeoutMin -gt 0) { $IterTimeoutMin * 60 } else { 0 }
+$ConsecFail     = 0            # consecutive non-green / no-net-progress iters
+$ConsecRecovered = $false     # whether the one-shot recover has been spent this streak
+$PlateauAlerted  = $false     # plateau trend-alert is one-shot per plateau episode
 $script:LastQuota = $null       # E3: last quota probe result (set by Invoke-QuotaProbe)
 $script:CurStage  = 'preflight' # E3: coarse stage label for the checkpoint
 # E3: branch + merge-base for the checkpoint. The generic single-goal loop has no
@@ -410,6 +452,8 @@ if ($DryRun) {
   Write-Host "`nDryRun OK — gate wired. git=$UseGit  bestPass=$BestPass  testHash=$($TestHash0.Substring(0,12))..."
   Write-Host "    stages=[$stageNames]  lockGlob=$LockGlob  lockedFiles=$($HashMap0.Count)  tools=$($AllowedTools.Count)  permMode=$PermissionMode  maxTurns=$MaxTurns"
   Write-Host "    models: execute=$ExecuteModel  judge=$JudgeModel   verify=$([bool]$Verify)  contractCriteria=$($FrozenContract.Count)"
+  $itLabel = if ($IterTimeoutSec -gt 0) { "${IterTimeoutMin}m" } else { 'off' }
+  Write-Host "    resilience: iterTimeout=$itLabel  consecutiveFailLimit=$ConsecutiveFailLimit"
   Write-Host "No claude calls, no quota spent." -ForegroundColor Cyan
   exit 0
 }
@@ -450,8 +494,20 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
     '--allowedTools'
   ) + $toolArgs
   $res = $null
+  $iterTimedOut = $false
   while ($true) {
-    $rawText = & claude @cliArgs 2>$null | Out-String
+    # E4: spawn the execute call through the isolated wrapper so a hung claude is
+    # killed after $IterTimeoutSec (0 = unbounded / disabled). A timeout is a
+    # NON-PRODUCTIVE iteration (no crash): emit phase-timeout and fall through.
+    $exec    = Invoke-ClaudeExecute -CliArgs $cliArgs -TimeoutSec $IterTimeoutSec
+    if ($exec.TimedOut) {
+      Write-Log (New-PhaseTimeoutEvent -Label "iter $($script:Iter)" -TimeoutSec $IterTimeoutSec)
+      Write-Host "  [TIMEOUT] iter $($script:Iter) exceeded $([int]($IterTimeoutSec/60))m — killed (hung claude)" -ForegroundColor Red
+      $iterTimedOut = $true
+      $res = $null
+      break   # treat as non-productive: no cost, gate runs on the unchanged tree
+    }
+    $rawText = ("" + $exec.Raw)
     $parsed = $null
     try { $parsed = $rawText | ConvertFrom-Json } catch { $parsed = $null }
     $callFailed = ($null -eq $parsed) -or ($parsed.is_error -eq $true)
@@ -502,7 +558,17 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
 
   # update drift counters before asking for a verdict
   if (-not $changed) { $Stale++ } else { $Stale = 0 }
-  if ($changed -and $g.Pass -eq $BestPass) { $Plateau++ } elseif ($g.Pass -ne $BestPass) { $Plateau = 0 }
+  if ($changed -and $g.Pass -eq $BestPass) { $Plateau++ } elseif ($g.Pass -ne $BestPass) { $Plateau = 0; $PlateauAlerted = $false }
+
+  # E4: PLATEAU trend-alert. The decision core already detects the plateau STOP;
+  # here we emit a `plateau` event the FIRST time an episode is detected (pass
+  # count flat across PlateauLimit changed iters). One-shot per episode — the
+  # flag is re-armed above whenever the pass count moves off the plateau.
+  if ($Plateau -ge $PlateauLimit -and -not $PlateauAlerted) {
+    $PlateauAlerted = $true
+    Write-Log (New-PlateauEvent -Item $script:Item -K $Plateau)
+    Write-Host "  [PLATEAU] $($script:Item): pass-count flat across $Plateau changed iters" -ForegroundColor DarkYellow
+  }
 
   $dec = Get-LoopDecision -Green $g.Green -Tampered $tampered -CountDropped $countDropped `
            -Blocked $blocked -Pass $g.Pass -BestPass $BestPass -Changed $changed `
@@ -513,6 +579,29 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
 
   # Surface the named-file tamper reason in the log/handoff when it fired.
   if ($tampered) { $dec = [pscustomobject]@{ Action=$dec.Action; Green=$dec.Green; Reason=$tamper.Reason } }
+
+  # E4: CONSECUTIVE-FAILURE -> recover-once -> handoff. A pure addition to the
+  # decision inputs: count consecutive non-green iters that made NO net progress
+  # (a timeout iter is one such failure). After ConsecutiveFailLimit, take ONE
+  # recover action (reset-to-best hint fed back); if it STILL fails, hand off.
+  # Only overrides a 'continue'/'rollback' verdict — a stronger stop (green,
+  # tamper, cost, regress-handoff, stagnation, plateau, max-iters) always wins.
+  $madeProgress = ($g.Pass -gt $BestPass)
+  $cf = Update-ConsecutiveFail -Green $g.Green -MadeProgress $madeProgress `
+          -Count $ConsecFail -Recovered $ConsecRecovered -Limit $ConsecutiveFailLimit
+  $ConsecFail      = $cf.Count
+  $ConsecRecovered = $cf.Recovered
+  if ($dec.Action -in @('continue', 'rollback')) {
+    if ($cf.Handoff) {
+      Write-Log (New-HandoffEvent -Item $script:Item -Reason $cf.Reason -Consecutive $cf.Count)
+      Write-Host "  [HANDOFF] $($script:Item): $($cf.Reason)" -ForegroundColor Yellow
+      $dec = [pscustomobject]@{ Action='stop'; Green=$false; Reason=$cf.Reason }
+    } elseif ($cf.Recover) {
+      Write-Host "  [RECOVER] $($cf.Reason) — resetting to best-known-good and retrying once" -ForegroundColor DarkYellow
+      if ($UseGit -and $BestCommit) { git reset --hard $BestCommit *>$null }
+      Add-Content -Path "$StateDir/progress.md" -Value "`n## Recover hint (iter $($script:Iter))`nStuck after $($cf.Count) no-progress iters. Tree was reset to the best-known-good ($BestPass/$BaseTotal). Re-read $TaskFile and the FIRST failing assertion and try a DIFFERENT minimal fix."
+    }
+  }
 
   Write-Log @{ event="iter"; iter=$script:Iter; cost=[double]$res.total_cost_usd; cum=$script:Cum;
                pass=$g.Pass; total=$g.Total; best=$BestPass; changed=$changed;
