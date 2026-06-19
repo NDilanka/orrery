@@ -99,4 +99,15 @@ export class TauriTransport implements Transport {
         console.warn(`[tauri] unknown control action "${action}"`);
     }
   }
+
+  // A8 — answer a pending review/retro question. Writes the engine's answer.json
+  // inbox via the Rust command (PROTOCOL §6 `answer_question`). Inert until the
+  // engine/script reads it; the resulting `review-answer` flows back over the
+  // watch Channel and the reducer reflects it.
+  async answer(qid: string, text: string): Promise<void> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const loopId = this.cfg.loopId;
+    const loopsDir = this.cfg.loopsDir ?? DEFAULT_LOOPS_DIR;
+    await invoke('answer_question', { loopId, loopsDir, qid, text });
+  }
 }

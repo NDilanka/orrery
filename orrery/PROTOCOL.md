@@ -188,7 +188,9 @@ list_loops() -> LoopDef[]                                       // from loops/<i
 start_loop(loopId, loopsDir, overrides?) -> { pid } | Err('AlreadyRunning'|...)
 stop_loop(loopId, loopsDir, mode) -> ()   cancel_stop(loopId, loopsDir) -> ()   resume_loop(loopId, loopsDir) -> ()
 guard_status(loopId, loopsDir) -> { running: bool, pid: number|null, stopPending, checkpoint }
-answer_question(loopId, qid, text) -> ()                        // stretch
+answer_question(loopId, loopsDir, qid, text) -> ()   // A8 — writes <stateDir>/answer.json {qid,kind:'review',a:text}
+// A7 — LAN reach: serves the built SPA + /ws Delta stream + token-gated POST /api/control
+start_lan_server(loopsDir, port?) -> { url, token }   stop_lan_server() -> ()
 ```
 
 For dev/replay without Tauri, the frontend also accepts a plain array of events fed through `reduce.ts`.

@@ -45,6 +45,13 @@ export interface PlaybackState {
   done: boolean; // cursor === total
 }
 
+/** A notable event pinned on the Rewind timeline (verdict / strike / quota …). */
+export interface TimelineMarker {
+  index: number; // cursor position (0..total)
+  kind: 'verdict-pass' | 'verdict-fail' | 'rollback' | 'quota' | 'stop' | 'pr' | 'handoff';
+  label: string;
+}
+
 /** A transport that can be scrubbed/played (the dev replay). */
 export interface PlaybackTransport extends Transport {
   onPlayback(cb: (s: PlaybackState) => void): void;
@@ -55,6 +62,8 @@ export interface PlaybackTransport extends Transport {
   /** scrub to an absolute cursor (0..total); re-reduces the prefix. */
   seek(cursor: number): void;
   restart(): void;
+  /** notable events pinned on the Rewind timeline (verdicts/strikes/quota…). */
+  markers(): TimelineMarker[];
 }
 
 export function isPlayback(t: Transport | null): t is PlaybackTransport {
@@ -150,6 +159,43 @@ export class ReplayTransport implements PlaybackTransport {
     this.play();
   }
 
+  // Rewind timeline pins: scan the (immutable) event list once for notable
+  // events. The cursor index +1 is used so seeking to a marker lands the run
+  // just AFTER that event applies (so its effect is visible).
+  markers(): TimelineMarker[] {
+    const out: TimelineMarker[] = [];
+    this.events.forEach((ev, i) => {
+      const at = i + 1;
+      switch (ev.event) {
+        case 'verdict':
+          out.push({
+            index: at,
+            kind: ev.pass === true ? 'verdict-pass' : 'verdict-fail',
+            label: `${ev.pass === true ? 'sealed' : 'refuted'} · ${ev.item ?? 'item'}`,
+          });
+          break;
+        case 'rollback':
+          out.push({ index: at, kind: 'rollback', label: `rollback · strike ${ev.strike ?? ''}` });
+          break;
+        case 'quota-hit':
+        case 'quota-wait':
+          out.push({ index: at, kind: 'quota', label: `quota · ${ev.label ?? 'wait'}` });
+          break;
+        case 'handoff':
+          out.push({ index: at, kind: 'handoff', label: `handoff · ${ev.reason ?? ''}` });
+          break;
+        case 'pr-merged':
+          out.push({ index: at, kind: 'pr', label: `merged · ${ev.story ?? ''}` });
+          break;
+        case 'stop':
+        case 'cooperative-stop':
+          out.push({ index: at, kind: 'stop', label: `stop · ${ev.reason ?? ev.mode ?? ''}` });
+          break;
+      }
+    });
+    return out;
+  }
+
   private schedule(): void {
     if (!this.playing) return;
     if (this.cursor >= this.events.length) {
@@ -204,6 +250,13 @@ export class ReplayTransport implements PlaybackTransport {
   async control(action: string): Promise<void> {
     // eslint-disable-next-line no-console
     console.info(`[replay] control "${action}" is a no-op in dev replay.`);
+  }
+
+  // A8 — answering is inert in dev replay (no live engine to receive the inbox).
+  // We resolve gracefully so the QA console can still validate + clear its input.
+  async answer(qid: string, text: string): Promise<void> {
+    // eslint-disable-next-line no-console
+    console.info(`[replay] answer "${qid}" (${text.length} chars) is a no-op in dev replay.`);
   }
 }
 

@@ -29,4 +29,9 @@ regex = "1"
 serde_yaml = "0.9"
 sysinfo = "0.32"
 chrono = { version = "0.4", features = ["serde"] }
+# A7 — opt-in LAN server (axum + tokio + tower-http static fs). Random token via getrandom.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["fs"] }
+getrandom = "0.2"
 

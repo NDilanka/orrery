@@ -103,6 +103,12 @@ fn reduce_all(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> RunSta
     reducer.state
 }
 
+/// Public wrapper so the LAN server (`lan.rs`) can run the SAME tail→reduce pipeline `watch_run`
+/// uses for its `/ws` snapshot + state deltas. Pure read of the loop's files → `RunState`.
+pub fn reduce_all_pub(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> RunState {
+    reduce_all(state_dir, adapter, log_file)
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -186,6 +192,135 @@ pub fn list_loops(loops_dir: String) -> Result<Vec<LoopDef>, String> {
     // stable order by id
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
+}
+
+// ===========================================================================
+// A5 — LOOP CRUD (create / update / clone / delete)
+// ===========================================================================
+//
+// The Tuning Console authors a loop.json and persists it under `loops/<id>/`.
+// These commands are the write-side mirror of `list_loops`: they take the same
+// `loops_dir` and produce/replace `loops/<id>/loop.json` (camelCase on the wire,
+// guaranteed by `LoopDef`'s serde rename_all). All writes validate the id is a
+// filesystem-safe single path component and (for create/clone) unique.
+//
+// SECURITY: the id becomes a directory name. We refuse anything that is not a
+// plain `[a-z0-9_-]`-ish token so a console value can never traverse the tree
+// or smuggle a path separator. The console may send an arbitrary `engine`
+// object — that's data the engine config reads, never a command we execute.
+
+/// Is `id` a safe single path component usable as a loop directory name?
+/// Allowed: ASCII letters, digits, `-`, `_`. Length 1..=64. No `.`/`/`/`\\`.
+fn is_safe_loop_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 64 {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Path to a loop's `loop.json` under `loops_dir`. Caller must have validated id.
+fn loop_json_path(loops_dir: &Path, id: &str) -> PathBuf {
+    loops_dir.join(id).join("loop.json")
+}
+
+/// Force a serialized `LoopDef`'s `id` field, parse it, and write it to disk as
+/// pretty camelCase JSON. Returns the parsed `LoopDef`. Shared by create/clone.
+fn write_loop_def(loops_dir: &Path, id: &str, mut def: Value) -> Result<LoopDef, String> {
+    // The on-disk id is authoritative — overwrite whatever the payload claimed so
+    // the directory name and `def.id` can never disagree.
+    if let Value::Object(map) = &mut def {
+        map.insert("id".to_string(), Value::String(id.to_string()));
+    } else {
+        return Err("loop definition must be a JSON object".to_string());
+    }
+
+    // Validate the shape NOW (before touching the disk) by parsing into LoopDef.
+    let parsed: LoopDef = serde_json::from_value(def.clone())
+        .map_err(|e| format!("invalid loop definition: {e}"))?;
+
+    let dir = loops_dir.join(id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir:?}: {e}"))?;
+    let path = loop_json_path(loops_dir, id);
+    // Re-serialize from the validated LoopDef so the file is canonical camelCase
+    // (drops unknown keys, applies skip_serializing_if). Pretty-printed for humans.
+    let json = serde_json::to_string_pretty(&parsed)
+        .map_err(|e| format!("serialize {id}: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write {path:?}: {e}"))?;
+    Ok(parsed)
+}
+
+/// `create_loop(loopsDir, def)` — validate the id is filesystem-safe + unique,
+/// then write `loops/<id>/loop.json`. Returns the canonicalized `LoopDef`.
+#[tauri::command]
+pub fn create_loop(loops_dir: String, def: Value) -> Result<LoopDef, String> {
+    let loops = PathBuf::from(&loops_dir);
+    // pull the id out of the payload to validate it
+    let id = def
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "loop definition is missing a string `id`".to_string())?;
+    if !is_safe_loop_id(&id) {
+        return Err(format!(
+            "invalid loop id {id:?}: use letters, digits, '-' or '_' (1-64 chars)"
+        ));
+    }
+    if loop_json_path(&loops, &id).exists() {
+        return Err(format!("a loop with id {id:?} already exists"));
+    }
+    write_loop_def(&loops, &id, def)
+}
+
+/// `update_loop(loopsDir, id, def)` — overwrite an existing `loops/<id>/loop.json`.
+/// The loop must already exist (use create_loop for new ones).
+#[tauri::command]
+pub fn update_loop(loops_dir: String, id: String, def: Value) -> Result<(), String> {
+    if !is_safe_loop_id(&id) {
+        return Err(format!("invalid loop id {id:?}"));
+    }
+    let loops = PathBuf::from(&loops_dir);
+    if !loop_json_path(&loops, &id).exists() {
+        return Err(format!("loop {id:?} does not exist (use create_loop)"));
+    }
+    write_loop_def(&loops, &id, def)?;
+    Ok(())
+}
+
+/// `clone_loop(loopsDir, id, newId)` — read an existing loop.json, re-id it, and
+/// write it as a brand-new loop. `newId` must be safe + unique.
+#[tauri::command]
+pub fn clone_loop(loops_dir: String, id: String, new_id: String) -> Result<LoopDef, String> {
+    if !is_safe_loop_id(&id) {
+        return Err(format!("invalid source loop id {id:?}"));
+    }
+    if !is_safe_loop_id(&new_id) {
+        return Err(format!("invalid new loop id {new_id:?}"));
+    }
+    let loops = PathBuf::from(&loops_dir);
+    let src = loop_json_path(&loops, &id);
+    let text = std::fs::read_to_string(&src).map_err(|e| format!("read {src:?}: {e}"))?;
+    let def: Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse {src:?}: {e}"))?;
+    if loop_json_path(&loops, &new_id).exists() {
+        return Err(format!("a loop with id {new_id:?} already exists"));
+    }
+    write_loop_def(&loops, &new_id, def)
+}
+
+/// `delete_loop(loopsDir, id)` — remove `loops/<id>/` and its loop.json. Idempotent
+/// on a missing directory. Only ever removes a single validated loop directory.
+#[tauri::command]
+pub fn delete_loop(loops_dir: String, id: String) -> Result<(), String> {
+    if !is_safe_loop_id(&id) {
+        return Err(format!("invalid loop id {id:?}"));
+    }
+    let dir = PathBuf::from(&loops_dir).join(&id);
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {dir:?}: {e}")),
+    }
 }
 
 // ===========================================================================
@@ -352,9 +487,10 @@ fn spawn_detached(
 }
 
 /// Shared start path: run the guard, spawn, record PID. `spec` is taken from loop.json (or
-/// a resume command); never from arbitrary frontend input.
+/// a resume command); never from arbitrary frontend input. `pids` is optional so the LAN route
+/// (which has no desktop `LoopPids` state) can reuse the same guard+spawn path.
 fn start_with_spec(
-    pids: &LoopPids,
+    pids: Option<&LoopPids>,
     loop_id: &str,
     def: &LoopDef,
     spec: &StartSpec,
@@ -365,10 +501,63 @@ fn start_with_spec(
     }
     let state_dir = state_dir_of(def);
     let pid = spawn_detached(&state_dir, &spec.program, &spec.args)?;
-    if let Ok(mut map) = pids.0.lock() {
-        map.insert(loop_id.to_string(), pid);
+    if let Some(pids) = pids {
+        if let Ok(mut map) = pids.0.lock() {
+            map.insert(loop_id.to_string(), pid);
+        }
     }
     Ok(StartResult { pid })
+}
+
+/// Core of `start_loop` without Tauri `LoopPids` state — used by the LAN `/api/control` route.
+/// Runs the concurrency guard and spawns the loop's own declared start command. Returns the PID.
+pub fn start_loop_core(loop_id: &str, loops_dir: &str) -> Result<u32, String> {
+    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
+    let spec = def
+        .start
+        .clone()
+        .ok_or_else(|| format!("loop {loop_id} has no start command"))?;
+    start_with_spec(None, loop_id, &def, &spec).map(|r| r.pid)
+}
+
+/// Core of `resume_loop` without Tauri state — prefers the checkpoint resume command, else start.
+pub fn resume_loop_core(loop_id: &str, loops_dir: &str) -> Result<u32, String> {
+    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
+    let spec = match read_checkpoint(&def).and_then(|c| c.resume) {
+        Some(resume) if !resume.trim().is_empty() => parse_command_string(&resume)?,
+        _ => def
+            .start
+            .clone()
+            .ok_or_else(|| format!("loop {loop_id} has neither resume nor start command"))?,
+    };
+    start_with_spec(None, loop_id, &def, &spec).map(|r| r.pid)
+}
+
+/// A8 — core of `answer_question`. Resolve the loop's stateDir and write the PROTOCOL §1 answer
+/// inbox `<stateDir>/answer.json = { "qid": qid, "kind": "review", "a": text }`. The engine (E5,
+/// `loopcore.ps1` Read-AnswerInbox) reads + consumes this. `kind` is fixed to "review" per the
+/// task; the engine matches on `qid` (or an untargeted answer) regardless.
+pub fn answer_question_core(
+    loop_id: &str,
+    loops_dir: &str,
+    qid: &str,
+    text: &str,
+) -> Result<(), String> {
+    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
+    let state_dir = state_dir_of(&def);
+    std::fs::create_dir_all(&state_dir)
+        .map_err(|e| format!("create stateDir {state_dir:?}: {e}"))?;
+    let path = state_dir.join("answer.json");
+    // Exact §1 shape; serde_json escapes the strings safely.
+    let body = serde_json::json!({
+        "qid": qid,
+        "kind": "review",
+        "a": text,
+    });
+    let json = serde_json::to_string_pretty(&body)
+        .map_err(|e| format!("serialize answer.json: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write {path:?}: {e}"))?;
+    Ok(())
 }
 
 /// Parse a shell command string (the checkpoint `resume`) into program + args. Handles
@@ -445,22 +634,18 @@ pub fn start_loop(
         .start
         .clone()
         .ok_or_else(|| format!("loop {loop_id} has no start command"))?;
-    start_with_spec(&pids, &loop_id, &def, &spec)
+    start_with_spec(Some(&pids), &loop_id, &def, &spec)
 }
 
-#[tauri::command]
-pub fn stop_loop(
-    loop_id: String,
-    loops_dir: String,
-    mode: String,
-    _pids: tauri::State<'_, LoopPids>,
-) -> Result<(), String> {
+/// Core of `stop_loop`, shared by the Tauri command and the LAN `/api/control` route. Validates
+/// `mode ∈ {phase,story,now}` and writes the STOP flag (stop-loop.ps1 parity). No Tauri state.
+pub fn stop_loop_core(loop_id: &str, loops_dir: &str, mode: &str) -> Result<(), String> {
     // SECURITY: validate mode ∈ {phase,story,now}.
     let mode = mode.trim().to_lowercase();
     if !matches!(mode.as_str(), "phase" | "story" | "now") {
         return Err(format!("invalid stop mode: {mode:?} (expected phase|story|now)"));
     }
-    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
     let flag = stop_flag_path(&def);
     if let Some(parent) = flag.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {parent:?}: {e}"))?;
@@ -470,19 +655,34 @@ pub fn stop_loop(
     Ok(())
 }
 
-#[tauri::command]
-pub fn cancel_stop(
-    loop_id: String,
-    loops_dir: String,
-    _pids: tauri::State<'_, LoopPids>,
-) -> Result<(), String> {
-    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+/// Core of `cancel_stop`: delete the STOP flag (idempotent on absence).
+pub fn cancel_stop_core(loop_id: &str, loops_dir: &str) -> Result<(), String> {
+    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
     let flag = stop_flag_path(&def);
     match std::fs::remove_file(&flag) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // already clear
         Err(e) => Err(format!("remove {flag:?}: {e}")),
     }
+}
+
+#[tauri::command]
+pub fn stop_loop(
+    loop_id: String,
+    loops_dir: String,
+    mode: String,
+    _pids: tauri::State<'_, LoopPids>,
+) -> Result<(), String> {
+    stop_loop_core(&loop_id, &loops_dir, &mode)
+}
+
+#[tauri::command]
+pub fn cancel_stop(
+    loop_id: String,
+    loops_dir: String,
+    _pids: tauri::State<'_, LoopPids>,
+) -> Result<(), String> {
+    cancel_stop_core(&loop_id, &loops_dir)
 }
 
 #[tauri::command]
@@ -500,7 +700,19 @@ pub fn resume_loop(
             .clone()
             .ok_or_else(|| format!("loop {loop_id} has neither resume nor start command"))?,
     };
-    start_with_spec(&pids, &loop_id, &def, &spec)
+    start_with_spec(Some(&pids), &loop_id, &def, &spec)
+}
+
+/// A8 — `answer_question(loopId, loopsDir, qid, text)` (PROTOCOL §6, stretch). Writes the
+/// `<stateDir>/answer.json` inbox `{ qid, kind:"review", a:text }` that the engine consumes.
+#[tauri::command]
+pub fn answer_question(
+    loop_id: String,
+    loops_dir: String,
+    qid: String,
+    text: String,
+) -> Result<(), String> {
+    answer_question_core(&loop_id, &loops_dir, &qid, &text)
 }
 
 #[tauri::command]
@@ -571,6 +783,105 @@ mod tests {
 
         // a done item exists from the log
         assert!(state.items.values().any(|i| i.status == ItemStatus::Done));
+    }
+
+    // ----- A5 loop-CRUD tests -----
+
+    #[test]
+    fn safe_loop_id_accepts_and_rejects() {
+        for ok in ["roman", "calc", "my-loop_2", "A1", "loop123"] {
+            assert!(is_safe_loop_id(ok), "should accept {ok:?}");
+        }
+        for bad in ["", "../evil", "a/b", "a\\b", "a.b", "with space", &"x".repeat(65)] {
+            assert!(!is_safe_loop_id(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn create_loop_round_trips_and_list_reads_it_back() {
+        let tmp = TmpDir::new("crud");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+
+        // A console-authored generic loop def (camelCase wire shape, opaque engine).
+        let def = serde_json::json!({
+            "id": "mytest",
+            "name": "My test loop — fix until green",
+            "theme": "ember",
+            "kind": "generic",
+            "adapter": "generic",
+            "stateDir": "D:/dev/loop/.loop",
+            "logFile": "log.jsonl",
+            "start": { "program": "pwsh", "args": ["-NoProfile", "-File", "loop.ps1"] },
+            "engine": {
+                "task": "TASK.md",
+                "models": { "discover": "haiku", "execute": "sonnet", "judge": "haiku", "hard": "opus" },
+                "maxTurns": 30,
+                "gate": { "stages": [ { "name": "test", "command": "bun test" } ] },
+                "cost": { "ceilingUsd": 3.0, "alertPct": [50, 80, 100] }
+            }
+        });
+
+        // create writes loops/<id>/loop.json and returns the canonical LoopDef
+        let created = create_loop(loops_dir.clone(), def).expect("create_loop ok");
+        assert_eq!(created.id, "mytest");
+        assert_eq!(created.adapter, "generic");
+        assert_eq!(created.log_file.as_deref(), Some("log.jsonl"));
+        assert!(created.engine.is_some(), "engine block preserved");
+
+        // the file exists at the expected path and is camelCase on disk
+        let p = loop_json_path(tmp.path(), "mytest");
+        assert!(p.exists(), "loop.json written at {p:?}");
+        let on_disk = std::fs::read_to_string(&p).unwrap();
+        assert!(on_disk.contains("\"stateDir\""), "camelCase key on disk");
+        assert!(on_disk.contains("\"ceilingUsd\""), "nested engine key preserved");
+
+        // list_loops reads it back as a LoopDef
+        let defs = list_loops(loops_dir.clone()).expect("list_loops ok");
+        let found = defs.iter().find(|d| d.id == "mytest").expect("listed");
+        assert_eq!(found.name, "My test loop — fix until green");
+        assert_eq!(found.state_dir, "D:/dev/loop/.loop");
+
+        // duplicate create is refused
+        let dup = serde_json::json!({ "id": "mytest", "name": "x", "adapter": "generic", "stateDir": "." });
+        assert!(create_loop(loops_dir.clone(), dup).is_err(), "dup id refused");
+
+        // an unsafe id is refused before any disk write
+        let evil = serde_json::json!({ "id": "../evil", "name": "x", "adapter": "generic", "stateDir": "." });
+        assert!(create_loop(loops_dir.clone(), evil).is_err(), "unsafe id refused");
+    }
+
+    #[test]
+    fn update_clone_delete_loop_lifecycle() {
+        let tmp = TmpDir::new("crud2");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        let base = serde_json::json!({
+            "id": "base", "name": "base", "kind": "generic",
+            "adapter": "generic", "stateDir": "D:/dev/loop/.loop"
+        });
+        create_loop(loops_dir.clone(), base).unwrap();
+
+        // update overwrites; a missing loop cannot be updated
+        let edited = serde_json::json!({
+            "id": "base", "name": "base — edited", "kind": "generic",
+            "adapter": "generic", "stateDir": "D:/dev/loop/.loop"
+        });
+        update_loop(loops_dir.clone(), "base".into(), edited).unwrap();
+        let defs = list_loops(loops_dir.clone()).unwrap();
+        assert_eq!(defs.iter().find(|d| d.id == "base").unwrap().name, "base — edited");
+        let missing = serde_json::json!({ "id": "ghost", "name": "x", "adapter": "generic", "stateDir": "." });
+        assert!(update_loop(loops_dir.clone(), "ghost".into(), missing).is_err());
+
+        // clone duplicates under a new id; the new id must be unique
+        let cloned = clone_loop(loops_dir.clone(), "base".into(), "copy".into()).unwrap();
+        assert_eq!(cloned.id, "copy");
+        assert_eq!(cloned.name, "base — edited", "clone copies content");
+        assert!(clone_loop(loops_dir.clone(), "base".into(), "copy".into()).is_err(), "dup clone refused");
+        assert_eq!(list_loops(loops_dir.clone()).unwrap().len(), 2);
+
+        // delete removes a loop; deleting again is a no-op (idempotent)
+        delete_loop(loops_dir.clone(), "copy".into()).unwrap();
+        assert_eq!(list_loops(loops_dir.clone()).unwrap().len(), 1);
+        delete_loop(loops_dir.clone(), "copy".into()).unwrap();
     }
 
     #[test]
@@ -734,6 +1045,52 @@ mod tests {
         // NOTE: roman's tokens (loop.ps1 + task.md) would substring-match 'task.calc.md'
         // because "task.calc.md" contains "task" then ".md" but not the contiguous "task.md".
         assert!(!cmdline_matches(&t_roman, calc_cmd), "roman must not match calc's cmd");
+    }
+
+    #[test]
+    fn answer_question_writes_exact_inbox_shape() {
+        // A8: resolve the loop's stateDir from loop.json and write the PROTOCOL §1 answer.json
+        // `{ qid, kind:"review", a }`. Build a throwaway loops/<id>/loop.json whose stateDir is a
+        // temp dir, then assert the exact file contents.
+        let tmp = TmpDir::new("answer");
+        let loops_dir = tmp.path().join("loops");
+        let state_dir = tmp.path().join("state");
+        std::fs::create_dir_all(loops_dir.join("roman")).unwrap();
+        std::fs::create_dir_all(&state_dir).unwrap();
+
+        let def = serde_json::json!({
+            "id": "roman",
+            "name": "roman",
+            "kind": "generic",
+            "adapter": "generic",
+            "stateDir": state_dir.to_string_lossy(),
+            "logFile": "log.jsonl"
+        });
+        std::fs::write(
+            loops_dir.join("roman").join("loop.json"),
+            serde_json::to_string_pretty(&def).unwrap(),
+        )
+        .unwrap();
+
+        answer_question_core(
+            "roman",
+            &loops_dir.to_string_lossy(),
+            "4",
+            "Yes — accept 0x hex literals.",
+        )
+        .expect("answer_question_core ok");
+
+        // exact shape on disk: { qid, kind:"review", a }
+        let written = std::fs::read_to_string(state_dir.join("answer.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(v["qid"], "4");
+        assert_eq!(v["kind"], "review");
+        assert_eq!(v["a"], "Yes — accept 0x hex literals.");
+        // exactly these three keys (no stray fields)
+        assert_eq!(v.as_object().unwrap().len(), 3, "only qid/kind/a: {v}");
+
+        // a traversal loop id is refused before any write
+        assert!(answer_question_core("../evil", &loops_dir.to_string_lossy(), "1", "x").is_err());
     }
 
     #[test]
