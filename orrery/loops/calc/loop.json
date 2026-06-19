@@ -1,0 +1,32 @@
+{
+  "id": "calc",
+  "name": "Calculator — precedence parser, fix until green",
+  "theme": "cyan",
+  "kind": "generic",
+  "adapter": "generic",
+  "stateDir": ".loop",
+  "logFile": "log.jsonl",
+  "stopFlag": ".loop/STOP",
+  "checkpoint": ".loop/checkpoint.json",
+  "start": {
+    "program": "pwsh",
+    "args": ["-NoProfile", "-File", "loop.ps1", "-TaskFile", "TASK.calc.md"]
+  },
+  "engine": {
+    "task": "TASK.calc.md",
+    "models": { "discover": "haiku", "execute": "sonnet", "judge": "haiku", "hard": "opus" },
+    "maxTurns": 30,
+    "allowedTools": ["Read", "Edit", "Write", "Bash(bun test)", "Bash(bun test:*)"],
+    "permissionMode": "acceptEdits",
+    "gate": {
+      "stages": [
+        { "name": "test", "command": "bun test", "passPattern": "(\\d+)\\s+pass", "failPattern": "(\\d+)\\s+fail" }
+      ],
+      "greenWhen": "exit==0",
+      "lockGlobs": ["**/*.test.ts"]
+    },
+    "cost": { "ceilingUsd": 3.0, "alertPct": [50, 80, 100] },
+    "stop": { "maxIters": 15, "stagnationLimit": 2, "plateauLimit": 3, "regressLimit": 3, "gracefulAtPhase": true },
+    "verify": { "judgeModel": "haiku", "contract": [] }
+  }
+}

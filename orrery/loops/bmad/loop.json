@@ -1,0 +1,15 @@
+{
+  "id": "bmad",
+  "name": "BMAD sprint — demo-project",
+  "theme": "gold",
+  "kind": "external",
+  "adapter": "bmad",
+  "stateDir": ".loop",
+  "logFile": "bmad-log.jsonl",
+  "start": {
+    "program": "pwsh",
+    "args": ["-NoProfile", "-File", "bmad-loop.ps1"]
+  },
+  "stopFlag": ".loop/STOP",
+  "checkpoint": ".loop/checkpoint.json"
+}
