@@ -194,6 +194,17 @@ class RunStore {
     this.state = next;
   }
 
+  // A8 — optimistic local answer: stamp a pending question's `a` (answeredBy
+  // 'ui') so the QAConsole reflects the send immediately, before the engine's
+  // `review-answer` round-trips through the reducer. Idempotent: if the real
+  // event arrives later it simply re-sets the same fields.
+  answerLocally(qid: string, text: string) {
+    const questions = this.state.questions.map((q) =>
+      q.id === qid && q.a == null ? { ...q, a: text, answeredBy: 'ui' as const } : q,
+    );
+    this.state = { ...this.state, questions };
+  }
+
   reset() {
     this.state = initialState();
     this.selectedItem = null;

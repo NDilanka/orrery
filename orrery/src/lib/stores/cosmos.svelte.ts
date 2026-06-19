@@ -134,9 +134,10 @@ class CosmosStore {
   source = $state<'tauri' | 'dev'>('dev');
   error = $state<string | null>(null);
 
-  // the placeholder "Tuning Console (A5)" notice — opening the ignite affordance
-  // flips this on; the shell shows a small toast/overlay. A5 replaces the stub.
-  ignitePlaceholder = $state(false);
+  // ── A5 Tuning Console ──────────────────────────────────────────────────────
+  // `console` is null when closed; otherwise it carries the edit target (an
+  // existing loop id to edit/clone, or null = author a brand-new loop).
+  console = $state<{ mode: 'create' | 'edit'; editId: string | null } | null>(null);
 
   /** Load (or reload) every registered loop's Tier-1 summary. */
   async load(): Promise<void> {
@@ -220,12 +221,98 @@ class CosmosStore {
     this.loops = summaries;
   }
 
-  /** The ✦ ignite-new-loop affordance (A5 stub). */
+  /** Open the Tuning Console to author a brand-new loop (the ✦ ignite affordance). */
   igniteNew(): void {
-    this.ignitePlaceholder = true;
+    this.console = { mode: 'create', editId: null };
   }
+  /** Open the Tuning Console to edit an existing loop (the per-loop ✎ affordance). */
+  editLoop(id: string): void {
+    this.console = { mode: 'edit', editId: id };
+  }
+  /** Close the console without creating anything. */
   dismissIgnite(): void {
-    this.ignitePlaceholder = false;
+    this.console = null;
+  }
+
+  /** Ids already in use — the console forbids colliding with these. */
+  get existingIds(): string[] {
+    return this.loops.map((l) => l.id);
+  }
+
+  /**
+   * Read a loop's full loop.json so the console can prefill an edit. In Tauri we
+   * have list_loops (carries the opaque engine); in dev we fetch the seed file.
+   */
+  async loadLoopDef(id: string): Promise<Record<string, unknown> | null> {
+    if (!browser) return null;
+    try {
+      if (hasTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const defs = (await invoke('list_loops', { loopsDir: DEFAULT_LOOPS_DIR })) as Array<
+          Record<string, unknown>
+        >;
+        return defs.find((d) => d.id === id) ?? null;
+      }
+      // dev: the seed loop.json files live under loops/<id>/loop.json, served as
+      // static assets (vite serves the repo root? no) — fall back to the public
+      // copy under static/loops if present, else null (console seeds from blueprint).
+      const res = await fetch(withBase(`loops/${id}/loop.json`));
+      if (res.ok) return (await res.json()) as Record<string, unknown>;
+    } catch {
+      /* fall through to blueprint defaults */
+    }
+    return null;
+  }
+
+  /**
+   * Persist a console-authored loop.json. In Tauri this invokes `create_loop`
+   * (or `update_loop` when editing); in dev (no Tauri) it no-ops gracefully and
+   * pushes a provisional summary so the new star shows up immediately for the
+   * preview. Returns the created/updated loop id.
+   */
+  async createLoop(
+    def: Record<string, unknown>,
+    opts: { mode: 'create' | 'edit'; editId?: string | null } = { mode: 'create' },
+  ): Promise<{ id: string; persisted: boolean }> {
+    const id = String(def.id ?? '');
+    if (browser && hasTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      if (opts.mode === 'edit' && opts.editId) {
+        await invoke('update_loop', { loopsDir: DEFAULT_LOOPS_DIR, id: opts.editId, def });
+      } else {
+        await invoke('create_loop', { loopsDir: DEFAULT_LOOPS_DIR, def });
+      }
+      await this.load(); // re-read the registry so the new system appears
+      return { id, persisted: true };
+    }
+    // dev: no Tauri — we can't write the file, but the console still validates and
+    // we provisionally add the star so the Cosmos reflects the act (plan §4
+    // "in dev the console should still render and validate, no-op-ing create").
+    if (opts.mode === 'create' && !this.loops.some((l) => l.id === id)) {
+      const theme = String(def.theme ?? 'plasma');
+      const ceiling =
+        (def.engine as { cost?: { ceilingUsd?: number } } | undefined)?.cost?.ceilingUsd ?? null;
+      this.loops = [
+        ...this.loops,
+        {
+          id,
+          name: String(def.name ?? id),
+          theme,
+          adapter: 'generic',
+          status: 'idle',
+          restState: null,
+          cumUsd: 0,
+          ceilingUsd: ceiling,
+          horizonFrac: 0,
+          currentItem: null,
+          itemCount: 0,
+          doneCount: 0,
+          events: 0,
+          ratePerMin: 0,
+        },
+      ];
+    }
+    return { id, persisted: false };
   }
 
   get(id: string): LoopSummary | null {

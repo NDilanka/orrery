@@ -19,6 +19,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { runStore, STAR_R0, STAR_K } from '../stores/run.svelte';
+  import { uiStore } from '../stores/ui.svelte';
 
   let host: HTMLDivElement;
 
@@ -128,6 +129,7 @@
       const planetsC = new PIXI.Container(); // planets
       const lighthouseG = new PIXI.Graphics(); // the off-plane auditor body (Lighthouse)
       const brakeG = new PIXI.Graphics(); // brake-ring "stopping at next <mode>"
+      const shimmerG = new PIXI.Graphics(); // Rewind-mode cyan time-shimmer frame
 
       // ── particle stream (pooled ParticleContainer) ──────────────────────
       // A budget of pre-allocated particle sprites flow from the active region
@@ -214,6 +216,7 @@
         planetsC,
         lighthouseG,
         brakeG,
+        shimmerG,
       );
 
       // static starfield dust
@@ -244,6 +247,7 @@
         nightHue: 0, // 0 dusk(ember) → 1 polar(frost)
         restForm: 0, // 0 running → 1 the rest-state silhouette is fully formed
         lhWake: 0, // lighthouse idle/dim (0) → awake/bright (1)
+        rewind: 0, // 0 normal → 1 Rewind-mode cyan time-shimmer fully on
         t: 0,
       };
       // per-planet eased angle (so they rotate smoothly)
@@ -330,6 +334,10 @@
         if (!reduced) vis.t += 0.016;
         const running = s.run.status === 'running';
         const rest = s.run.restState;
+        // Tier-1 mode (Planetarium OR phone, plan §3/§7): star + cost-horizon +
+        // rest-states + beacon + quota-night ONLY. Planets, rings, the ghost,
+        // the Lighthouse and the brake-ring are dropped; particles are budget-cut.
+        const tierOne = uiStore.tierOne;
 
         // ── A3: edge-detect transient moments from steady state ──────────────
         // (idempotent w.r.t. scrubbing: a moment fires once per real transition;
@@ -429,13 +437,15 @@
           }
         }
 
-        // ── rings (one per group, colored by status) ──
+        // ── rings (one per group, colored by status) — Tier-2, hidden in Tier-1 ──
         ringsG.clear();
-        for (const ring of runStore.rings) {
-          const r = ring.radius * PXPER;
-          ringsG
-            .circle(cx, cy, r)
-            .stroke({ width: ring.status === 'in-progress' ? 1.6 : 1, color: ringColor(ring.status), alpha: 0.5 });
+        if (!tierOne) {
+          for (const ring of runStore.rings) {
+            const r = ring.radius * PXPER;
+            ringsG
+              .circle(cx, cy, r)
+              .stroke({ width: ring.status === 'in-progress' ? 1.6 : 1, color: ringColor(ring.status), alpha: 0.5 });
+          }
         }
 
         // ── cost horizon (Roche ring) — invisible <50%, tightens toward star ──
@@ -468,12 +478,12 @@
           }
         }
 
-        // ── ghost target wireframe for the current item ──
+        // ── ghost target wireframe for the current item (Tier-2; off in Tier-1) ──
         ghostG.clear();
         const cur = runStore.current;
         let activeX = cx;
         let activeY = cy;
-        if (cur) {
+        if (cur && !tierOne) {
           const pp = ppos.get(cur.key);
           if (pp) {
             const px = pp.x;
@@ -519,10 +529,12 @@
 
         beamG.clear();
         lighthouseG.clear();
+        // The auditor + its beam are Tier-2 (an off-plane body sweeping a planet),
+        // so they're dropped entirely in Tier-1/Planetarium.
         // beam to the target (sweep = brass/auditor-white; refute = crimson)
         const beamTargetKey = refuteKey ?? sweepKey ?? auditKey;
         const tp = beamTargetKey ? ppos.get(beamTargetKey) : null;
-        if (tp && vis.lhWake > 0.04) {
+        if (!tierOne && tp && vis.lhWake > 0.04) {
           const isRefute = !!refuteKey && (refuteFx.get(refuteKey) ?? 0) > 0.02;
           const beamCol = isRefute ? C.crimson : C.auditor;
           // the sweep "wipes" from the lighthouse toward the planet (prog 0→1)
@@ -549,8 +561,8 @@
           }
         }
         // the lighthouse body: a tall cold beacon (distinct silhouette: a stacked
-        // tower, NOT a disc) — dim when idle, lantern lit when awake.
-        {
+        // tower, NOT a disc) — dim when idle, lantern lit when awake. Tier-2 only.
+        if (!tierOne) {
           const baseW = 7;
           const towerH = 22;
           const dim = 0.18 + vis.lhWake * 0.5;
@@ -580,7 +592,9 @@
         // a share of motes drawn from the recycled-fuel reservoir.
         if (!reduced && running && vis.burn > 0.001) {
           const teal = runStore.cacheFrac;
-          emitAccrue += vis.burn * 4.2; // up to ~4 motes/frame at full burn
+          // Tier-1/Planetarium cuts the particle budget hard (plan §7): a thin
+          // trickle into the star, not the full Observatory stream.
+          emitAccrue += vis.burn * (tierOne ? 0.7 : 4.2); // up to ~4 motes/frame at full burn
           while (emitAccrue >= 1) {
             emitAccrue -= 1;
             const jx = activeX + (Math.random() - 0.5) * 18;
@@ -719,9 +733,9 @@
           }
         }
 
-        // ── brake-ring: "stopping at next <mode>" — coasting to a tooth ──
+        // ── brake-ring: "stopping at next <mode>" — coasting to a tooth (Tier-2) ──
         brakeG.clear();
-        if (s.run.stopPending && running) {
+        if (!tierOne && s.run.stopPending && running) {
           // a tightening brake-shoe arc around the star (urgency = tightening)
           const br = coronaR + 16 + (reduced ? 0 : Math.sin(vis.t * 1.4) * 2);
           const segs = 6;
@@ -734,9 +748,12 @@
         }
 
         // ── planets ── (positions already eased into `ppos`)
+        // Tier-1/Planetarium drops the planets entirely (plan §7): the star, the
+        // cost-horizon, the rest-state silhouette + beacon and the quota-night are
+        // the whole picture. Clear children + the hit-map so taps don't drill.
         planetsC.removeChildren();
         lastPpos.clear();
-        for (const o of runStore.orbits) {
+        for (const o of tierOne ? [] : runStore.orbits) {
           const pp = ppos.get(o.key);
           if (!pp) continue;
           const px = pp.x;
@@ -794,6 +811,33 @@
               .stroke({ width: 1.4, color: C.crimson, alpha: 0.9 });
           }
           planetsC.addChild(g);
+        }
+
+        // ── Rewind-mode cyan time-shimmer frame (plan §3) ────────────────────
+        // A Plasma-cyan vignette + faint horizontal scan-lines that frame the
+        // whole orrery while you scrub time. Eased on/off so entering Rewind
+        // reads as "stepping into the timeline". Steady-state safe: the scan
+        // drift is suppressed under reduced-motion (only the frame shows).
+        vis.rewind = lerp(vis.rewind, uiStore.rewind ? 1 : 0, 0.08);
+        shimmerG.clear();
+        if (vis.rewind > 0.01) {
+          const a = vis.rewind;
+          // cyan border frame
+          const inset = 6;
+          shimmerG
+            .rect(inset, inset, w - inset * 2, h - inset * 2)
+            .stroke({ width: 1.5, color: C.cyan, alpha: 0.5 * a });
+          shimmerG
+            .rect(inset + 4, inset + 4, w - (inset + 4) * 2, h - (inset + 4) * 2)
+            .stroke({ width: 1, color: C.cyan, alpha: 0.2 * a });
+          // soft top/bottom cyan vignette wash
+          shimmerG.rect(0, 0, w, h * 0.12).fill({ color: C.cyan, alpha: 0.05 * a });
+          shimmerG.rect(0, h * 0.88, w, h * 0.12).fill({ color: C.cyan, alpha: 0.05 * a });
+          // drifting scan-lines (the "time-shimmer"); frozen under reduced-motion
+          const drift = reduced ? 0 : (vis.t * 30) % 26;
+          for (let y = -26 + drift; y < h; y += 26) {
+            shimmerG.moveTo(0, y).lineTo(w, y).stroke({ width: 1, color: C.cyan, alpha: 0.04 * a });
+          }
         }
 
         raf = requestAnimationFrame(tick);

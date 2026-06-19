@@ -1,15 +1,21 @@
-// Transport selector. Picks the Tauri transport when running inside the desktop
-// app (window.__TAURI__ present), else the dev replay transport that streams a
-// fixture .jsonl. Both feed a RunState to the same store callback.
+// Transport selector. Three paths, one store callback + one reduce path:
+//   - Tauri (window.__TAURI__ present)          → tauri.ts  (Channel + invoke)
+//   - SPA served by the Rust LAN server over     → ws.ts     (WebSocket + POST)
+//     http(s) in a browser with a /ws endpoint
+//   - else (dev, `vite dev`)                     → replay.ts (fixture .jsonl)
+// All three feed a RunState to the same store callback and share reduce.ts.
 
 import type { RunState } from '../types';
 import { ReplayTransport, type ReplayConfig } from './replay';
 import { TauriTransport, type TauriConfig } from './tauri';
+import { WsTransport, type WsConfig } from './ws';
 
 export interface Transport {
   start(): Promise<void>;
   stop(): void;
   control(action: string): Promise<void>;
+  /** A8 — answer a pending review/retro question (optional; replay no-ops). */
+  answer?(qid: string, text: string): Promise<void>;
 }
 
 export interface TransportOpts {
@@ -18,6 +24,31 @@ export interface TransportOpts {
 
 export function hasTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI__' in window;
+}
+
+/**
+ * Are we a plain browser served by the LAN server (vs Tauri / `vite dev`)?
+ *
+ * The Rust `lan.rs` serves the static SPA and exposes `/ws`. We detect that
+ * environment heuristically: not Tauri, an http(s) origin, and EITHER an
+ * explicit `?ws`/`?token` deep-link param OR a build-time flag the LAN serve
+ * injects. `vite dev` (the dev replay path) is on http too, so to avoid
+ * hijacking local development we require an explicit signal:
+ *   - `?token=` / `?ws=1` in the page URL (the QR deep-link always carries one), or
+ *   - a global `window.__ORRERY_WS__` the served index.html can set.
+ */
+export function hasWsServer(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (hasTauri()) return false;
+  const proto = window.location.protocol;
+  if (proto !== 'http:' && proto !== 'https:') return false;
+  if ('__ORRERY_WS__' in window && (window as Record<string, unknown>).__ORRERY_WS__) {
+    return true;
+  }
+  const q = new URLSearchParams(window.location.search);
+  if (q.has('token') || q.get('ws') === '1') return true;
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  return hash.has('token') || hash.get('ws') === '1';
 }
 
 /** A loop the picker can load: real (Tauri) config + dev replay config. */
@@ -32,7 +63,12 @@ export interface LoopChoice {
   rateMs?: number;
 }
 
-export function createTransport(choice: LoopChoice, opts: TransportOpts): Transport {
+export interface CreateTransportOpts extends TransportOpts {
+  /** ws freshness-badge callback (only invoked by the WebSocket transport). */
+  onWsStatus?: (s: import('./ws').WsStatus) => void;
+}
+
+export function createTransport(choice: LoopChoice, opts: CreateTransportOpts): Transport {
   if (hasTauri()) {
     const cfg: TauriConfig = {
       stateDir: choice.stateDir,
@@ -40,6 +76,14 @@ export function createTransport(choice: LoopChoice, opts: TransportOpts): Transp
       loopId: choice.id,
     };
     return new TauriTransport(cfg, opts);
+  }
+  if (hasWsServer()) {
+    const cfg: WsConfig = {
+      loopId: choice.id,
+      adapter: choice.adapter,
+      onStatus: opts.onWsStatus,
+    };
+    return new WsTransport(cfg, opts);
   }
   const cfg: ReplayConfig = {
     fixtureUrl: choice.fixtureUrl,
@@ -96,4 +140,5 @@ export const LOOPS: LoopChoice[] = [
   },
 ];
 
-export { ReplayTransport, TauriTransport };
+export { ReplayTransport, TauriTransport, WsTransport };
+export type { WsConfig, WsStatus } from './ws';
