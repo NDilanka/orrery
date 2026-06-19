@@ -694,3 +694,181 @@ function Update-ConsecutiveFail {
     Reason    = $reason
   }
 }
+
+# ===========================================================================
+# E5: PROMPT CACHING + cache telemetry — pure cores.
+#
+# The `claude -p` call is structured stable-prefix-first (system + task spec +
+# frozen AC contract) with the volatile failing-test output last, so the stable
+# prefix is eligible for Anthropic prompt caching. That CALL STRUCTURING lives in
+# loop.ps1; everything PARSE-able from the returned JSON `usage` lives here and is
+# unit-tested by selftest-final.ps1. No claude, no I/O.
+# ===========================================================================
+
+function Get-CacheUsage {
+  # PURE parser. Given a claude result object's `usage` block (or the whole result
+  # object, or a raw JSON string), pull the cache token counters and compute the
+  # cache HIT RATIO and WARM flag. Tolerates absence of every field (older claude
+  # builds, or text-format results, emit no cache counters) — a missing counter is
+  # treated as 0, yielding hitRatio=0 / warm=$false (a cold/unknown call).
+  #
+  # hitRatio = cache_read / (cache_read + input)   -> fraction of the *input* token
+  #   budget served from cache this turn. Denominator 0 -> hitRatio 0 (no divide).
+  # warm     = cache_read > 0                       -> the stable prefix was reused.
+  #
+  # Accepts snake_case (cache_read_input_tokens / cache_creation_input_tokens /
+  # input_tokens) as claude emits, and tolerates a top-level result wrapper with a
+  # nested .usage. Returns @{ CacheRead; CacheCreation; Input; HitRatio; Warm }.
+  param([object] $Usage)
+
+  $u = $Usage
+  if ($u -is [string]) {
+    try { $u = $u | ConvertFrom-Json -ErrorAction Stop } catch { $u = $null }
+  }
+  # Unwrap a full result object that carries a nested `usage`.
+  if ($u -and $u.PSObject -and ($u.PSObject.Properties.Name -contains 'usage') -and $u.usage) { $u = $u.usage }
+
+  $get = {
+    param($obj, [string[]] $names)
+    if (-not $obj) { return 0 }
+    foreach ($n in $names) {
+      $p = $null
+      if ($obj -is [System.Collections.IDictionary]) {
+        if ($obj.Contains($n)) { $p = $obj[$n] }
+      } elseif ($obj.PSObject -and ($obj.PSObject.Properties.Name -contains $n)) {
+        $p = $obj.$n
+      }
+      if ($null -ne $p) {
+        $val = 0
+        if ([double]::TryParse("$p", [ref]$val)) { return [int]$val }
+      }
+    }
+    return 0
+  }
+
+  $cacheRead     = & $get $u @('cache_read_input_tokens', 'cacheReadInputTokens')
+  $cacheCreation = & $get $u @('cache_creation_input_tokens', 'cacheCreationInputTokens')
+  $input         = & $get $u @('input_tokens', 'inputTokens')
+
+  $denom = $cacheRead + $input
+  $hitRatio = if ($denom -gt 0) { [math]::Round($cacheRead / [double]$denom, 4) } else { 0.0 }
+  $warm = ($cacheRead -gt 0)
+
+  [pscustomobject]@{
+    CacheRead     = $cacheRead
+    CacheCreation = $cacheCreation
+    Input         = $input
+    HitRatio      = [double]$hitRatio
+    Warm          = [bool]$warm
+  }
+}
+
+function New-CacheEvent {
+  # PURE. Build the EXACT PROTOCOL §2 `cache` event object:
+  #   { "event": "cache", "hitRatio": float, "warm": bool }
+  # hitRatio is rounded to 4 dp; warm is whether any cache_read happened this iter.
+  param([double] $HitRatio, [bool] $Warm)
+  [pscustomobject]@{
+    event    = 'cache'
+    hitRatio = [math]::Round([double]$HitRatio, 4)
+    warm     = [bool]$Warm
+  }
+}
+
+# ===========================================================================
+# E5: ANSWER INBOX / Q&A SURFACE — pure cores.
+#
+# If the agent emits a `QUESTION: <text>` marker (first line of progress.md or in
+# its result), the loop raises a `review-question`. The answer comes from either
+# the UI (<StateDir>/answer.json, consumed once) or an auto-decider (cheap model,
+# isolated in loop.ps1). All MARKER DETECTION, EVENT SHAPES, and answer.json
+# PARSE/MATCH logic are pure and unit-tested by selftest-final.ps1. No claude.
+# ===========================================================================
+
+function Get-QuestionMarker {
+  # PURE. Detect an agent QUESTION marker in a block of text (the agent's result
+  # body, or the contents of progress.md). The marker is a line beginning with
+  # `QUESTION:` (case-insensitive, leading whitespace tolerated); the question is
+  # the rest of that line, trimmed. Only the FIRST such line is honored (one open
+  # question per iteration). Returns the question string, or $null when absent.
+  #
+  # Deliberately strict (anchored, prefix-only) so ordinary prose mentioning the
+  # word "question" never trips it — mirrors the BLOCKED: marker convention.
+  param([string] $Text)
+  if (-not $Text) { return $null }
+  foreach ($ln in ($Text -split "`r?`n")) {
+    if ($ln -match '^\s*QUESTION:\s*(.*\S)\s*$') { return $Matches[1].Trim() }
+  }
+  return $null
+}
+
+function New-ReviewQuestionEvent {
+  # PURE. Build the EXACT PROTOCOL §2 `review-question` event object:
+  #   { "event": "review-question", "turn": int, "q": string, "story"?: string }
+  # `story` is OMITTED entirely when $null/empty (the generic single-goal loop has
+  # no story) so the wire shape matches PROTOCOL for both generic and BMAD callers.
+  param([int] $Turn, [string] $Q, [string] $Story = $null)
+  $o = [ordered]@{
+    event = 'review-question'
+    turn  = $Turn
+    q     = $Q
+  }
+  if ($Story) { $o['story'] = $Story }
+  [pscustomobject]$o
+}
+
+function New-ReviewAnswerEvent {
+  # PURE. Build the EXACT PROTOCOL §2 `review-answer` event object:
+  #   { "event": "review-answer", "turn": int, "a": string }
+  param([int] $Turn, [string] $A)
+  [pscustomobject]@{
+    event = 'review-answer'
+    turn  = $Turn
+    a     = $A
+  }
+}
+
+function Read-AnswerInbox {
+  # PURE parser for the UI->engine answer inbox (PROTOCOL §1 answer.json shape:
+  #   { qid, kind, epic?, a }   — the UI's "answer from UI" write).
+  # Given the raw file CONTENTS (a JSON string) and the open question's Turn,
+  # decide whether this answer is FOR the current question and extract the text.
+  #
+  # Matching: an answer matches when its `qid` (or legacy `turn`) equals the open
+  # turn, OR when neither is present (an untargeted answer is taken for whatever
+  # question is currently open). The numeric turn is also accepted as a qid of the
+  # form "<turn>" so the UI may key by either. The file is CONSUMED (deleted) by
+  # the caller in loop.ps1 only when Matched -> a non-matching answer is left in
+  # place for the question it actually targets.
+  #
+  # Returns @{ Matched=<bool>; A=<str|null>; Qid=<str|null>; Kind=<str|null> }.
+  # Unparseable / empty contents -> Matched=$false (never invent an answer).
+  param(
+    [string] $Content,
+    [int]    $Turn
+  )
+  $none = [pscustomobject]@{ Matched = $false; A = $null; Qid = $null; Kind = $null }
+  if (-not $Content -or -not "$Content".Trim()) { return $none }
+  $j = $null
+  try { $j = $Content | ConvertFrom-Json -ErrorAction Stop } catch { return $none }
+  if (-not $j) { return $none }
+
+  $a = if ($null -ne $j.a) { "$($j.a)" } else { $null }
+  if ($null -eq $a) { return $none }   # no answer body -> nothing to consume
+
+  $qid  = if ($null -ne $j.qid) { "$($j.qid)" } else { $null }
+  $kind = if ($null -ne $j.kind) { "$($j.kind)" } else { $null }
+  # legacy/explicit turn key
+  $turnKey = if ($null -ne $j.turn) { "$($j.turn)" } else { $null }
+
+  $target = if ($null -ne $qid) { $qid } else { $turnKey }
+  # An answer with no qid/turn is untargeted -> applies to the open question.
+  $matched = ($null -eq $target) -or ($target -eq "$Turn")
+
+  [pscustomobject]@{
+    Matched = [bool]$matched
+    A       = $(if ($matched) { $a } else { $null })
+    Qid     = $qid
+    Kind    = $kind
+  }
+}
