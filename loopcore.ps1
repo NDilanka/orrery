@@ -13,10 +13,87 @@ function Get-TestHash {
   # Authoritative anti-cheat. Hash of all locked files, order-stable.
   # Edit / skip / delete any locked file -> this string changes.
   # -LockGlob lets any project name its own locked test files (default *.test.ts).
+  # NOTE: kept for back-compat; the engine now uses the per-file MAP below and
+  # derives this single string from it via Get-HashMapDigest.
   param([string] $LockGlob = '*.test.ts')
   $files = Get-ChildItem -Recurse -Filter $LockGlob -File -ErrorAction SilentlyContinue | Sort-Object FullName
   if (-not $files) { return "" }
   ($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash) -join ""
+}
+
+function Get-TestHashMap {
+  # E2 hash-lock hardening. Build a PER-FILE map (relativePath -> sha256) over
+  # the lock glob, so tamper detection can name WHICH file changed. Pure-ish:
+  # the only I/O is reading the locked files; no claude, no test runner.
+  # Returns an ordered hashtable path->hash. -BasePath makes the keys relative
+  # & stable so the map is comparable across machines / cwd.
+  param(
+    [string] $LockGlob = '*.test.ts',
+    [string] $BasePath = (Get-Location).Path
+  )
+  $map = [ordered]@{}
+  $files = Get-ChildItem -Path $BasePath -Recurse -Filter $LockGlob -File -ErrorAction SilentlyContinue | Sort-Object FullName
+  foreach ($f in $files) {
+    $rel = $f.FullName
+    try { $rel = [System.IO.Path]::GetRelativePath($BasePath, $f.FullName) } catch {}
+    $rel = $rel -replace '\\', '/'
+    $map[$rel] = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash
+  }
+  $map
+}
+
+function Get-HashMapDigest {
+  # Collapse a per-file hash map into the single order-stable string that the
+  # old Get-TestHash produced, so existing callers / baselines keep working.
+  param([System.Collections.IDictionary] $Map)
+  if (-not $Map -or $Map.Count -eq 0) { return "" }
+  ($Map.Keys | Sort-Object | ForEach-Object { $Map[$_] }) -join ""
+}
+
+function Compare-HashMap {
+  # PURE tamper detector. Diff a baseline per-file hash map against the current
+  # one and report exactly WHICH files were modified / added / removed. The
+  # engine keeps its existing tamper->stop behavior; this just names the file in
+  # the reason string. Unit-tested, no I/O.
+  #
+  # Returns @{ Tampered=<bool>; Changed=[..]; Added=[..]; Removed=[..]; Reason=<str> }
+  # where Reason is "" when nothing changed.
+  param(
+    [System.Collections.IDictionary] $Baseline,
+    [System.Collections.IDictionary] $Current
+  )
+  $base = if ($Baseline) { $Baseline } else { [ordered]@{} }
+  $cur  = if ($Current)  { $Current }  else { [ordered]@{} }
+
+  $changed = @(); $added = @(); $removed = @()
+  foreach ($k in $base.Keys) {
+    if (-not $cur.Contains($k)) { $removed += $k }
+    elseif ($cur[$k] -ne $base[$k]) { $changed += $k }
+  }
+  foreach ($k in $cur.Keys) {
+    if (-not $base.Contains($k)) { $added += $k }
+  }
+  $changed = @($changed | Sort-Object)
+  $added   = @($added   | Sort-Object)
+  $removed = @($removed | Sort-Object)
+
+  $tampered = ($changed.Count + $added.Count + $removed.Count) -gt 0
+  $reason = ""
+  if ($tampered) {
+    $parts = @()
+    if ($changed.Count) { $parts += "modified " + ($changed -join ', ') }
+    if ($removed.Count) { $parts += "deleted "  + ($removed -join ', ') }
+    if ($added.Count)   { $parts += "added "     + ($added   -join ', ') }
+    $reason = "locked test file(s) " + ($parts -join '; ')
+  }
+
+  [pscustomobject]@{
+    Tampered = $tampered
+    Changed  = $changed
+    Added    = $added
+    Removed  = $removed
+    Reason   = $reason
+  }
 }
 
 function Get-GateCounts {
@@ -134,6 +211,123 @@ function Update-CostAlert {
   }
 }
 
+function Get-ModelForPhase {
+  # E2 model tiering. Pick the model for a phase from a tier map, falling back
+  # to sensible defaults. Phases: discover|execute|judge|hard. Pure — no I/O.
+  # Returns the tier string ('haiku'|'sonnet'|'opus' by default, but any string
+  # the user supplies is honored so custom aliases work).
+  param(
+    [string] $Phase,
+    [System.Collections.IDictionary] $Models
+  )
+  $defaults = @{ discover = 'haiku'; execute = 'sonnet'; judge = 'haiku'; hard = 'opus' }
+  $key = "$Phase".ToLower()
+  if ($Models -and $Models.Contains($key) -and $Models[$key]) { return [string]$Models[$key] }
+  if ($defaults.ContainsKey($key)) { return $defaults[$key] }
+  return 'sonnet'   # unknown phase -> safe middle tier
+}
+
+function ConvertTo-ContractCriteria {
+  # E2 frozen-contract extractor. Parse acceptance criteria from a TaskFile's
+  # text. Looks for an "## Acceptance Criteria" or "## Definition of done"
+  # section (case-insensitive) and collects its list / checkbox / line items
+  # until the next "## " heading. Pure — operates on a string, no file I/O.
+  #
+  # Recognized item forms inside the section:
+  #   - bullet     ("- foo" / "* foo")
+  #   - checkbox   ("- [ ] foo" / "- [x] foo")
+  #   - numbered   ("1. foo")
+  #   - plain non-empty prose lines (fallback, so a one-line "done" still counts)
+  # Returns a [string[]] of trimmed criteria (markup stripped), [] if none.
+  param([string] $Text)
+  if (-not $Text) { return @() }
+  $lines = $Text -split "`r?`n"
+  $inSection = $false
+  $crit = @()
+  $headingRx = '^\s*#{1,6}\s+(.*)$'
+  $targetRx  = '^\s*(acceptance\s+criteria|definition\s+of\s+done)\s*$'
+  foreach ($ln in $lines) {
+    if ($ln -match $headingRx) {
+      $title = $Matches[1].Trim()
+      if ($title -match $targetRx) { $inSection = $true; continue }
+      elseif ($inSection) { break }   # next heading closes the section
+      else { continue }
+    }
+    if (-not $inSection) { continue }
+    $t = $ln.Trim()
+    if (-not $t) { continue }
+    # strip leading list/checkbox/number markup
+    $item = $t -replace '^[-*]\s+\[[ xX]\]\s*', '' `
+                -replace '^[-*]\s+', '' `
+                -replace '^\d+[.)]\s+', ''
+    $item = $item.Trim()
+    if ($item) { $crit += $item }
+  }
+  @($crit)
+}
+
+function ConvertFrom-VerdictJson {
+  # E2 verifier PARSER. Take the raw text a judge subagent returned and produce
+  # the exact Protocol `verdict` event object (PROTOCOL §2 field names). The
+  # judge is told to emit a JSON object; we tolerate it being wrapped in prose
+  # or a ```json fence. Pure — no claude, no I/O. -Item and -Model stamp the
+  # engine-known fields; -RawText supplies the judge's body.
+  #
+  # Accepted judge fields (snake OR camel): pass|verdict, failing_criteria|
+  # failingCriteria, evidence, next_action|nextAction. A missing/unparseable
+  # body is treated as a FAIL (fail-closed: never let a malformed judge mint a
+  # false green). Returns a [pscustomobject] ready to ConvertTo-Json.
+  param(
+    [string] $RawText,
+    [string] $Item,
+    [string] $Model
+  )
+  $pass = $false
+  $failing = @()
+  $evidence = $null
+  $nextAction = $null
+
+  $json = $null
+  if ($RawText) {
+    # Prefer a fenced ```json block; else the first {...} object in the text.
+    $body = $RawText
+    if ($RawText -match '(?s)```(?:json)?\s*(\{.*?\})\s*```') { $body = $Matches[1] }
+    elseif ($RawText -match '(?s)(\{.*\})') { $body = $Matches[1] }
+    try { $json = $body | ConvertFrom-Json -ErrorAction Stop } catch { $json = $null }
+  }
+
+  if ($json) {
+    # pass: accept bool, or string "pass"/"true"/"yes"
+    $passVal = if ($null -ne $json.pass) { $json.pass } else { $json.verdict }
+    if ($passVal -is [bool]) { $pass = $passVal }
+    elseif ($null -ne $passVal) { $pass = ("$passVal".Trim().ToLower() -in @('true', 'pass', 'passed', 'yes', 'ok')) }
+
+    $fc = if ($null -ne $json.failingCriteria) { $json.failingCriteria } else { $json.failing_criteria }
+    if ($fc) { $failing = @($fc | ForEach-Object { "$_" }) }
+
+    if ($null -ne $json.evidence) { $evidence = "$($json.evidence)" }
+    $na = if ($null -ne $json.nextAction) { $json.nextAction } else { $json.next_action }
+    if ($null -ne $na) { $nextAction = "$na" }
+  } else {
+    # fail-closed: unparseable judge output cannot certify done.
+    $failing = @('verifier output unparseable')
+    $evidence = 'judge did not return parseable JSON'
+  }
+
+  # A pass with a non-empty failing list is contradictory -> treat as fail.
+  if ($pass -and $failing.Count -gt 0) { $pass = $false }
+
+  [pscustomobject]@{
+    event           = 'verdict'
+    item            = $Item
+    pass            = [bool]$pass
+    failingCriteria = @($failing)
+    evidence        = $evidence
+    nextAction      = $nextAction
+    model           = $Model
+  }
+}
+
 function Get-LoopDecision {
   # The verdict. Given fully-computed state, return what to do next.
   # Action is one of: 'stop' | 'rollback' | 'continue'. Pure — unit-tested.
@@ -154,13 +348,18 @@ function Get-LoopDecision {
     [double] $Cum,
     [double] $Ceiling,
     [int]    $Iter,
-    [int]    $MaxIters
+    [int]    $MaxIters,
+    [bool]   $VerifierRefuted = $false  # gate is green but the verifier refuted "done"
   )
 
   # Priority order matters. Integrity checks beat success; success beats spend.
   if ($Tampered)     { return [pscustomobject]@{ Action='stop'; Green=$false; Reason='test files were modified (tamper)' } }
   if ($CountDropped) { return [pscustomobject]@{ Action='stop'; Green=$false; Reason='test count dropped (deleted/skipped tests)' } }
-  if ($Green)        { return [pscustomobject]@{ Action='stop'; Green=$true;  Reason="all tests green at iter $Iter" } }
+  # Anti-false-green: a gate-green that the independent verifier REFUTED is not a
+  # real stop-green. Suppress the green-stop and fall through to continue/handoff
+  # so the failing criteria get fed back. Default (VerifierRefuted=$false) keeps
+  # the original behavior exactly.
+  if ($Green -and -not $VerifierRefuted) { return [pscustomobject]@{ Action='stop'; Green=$true;  Reason="all tests green at iter $Iter" } }
   if ($Blocked)      { return [pscustomobject]@{ Action='stop'; Green=$false; Reason='agent reported BLOCKED' } }
   if ($Cum -ge $Ceiling) { return [pscustomobject]@{ Action='stop'; Green=$false; Reason="cost ceiling `$$Ceiling reached" } }
 

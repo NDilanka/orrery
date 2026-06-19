@@ -47,7 +47,7 @@
 <style>
   .control {
     position: absolute;
-    bottom: 18px;
+    bottom: 180px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;

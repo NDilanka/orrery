@@ -9,8 +9,11 @@
   import { browser } from '$app/environment';
   import { base } from '$app/paths';
   import Observatory from '$lib/render/Observatory.svelte';
+  import Mechanism from '$lib/render/Mechanism.svelte';
+  import CostQuotaStrip from '$lib/render/CostQuotaStrip.svelte';
   import Hud from '$lib/panels/Hud.svelte';
   import RunControlBar from '$lib/panels/RunControlBar.svelte';
+  import TransportBar from '$lib/panels/TransportBar.svelte';
   import { runStore } from '$lib/stores/run.svelte';
   import {
     createTransport,
@@ -19,10 +22,21 @@
     type LoopChoice,
     type Transport,
   } from '$lib/transport';
+  import { isPlayback, type PlaybackState, type PlaybackTransport } from '$lib/transport/replay';
 
   let selected = $state<string>('bmad');
   let transport: Transport | null = null;
   let mode = $state<'live' | 'replay'>('replay');
+
+  // playback (dev replay only) — drives the scrub/play/pause/speed control
+  let playback = $state<PlaybackTransport | null>(null);
+  let playbackState = $state<PlaybackState>({
+    playing: false,
+    speed: 1,
+    cursor: 0,
+    total: 0,
+    done: false,
+  });
 
   // resolve fixture URLs against SvelteKit's base path so it works under any route
   function withBase(choice: LoopChoice): LoopChoice {
@@ -37,11 +51,16 @@
     if (!browser) return;
     transport?.stop();
     runStore.reset();
+    playback = null;
     const choice = LOOPS.find((l) => l.id === id);
     if (!choice) return;
     transport = createTransport(withBase(choice), {
       onState: (s) => runStore.set(s),
     });
+    if (isPlayback(transport)) {
+      playback = transport;
+      transport.onPlayback((p) => (playbackState = p));
+    }
     await transport.start();
   }
 
@@ -73,7 +92,12 @@
 <main class="stage">
   {#if browser}
     <Observatory />
+    <Mechanism />
+    <CostQuotaStrip />
     <Hud />
+    {#if playback}
+      <TransportBar transport={playback} state={playbackState} />
+    {/if}
     <RunControlBar {control} />
   {/if}
 

@@ -118,6 +118,35 @@ class RunStore {
     return k ? this.state.items[k] ?? null : null;
   });
 
+  // ── living-motion signals (consumed by the Observatory rAF loop) ──────────
+  // Active model's spectral class (heat). Defaults to sonnet/brass when a loop
+  // never emits a `model` event so the mechanism is never colorless.
+  model = $derived(this.state.phase.model ?? 'sonnet');
+
+  // Normalised burn (0..1): how hard the star should bloom. Derived from the
+  // cost rate, soft-clamped so a tiny demo still breathes and a hot run blooms.
+  burn = $derived.by<number>(() => {
+    const rate = this.state.cost.ratePerMin;
+    if (rate <= 0) return this.state.run.status === 'running' ? 0.18 : 0;
+    // ~$8/min reads as fully hot; log-soft so it is legible across scales
+    return Math.min(1, Math.log1p(rate) / Math.log1p(8));
+  });
+
+  // Cache-hit fraction (0..1): the share of particles that recirculate as
+  // cache-teal recycled fuel. `warm` gives it a small floor.
+  cacheFrac = $derived.by<number>(() => {
+    const c = this.state.cache;
+    const r = Math.max(0, Math.min(1, c.hitRatio));
+    return c.warm ? Math.max(0.25, r) : r;
+  });
+
+  // Which night is falling: 'dusk' (5h nap) vs 'polar' (weekly hibernation).
+  nightType = $derived.by<'dusk' | 'polar' | null>(() => {
+    const q = this.state.quota;
+    if (!q.active && this.state.run.restState !== 'quota-frost') return null;
+    return q.resetType === 'weekly' ? 'polar' : 'dusk';
+  });
+
   // ── mutations (called by the transport) ──────────────────────────────────
   set(next: RunState) {
     this.state = next;
