@@ -341,6 +341,7 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       state.quota.probe = num(ev.probe) ?? state.quota.probe;
       state.quota.waitSec = 0;
       state.quota.resumeAt = null;
+      state.run.stopPending = null; // night is over; the mechanism re-engages
       state.run.status = 'running';
       break;
     }
@@ -355,6 +356,7 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       state.cost.cumUsd = 0;
       state.quota.active = false;
       state.run.restState = null;
+      state.run.stopPending = null; // a fresh run re-engages the mechanism
       state.run.status = 'running';
       if (typeof ev.target === 'string') {
         state.run.target = ev.target;
@@ -580,10 +582,13 @@ function deriveRestState(state: RunState): void {
     state.run.restState = 'handoff-beacon';
   } else if (state.quota.active) {
     state.run.restState = 'quota-frost';
+  } else if (allDoneMerged && state.run.status !== 'running') {
+    // a clean finish is a certified seal, not a banked ember — even when the run
+    // ends with a `stop{ok:true}` (refines PROTOCOL §4.5 ordering: a completed
+    // run reads "done", reserving the ember for a stop that left work unfinished).
+    state.run.restState = 'certified-done';
   } else if (state.run.status === 'stopped' || state.run.status === 'error') {
     state.run.restState = 'stopped-ember';
-  } else if (allDoneMerged && state.run.status !== 'running') {
-    state.run.restState = 'certified-done';
   } else {
     state.run.restState = null;
   }

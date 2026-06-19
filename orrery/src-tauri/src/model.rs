@@ -479,6 +479,54 @@ pub struct StartSpec {
 }
 
 // ---------------------------------------------------------------------------
+// A6 — live control wire shapes (§6 / §7)
+// ---------------------------------------------------------------------------
+
+/// `checkpoint.json` (§7): resume state written by the engine at safe boundaries.
+/// `resume` is a shell command string (e.g. `pwsh -File "...bmad-loop.ps1"`).
+/// All fields optional/defaulted because external engines may omit some.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cum_usd: Option<f64>,
+    /// resume = a shell command string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+}
+
+/// Result of `start_loop` / `resume_loop` (§6): `{ pid }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartResult {
+    pub pid: u32,
+}
+
+/// Result of `guard_status` (§6): `{ running, pid, stopPending, checkpoint }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuardStatus {
+    pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    /// raw contents of the STOP file ("phase"|"story"|"now"), if present
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_pending: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<Checkpoint>,
+}
+
+// ---------------------------------------------------------------------------
 // Delta channel enum (§6)
 // ---------------------------------------------------------------------------
 

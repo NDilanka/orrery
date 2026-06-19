@@ -184,10 +184,10 @@ load_run(stateDir: string, adapter: string) -> RunState        // one-shot reduc
 watch_run(stateDir: string, adapter: string, channel: Channel<Delta>) -> ()  // emit snapshot then deltas
 // Delta = { kind: 'snapshot', state: RunState } | { kind: 'event', event: RawEvent } | { kind: 'state', state: RunState }
 list_loops() -> LoopDef[]                                       // from loops/<id>/loop.json
-// A6 — control (added later)
-start_loop(loopId, overrides?) -> { pid } | Err('AlreadyRunning'|...)
-stop_loop(loopId, mode) -> ()   cancel_stop(loopId) -> ()   resume_loop(loopId) -> ()
-guard_status(loopId) -> { running: bool, pid: number|null, stopPending, checkpoint }
+// A6 — control. All take `loopsDir` (path to loops/) so the Rust side can locate loop.json.
+start_loop(loopId, loopsDir, overrides?) -> { pid } | Err('AlreadyRunning'|...)
+stop_loop(loopId, loopsDir, mode) -> ()   cancel_stop(loopId, loopsDir) -> ()   resume_loop(loopId, loopsDir) -> ()
+guard_status(loopId, loopsDir) -> { running: bool, pid: number|null, stopPending, checkpoint }
 answer_question(loopId, qid, text) -> ()                        // stretch
 ```
 

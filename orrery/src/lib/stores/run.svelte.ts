@@ -23,8 +23,10 @@ export interface OrbitGeom {
   angle: number; // radians
   status: WorkItem['status'];
   certified: boolean;
+  claimedGreen: boolean; // gate-green OR review, but NOT yet certified (A2: anxious)
   hasGhost: boolean;
   strikes: number;
+  strikeBudget: number;
   merged: boolean;
 }
 
@@ -85,8 +87,10 @@ class RunStore {
           angle: angleFor(i, arr.length, ringIndex),
           status: it.status,
           certified: it.certified,
+          claimedGreen: !it.certified && (!!it.gate?.green || it.status === 'review'),
           hasGhost: !!it.ghost,
           strikes: it.strikes,
+          strikeBudget: it.strikeBudget,
           merged: !!it.pr?.merged,
         });
       });
@@ -147,6 +151,44 @@ class RunStore {
     return q.resetType === 'weekly' ? 'polar' : 'dusk';
   });
 
+  // ── A3: the auditor & rest-states ─────────────────────────────────────────
+  // The Lighthouse activates only when a planet is claimed-green (gate green or
+  // status 'review') but not yet certified — there is something to audit.
+  auditTargetKey = $derived.by<string | null>(() => {
+    // prefer the current item if it is claimed-green-not-certified…
+    const cur = this.current;
+    if (cur && !cur.certified && (cur.gate?.green || cur.status === 'review')) return cur.key;
+    // …else any claimed-green-not-certified item (latest event wins)
+    let best: WorkItem | null = null;
+    for (const it of Object.values(this.state.items)) {
+      if (!it.certified && (it.gate?.green || it.status === 'review')) {
+        if (!best || it.lastEventTs >= best.lastEventTs) best = it;
+      }
+    }
+    return best?.key ?? null;
+  });
+
+  // The latest verdict and which item it refers to (for the VerdictPanel auto-pop
+  // on a refute, and the Lighthouse beam target).
+  latestVerdict = $derived.by<{ key: string; verdict: RunState['verdicts'][string] } | null>(() => {
+    const cur = this.state.currentItem;
+    if (cur && this.state.verdicts[cur]) return { key: cur, verdict: this.state.verdicts[cur] };
+    const keys = Object.keys(this.state.verdicts);
+    if (!keys.length) return null;
+    const k = keys[keys.length - 1];
+    return { key: k, verdict: this.state.verdicts[k] };
+  });
+
+  // The active stop mode pending (brake target), surfaced for the renderer.
+  stopPending = $derived(this.state.run.stopPending);
+  restState = $derived(this.state.run.restState);
+
+  // ── transient UI selection (which planet's VerdictPanel is open) ──────────
+  selectedItem = $state<string | null>(null);
+  selectItem(key: string | null) {
+    this.selectedItem = key;
+  }
+
   // ── mutations (called by the transport) ──────────────────────────────────
   set(next: RunState) {
     this.state = next;
@@ -154,6 +196,7 @@ class RunStore {
 
   reset() {
     this.state = initialState();
+    this.selectedItem = null;
   }
 }
 
