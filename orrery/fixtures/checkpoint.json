@@ -1,0 +1,9 @@
+{
+  "updatedAt": "2026-06-19T10:22:06.1447403+05:30",
+  "stage": "between-stories (clean)",
+  "story": null,
+  "branch": "develop",
+  "mergeBase": "develop",
+  "cumUsd": 26.7472,
+  "resume": "pwsh -File \"D:\\dev\\loop\\bmad-loop.ps1\""
+}

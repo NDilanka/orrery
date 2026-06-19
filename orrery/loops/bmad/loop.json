@@ -1,0 +1,15 @@
+{
+  "id": "bmad",
+  "name": "BMAD sprint — xynapsis",
+  "theme": "gold",
+  "kind": "external",
+  "adapter": "bmad",
+  "stateDir": "D:/dev/loop/.loop",
+  "logFile": "bmad-log.jsonl",
+  "start": {
+    "program": "pwsh",
+    "args": ["-NoProfile", "-File", "D:/dev/loop/bmad-loop.ps1"]
+  },
+  "stopFlag": "D:/dev/loop/.loop/STOP",
+  "checkpoint": "D:/dev/loop/.loop/checkpoint.json"
+}
