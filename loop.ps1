@@ -39,9 +39,28 @@
 .PARAMETER AllowConcurrent
   Override the concurrency guard (let two loops share a StateDir). Off by default.
 
+.PARAMETER Verify
+  After the gate goes green, run a SECOND, independent verifier subagent on a
+  CHEAP model that sees ONLY the diff + a FROZEN acceptance-criteria contract and
+  must try to REFUTE "done". Off by default (no extra quota). When the verdict is
+  fail, the loop does NOT stop-green: it feeds the failing criteria back and
+  continues (or hands off per the stop rules).
+
+.PARAMETER Contract
+  Explicit frozen acceptance-criteria list for the verifier. When omitted, the
+  criteria are parsed from the TaskFile's "## Acceptance Criteria" /
+  "## Definition of done" section.
+
+.PARAMETER Models
+  Per-phase model tiering: a hashtable @{ discover; execute; judge; hard } whose
+  values are 'haiku'|'sonnet'|'opus'. Defaults to
+  @{ discover='haiku'; execute='sonnet'; judge='haiku'; hard='opus' }. The
+  execute tier drives the main iteration; the judge tier drives the verifier.
+
 .EXAMPLE
   pwsh -File loop.ps1 -DryRun
   pwsh -File loop.ps1 -TaskFile TASK.calc.md -Fresh -MaxIters 10 -CostCeilingUsd 3
+  pwsh -File loop.ps1 -Verify -Models @{ execute='sonnet'; judge='haiku' }
 #>
 [CmdletBinding()]
 param(
@@ -58,6 +77,9 @@ param(
   [string[]] $AllowedTools    = @('Read', 'Edit', 'Write', 'Bash(bun test)', 'Bash(bun test:*)'),
   [string]   $PermissionMode  = 'acceptEdits',
   [int[]]    $AlertPct        = @(50, 80, 100),
+  [switch]   $Verify,                  # run the anti-false-green verifier subagent
+  [string[]] $Contract        = $null, # frozen AC; default = parsed from TaskFile
+  [hashtable] $Models         = $null, # per-phase model tiering (defaults below)
   [switch]   $DryRun,
   [switch]   $Fresh,
   [switch]   $AllowConcurrent
@@ -74,7 +96,52 @@ if (-not $GateStages -or $GateStages.Count -eq 0) {
   )
 }
 
+# Per-phase model tiering. Merge user overrides over the defaults so a partial
+# -Models hashtable (e.g. just @{ judge='haiku' }) still resolves all phases.
+$ModelDefaults = @{ discover = 'haiku'; execute = 'sonnet'; judge = 'haiku'; hard = 'opus' }
+if ($Models) { foreach ($k in $Models.Keys) { $ModelDefaults[$k] = $Models[$k] } }
+$Models = $ModelDefaults
+$ExecuteModel = Get-ModelForPhase -Phase 'execute' -Models $Models
+$JudgeModel   = Get-ModelForPhase -Phase 'judge'   -Models $Models
+
 function Write-Log($obj) { ($obj | ConvertTo-Json -Compress) | Add-Content -Path "$StateDir/log.jsonl" }
+
+function Invoke-JudgeClaude {
+  # ISOLATED, stubbable claude call for the verifier subagent. This is the ONLY
+  # place the verifier spends quota; selftest-verify.ps1 never reaches it (it
+  # feeds captured strings straight to the parser). A SECOND, independent judge
+  # on a CHEAP model that sees ONLY the diff + the frozen contract and must try
+  # to REFUTE "done". Returns the judge's raw stdout string.
+  param(
+    [string]   $Diff,
+    [string[]] $Criteria,
+    [string]   $Model
+  )
+  $contractText = ($Criteria | ForEach-Object { "- $_" }) -join "`n"
+  $judgePrompt = @"
+You are an independent VERIFIER. Your job is to REFUTE the claim that the work is
+"done". You see ONLY a git diff and a FROZEN acceptance-criteria contract. Do NOT
+assume the tests passing means the criteria are met — check each criterion against
+the diff and try to find one that is NOT satisfied.
+
+FROZEN ACCEPTANCE CRITERIA:
+$contractText
+
+GIT DIFF:
+$Diff
+
+Respond with ONLY a JSON object (no prose) of this exact shape:
+{ "pass": <true|false>, "failingCriteria": [<unmet criteria strings>],
+  "evidence": "<one-sentence justification>", "nextAction": "<what to do next if failing>" }
+Set pass=true ONLY if every criterion is demonstrably satisfied by the diff.
+"@
+  $judgeArgs = @(
+    '-p', $judgePrompt, '--output-format', 'text', '--max-turns', '1',
+    '--model', $Model, '--permission-mode', 'plan',
+    '--allowedTools', 'Read'
+  )
+  & claude @judgeArgs 2>$null | Out-String
+}
 
 function Stop-Loop($reason, $green) {
   if (-not $green -and $UseGit -and $BestCommit) { git reset --hard $BestCommit *>$null }  # leave best-known-good tree
@@ -159,8 +226,24 @@ Fresh context every iteration — only this file, git history, and
 $UseGit = $false
 try { if ((git rev-parse --is-inside-work-tree 2>$null) -eq 'true') { $UseGit = $true } } catch {}
 
-$TestHash0 = Get-TestHash -LockGlob $LockGlob
+# E2 hardened hash-lock: a PER-FILE map (path->sha256) so tamper detection can
+# NAME the changed file. $TestHash0 (the order-stable digest) is derived from it
+# for back-compat / the DryRun summary.
+$HashMap0  = Get-TestHashMap -LockGlob $LockGlob -BasePath $PSScriptRoot
+$TestHash0 = Get-HashMapDigest -Map $HashMap0
 if (-not $TestHash0) { throw "No files matching '$LockGlob' found — nothing to gate against." }
+
+# E2 frozen acceptance-criteria contract for the verifier. Explicit -Contract
+# wins; otherwise parse the TaskFile's "## Acceptance Criteria" / "## Definition
+# of done" section. Frozen ONCE here so the judge can never be steered later.
+$FrozenContract = if ($Contract) { @($Contract) } else { @(ConvertTo-ContractCriteria -Text (Get-Content -Path $TaskFile -Raw)) }
+
+# E2 model tiering: announce each phase's chosen model (Protocol `model` event).
+# Skipped under -DryRun so a dry run spends no quota AND writes no log lines.
+if (-not $DryRun) {
+  Write-Log @{ event="model"; phase="execute"; model=$ExecuteModel }
+  if ($Verify) { Write-Log @{ event="model"; phase="judge"; model=$JudgeModel } }
+}
 
 $script:Iter = 0
 $script:Cum  = 0.0
@@ -202,7 +285,8 @@ Write-Host "Baseline: $($base.Pass)/$($base.Total) pass  green=$($base.Green)  t
 if ($DryRun) {
   $stageNames = ($GateStages | ForEach-Object { $_.Name }) -join ','
   Write-Host "`nDryRun OK — gate wired. git=$UseGit  bestPass=$BestPass  testHash=$($TestHash0.Substring(0,12))..."
-  Write-Host "    stages=[$stageNames]  lockGlob=$LockGlob  tools=$($AllowedTools.Count)  permMode=$PermissionMode  maxTurns=$MaxTurns"
+  Write-Host "    stages=[$stageNames]  lockGlob=$LockGlob  lockedFiles=$($HashMap0.Count)  tools=$($AllowedTools.Count)  permMode=$PermissionMode  maxTurns=$MaxTurns"
+  Write-Host "    models: execute=$ExecuteModel  judge=$JudgeModel   verify=$([bool]$Verify)  contractCriteria=$($FrozenContract.Count)"
   Write-Host "No claude calls, no quota spent." -ForegroundColor Cyan
   exit 0
 }
@@ -227,9 +311,10 @@ foreach ($t in $AllowedTools) { $toolArgs += $t }
 for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   Write-Host "`n=== iteration $($script:Iter)/$MaxIters  (cum `$$([math]::Round($script:Cum,4))  best $BestPass/$BaseTotal) ===" -ForegroundColor Cyan
 
-  # 3. EXECUTE
+  # 3. EXECUTE (execute tier of the model ladder)
   $cliArgs = @(
     '-p', $prompt, '--output-format', 'json', '--max-turns', "$MaxTurns",
+    '--model', $ExecuteModel,
     '--permission-mode', $PermissionMode,
     '--allowedTools'
   ) + $toolArgs
@@ -243,10 +328,37 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
 
   # 4. EVAL GATE + integrity signals
   $g            = Invoke-GateAndLog
-  $tampered     = ((Get-TestHash -LockGlob $LockGlob) -ne $TestHash0)
+  # E2 per-file tamper detection: diff the current hash-map against baseline so
+  # the reason string can NAME the file that changed (not just "something").
+  $hashNow      = Get-TestHashMap -LockGlob $LockGlob -BasePath $PSScriptRoot
+  $tamper       = Compare-HashMap -Baseline $HashMap0 -Current $hashNow
+  $tampered     = $tamper.Tampered
   $countDropped = ($g.Total -lt $BaseTotal)
   $blocked      = [bool](Select-String -Path "$StateDir/progress.md" -Pattern '^BLOCKED' -Quiet)
   $changed      = if ($UseGit) { [bool](git status --porcelain) } else { $true }
+
+  # 5. VERIFY (anti-false-green). Only when -Verify AND the gate claims green AND
+  # integrity is intact (no point auditing a tampered/dropped tree). A SECOND,
+  # independent cheap-model judge sees ONLY the diff + frozen contract and tries
+  # to refute "done". A fail suppresses the green-stop and feeds criteria back.
+  $verifierRefuted = $false
+  if ($Verify -and $g.Green -and -not $tampered -and -not $countDropped) {
+    $diff = if ($UseGit) { (git diff HEAD 2>$null | Out-String) } else { "" }
+    $judgeRaw = Invoke-JudgeClaude -Diff $diff -Criteria $FrozenContract -Model $JudgeModel
+    $verdict  = ConvertFrom-VerdictJson -RawText $judgeRaw -Item $TaskFile -Model $JudgeModel
+    Write-Log @{ event="verdict"; item=$verdict.item; pass=$verdict.pass;
+                 failingCriteria=@($verdict.failingCriteria); evidence=$verdict.evidence;
+                 nextAction=$verdict.nextAction; model=$verdict.model }
+    if (-not $verdict.pass) {
+      $verifierRefuted = $true
+      Write-Host "  [VERIFY] REFUTED green — failing: $($verdict.failingCriteria -join '; ')" -ForegroundColor Yellow
+      # Feed the failing criteria back to the next iteration's executor context.
+      $fcBack = ($verdict.failingCriteria | ForEach-Object { "- $_" }) -join "`n"
+      Add-Content -Path "$StateDir/progress.md" -Value "`n## Verifier refuted (iter $($script:Iter))`n$fcBack`nNext: $($verdict.nextAction)"
+    } else {
+      Write-Host "  [VERIFY] certified green (model=$JudgeModel)" -ForegroundColor Green
+    }
+  }
 
   # update drift counters before asking for a verdict
   if (-not $changed) { $Stale++ } else { $Stale = 0 }
@@ -256,7 +368,11 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
            -Blocked $blocked -Pass $g.Pass -BestPass $BestPass -Changed $changed `
            -RegressCount $RegressCount -RegressLimit $RegressLimit `
            -Plateau $Plateau -PlateauLimit $PlateauLimit -Stale $Stale -StagnationLimit $StagnationLimit `
-           -Cum $script:Cum -Ceiling $CostCeilingUsd -Iter $script:Iter -MaxIters $MaxIters
+           -Cum $script:Cum -Ceiling $CostCeilingUsd -Iter $script:Iter -MaxIters $MaxIters `
+           -VerifierRefuted $verifierRefuted
+
+  # Surface the named-file tamper reason in the log/handoff when it fired.
+  if ($tampered) { $dec = [pscustomobject]@{ Action=$dec.Action; Green=$dec.Green; Reason=$tamper.Reason } }
 
   Write-Log @{ event="iter"; iter=$script:Iter; cost=[double]$res.total_cost_usd; cum=$script:Cum;
                pass=$g.Pass; total=$g.Total; best=$BestPass; changed=$changed;
