@@ -1,0 +1,2 @@
+{"total":3,"green":true,"iter":1,"changed":true,"cost":0.28307200000000005,"event":"iter","fail":0,"pass":3,"cum":0.28307200000000005}
+{"reason":"all tests green at iter 1","iter":1,"green":true,"event":"stop","cum":0.28307200000000005,"bestPass":3}
