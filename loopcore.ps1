@@ -381,3 +381,223 @@ function Get-LoopDecision {
   }
   return [pscustomobject]@{ Action='continue'; Green=$false; Reason='advance' }
 }
+
+# ===========================================================================
+# E3: QUOTA SURVIVAL — pure, testable cores.
+#
+# The authoritative probe (`claude -p "ok" --output-format stream-json …`) and
+# the real Start-Sleep live in ISOLATED wrappers in loop.ps1 (Invoke-QuotaProbe
+# / Start-QuotaSleep) so tests can stub them. Everything decidable WITHOUT
+# claude or a real sleep lives here and is unit-tested by selftest-resume.ps1.
+# ===========================================================================
+
+function Resolve-QuotaStatus {
+  # PURE parser. Given the combined stdout+stderr text of a stream-json probe,
+  # decide whether quota is LIMITED and, if so, which reset moment to sleep to.
+  #
+  # Reads every `"rate_limit_info": { … }` fragment (the machine-readable signal
+  # claude emits in stream-json). A fragment is "rejected" when its status is
+  # reject/block/exceed/limited. The sleep target prefers the REJECTED window's
+  # resetsAt (which may be the five_hour OR the weekly one — so a WEEKLY limit
+  # waits for the weekly reset instead of giving up), else the five_hour reset.
+  # rateLimitType (five_hour|weekly) of the chosen reset is returned as ResetType.
+  #
+  # Returns @{ Limited=<bool>; ResetAt=<datetime|null>; ResetType=<str|null> }.
+  # No I/O, no claude, no sleep — fully deterministic for a given text.
+  param([string] $Text)
+
+  $all = if ($null -ne $Text) { ($Text -replace "\x1b\[[0-9;]*m", "") } else { "" }
+  $limited = $false
+  $rejectReset = $null;   $rejectType = $null
+  $fiveHourReset = $null
+
+  foreach ($m in [regex]::Matches($all, '"rate_limit_info"\s*:\s*\{[^}]*\}')) {
+    $frag = $m.Value
+    $st = if ($frag -match '"status"\s*:\s*"([^"]+)"') { $Matches[1] } else { '' }
+    $rs = if ($frag -match '"resetsAt"\s*:\s*(\d+)') { [DateTimeOffset]::FromUnixTimeSeconds([long]$Matches[1]).LocalDateTime } else { $null }
+    $rt = if ($frag -match '"rateLimitType"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+    if ($st -imatch 'reject|block|exceed|limited') {
+      $limited = $true
+      if ($rs) { $rejectReset = $rs; $rejectType = $rt }
+    }
+    if ($rt -eq 'five_hour' -and $rs) { $fiveHourReset = $rs }
+  }
+
+  # Fallback: hard limit phrasing in the text (HTTP 429/529, "usage limit", …)
+  # still flags limited even when no rate_limit_info fragment is present.
+  if (-not $limited -and (Test-QuotaLimitedText -Text $all)) { $limited = $true }
+
+  if ($rejectReset) {
+    [pscustomobject]@{ Limited = $limited; ResetAt = $rejectReset; ResetType = $rejectType }
+  } elseif ($fiveHourReset) {
+    [pscustomobject]@{ Limited = $limited; ResetAt = $fiveHourReset; ResetType = 'five_hour' }
+  } else {
+    [pscustomobject]@{ Limited = $limited; ResetAt = $null; ResetType = $null }
+  }
+}
+
+function Test-QuotaLimitedText {
+  # PURE. STRONG limit phrases only, so ordinary content / max_turns errors don't
+  # trip it. Matches real limit text + the API error type, but NOT the benign
+  # 'rate_limit_info'/'rate_limit_event' stream-json fields.
+  param([string] $Text)
+  if (-not $Text) { return $false }
+  $strong = 'usage limit|limit will reset|reset[s]?\s+(at|in)\b|reset[s]?\s+\d|\d\s*-?\s*hour limit|too many requests|\b429\b|overloaded|\b529\b|rate[ -]limit|rate_limit_error'
+  return [bool]($Text -imatch $strong)
+}
+
+function Get-QuotaWaitSec {
+  # PURE. Compute the seconds to sleep for one wait cycle. When a concrete reset
+  # moment is known, sleep until reset + a 120s buffer, clamped to [60, 21600]
+  # (1m..6h — a single cycle never sleeps more than 6h; repeated cycles cover a
+  # weekly reset). When no reset is known, fall back to DefaultWaitMin minutes.
+  # -Now is injectable so tests are deterministic (no real clock).
+  param(
+    [Nullable[datetime]] $ResetAt,
+    [int] $DefaultWaitMin = 30,
+    [datetime] $Now = (Get-Date),
+    [int] $BufferSec = 120,
+    [int] $MinSec = 60,
+    [int] $MaxSec = 21600
+  )
+  if ($ResetAt) {
+    $sec = ([int](($ResetAt - $Now).TotalSeconds)) + $BufferSec
+    return [int][math]::Min([math]::Max($sec, $MinSec), $MaxSec)
+  }
+  return ($DefaultWaitMin * 60)
+}
+
+function New-QuotaWaitEvent {
+  # PURE. Build the exact PROTOCOL §2 `quota-wait` event object. resumeAt is the
+  # ISO-8601 moment the loop will re-probe (Now + waitSec). resetType is omitted
+  # (left $null) when unknown so ConvertTo-Json drops/keeps it per PROTOCOL.
+  param(
+    [string] $Label, [double] $Cum, [int] $WaitSec, [int] $Probe,
+    [string] $ResetType = $null, [datetime] $Now = (Get-Date)
+  )
+  [pscustomobject]@{
+    event     = 'quota-wait'
+    label     = $Label
+    cum       = $Cum
+    waitSec   = $WaitSec
+    resumeAt  = $Now.AddSeconds($WaitSec).ToString('o')
+    probe     = $Probe
+    resetType = $ResetType
+  }
+}
+
+function New-QuotaHitEvent {
+  # PURE. Build the PROTOCOL §2 `quota-hit` event object.
+  param([string] $Label, [double] $Cum, [Nullable[datetime]] $ResetAt = $null)
+  [pscustomobject]@{
+    event   = 'quota-hit'
+    label   = $Label
+    cum     = $Cum
+    resetAt = $(if ($ResetAt) { ([datetime]$ResetAt).ToString('o') } else { $null })
+  }
+}
+
+function New-QuotaResumeEvent {
+  # PURE. Build the PROTOCOL §2 `quota-resume` event object.
+  param([string] $Label, [int] $Probe)
+  [pscustomobject]@{ event = 'quota-resume'; label = $Label; probe = $Probe }
+}
+
+# ===========================================================================
+# E3: COOPERATIVE SAFE-STOP + CHECKPOINT RESUME — pure cores.
+# ===========================================================================
+
+function Get-StopMode {
+  # PURE. Given the raw contents of a STOP flag file (or $null when absent),
+  # normalize to the requested mode. Empty/whitespace -> 'phase' (the default,
+  # matching stop-loop.ps1). Recognized: phase|story|now. -Scope is the boundary
+  # we are AT ('phase' = a within-iteration commit boundary; 'story'/'now' map to
+  # the between-iteration boundary for the generic single-goal loop).
+  #
+  # Returns @{ Requested=<str|null>; Honor=<bool>; Mode=<str|null> } where Honor
+  # is whether a stop at THIS scope should fire. A 'story' request is held until a
+  # 'story' (between-iteration) scope; 'phase'/'now' fire at any scope.
+  param(
+    [object] $FlagContent,
+    [string] $Scope = 'story'
+  )
+  if ($null -eq $FlagContent) { return [pscustomobject]@{ Requested = $null; Honor = $false; Mode = $null } }
+  $mode = ("" + $FlagContent).Trim().ToLower()
+  if ($mode -eq '') { $mode = 'phase' }
+  if ($mode -notin @('phase', 'story', 'now')) { $mode = 'phase' }
+  # 'story' request waits for a story (between-iteration) boundary.
+  $honor = -not ($Scope -eq 'phase' -and $mode -eq 'story')
+  [pscustomobject]@{ Requested = $mode; Honor = $honor; Mode = $mode }
+}
+
+function New-Checkpoint {
+  # PURE. Build the EXACT PROTOCOL §7 checkpoint.json object (ordered for stable
+  # round-trip). resume = the literal shell command string to continue the loop.
+  # No I/O — loop.ps1 serializes the returned object to <StateDir>/checkpoint.json.
+  param(
+    [string] $Stage,
+    [object] $Story,
+    [string] $Branch,
+    [string] $MergeBase,
+    [double] $CumUsd,
+    [string] $Resume,
+    [datetime] $UpdatedAt = (Get-Date)
+  )
+  [ordered]@{
+    updatedAt = $UpdatedAt.ToString('o')
+    stage     = $Stage
+    story     = $Story
+    branch    = $Branch
+    mergeBase = $MergeBase
+    cumUsd    = [math]::Round($CumUsd, 4)
+    resume    = $Resume
+  }
+}
+
+function New-CooperativeStopEvent {
+  # PURE. Build the PROTOCOL §2 `cooperative-stop` event object.
+  param(
+    [string] $Scope, [string] $Mode, [string] $Stage,
+    [object] $Story, [string] $Branch, [double] $Cum
+  )
+  [pscustomobject]@{
+    event  = 'cooperative-stop'
+    scope  = $Scope
+    mode   = $Mode
+    stage  = $Stage
+    story  = $Story
+    branch = $Branch
+    cum    = $Cum
+  }
+}
+
+# ===========================================================================
+# E3: REGRESSION ROLLBACK STRIKES — pure event builders.
+# ===========================================================================
+
+function New-RollbackEvent {
+  # PURE. Build the PROTOCOL §2 `rollback` event. strike = the rollback number
+  # just taken (1-based); strikeBudget = the RegressLimit. item = the goal/task.
+  param(
+    [string] $Item, [int] $ToIter, [int] $BestPass, [int] $Strike, [int] $StrikeBudget
+  )
+  [pscustomobject]@{
+    event        = 'rollback'
+    item         = $Item
+    toIter       = $ToIter
+    bestPass     = $BestPass
+    strike       = $Strike
+    strikeBudget = $StrikeBudget
+  }
+}
+
+function New-HandoffEvent {
+  # PURE. Build the PROTOCOL §2 `handoff` event raised when strikes are exhausted.
+  param([string] $Item, [string] $Reason, [int] $Consecutive)
+  [pscustomobject]@{
+    event       = 'handoff'
+    item        = $Item
+    reason      = $Reason
+    consecutive = $Consecutive
+  }
+}

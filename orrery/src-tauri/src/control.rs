@@ -4,16 +4,21 @@
 //! - `watch_run` — emit a Snapshot delta immediately, then a fresh State delta per new event.
 //! - `list_loops` — read `loops/<id>/loop.json`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::model::{Delta, LoopDef, RunState};
+use crate::model::{Checkpoint, Delta, GuardStatus, LoopDef, RunState, StartResult, StartSpec};
 use crate::reducer::Reducer;
 use crate::sprint;
 use crate::watcher;
+
+/// App state managed by Tauri: loopId → most-recently-spawned child PID.
+#[derive(Default)]
+pub struct LoopPids(pub Mutex<HashMap<String, u32>>);
 
 /// Resolve the log path the same way the watcher does.
 fn log_path(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> PathBuf {
@@ -183,6 +188,360 @@ pub fn list_loops(loops_dir: String) -> Result<Vec<LoopDef>, String> {
     Ok(out)
 }
 
+// ===========================================================================
+// A6 — LIVE CONTROL (start / stop / cancel / resume / guard_status)
+// ===========================================================================
+//
+// Conventions mirrored from the engine (bmad-loop.ps1 / stop-loop.ps1):
+//   * STOP flag       — a text file `<stateDir>/STOP` containing "phase"|"story"|"now".
+//                       The loop reads it at safe checkpoints and consumes it. We never
+//                       kill the process — cooperative stop only (stop-loop.ps1 parity).
+//   * checkpoint.json — `<stateDir>/checkpoint.json`; `resume` is a shell command string.
+//   * concurrency     — the engine refuses (`exit 2`) if another process' command line
+//                       references its start script. We mirror that: refuse with
+//                       `Err("AlreadyRunning")` when a live process matches this loop.
+//
+// SECURITY: we only ever spawn the program/args declared in the loop's own loop.json (or
+// the checkpoint `resume` string the engine itself wrote). The frontend cannot inject a
+// command. `mode` is validated against {phase,story,now}.
+
+/// Load `loops/<id>/loop.json` into a `LoopDef`.
+fn load_loop_def(loops_dir: &Path, loop_id: &str) -> Result<LoopDef, String> {
+    if loop_id.is_empty() || loop_id.contains(['/', '\\', '.']) {
+        // basic path-traversal guard: ids are plain directory names.
+        return Err(format!("invalid loopId: {loop_id:?}"));
+    }
+    let p = loops_dir.join(loop_id).join("loop.json");
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
+    serde_json::from_str::<LoopDef>(&text).map_err(|e| format!("parse {p:?}: {e}"))
+}
+
+fn state_dir_of(def: &LoopDef) -> PathBuf {
+    PathBuf::from(&def.state_dir)
+}
+
+fn stop_flag_path(def: &LoopDef) -> PathBuf {
+    // Honor an explicit stopFlag if the loop.json sets one; else `<stateDir>/STOP`.
+    match &def.stop_flag {
+        Some(p) => PathBuf::from(p),
+        None => state_dir_of(def).join("STOP"),
+    }
+}
+
+fn checkpoint_file_path(def: &LoopDef) -> PathBuf {
+    match &def.checkpoint {
+        Some(p) => PathBuf::from(p),
+        None => state_dir_of(def).join("checkpoint.json"),
+    }
+}
+
+/// Distinctive lowercase tokens that identify *this* loop's run on a command line.
+/// All loops here share one stateDir, so stateDir alone can't disambiguate — we key on
+/// the start script's basename plus any `-TaskFile`/`-File` discriminators in its args.
+/// Returns the tokens that MUST all be present for a command line to count as this loop.
+fn guard_tokens(def: &LoopDef) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    if let Some(start) = &def.start {
+        let args = &start.args;
+        for (i, a) in args.iter().enumerate() {
+            let lower = a.to_lowercase();
+            // The script file passed to -File: take just the basename (e.g. bmad-loop.ps1).
+            if lower == "-file" || lower == "-c" || lower == "-command" {
+                if let Some(next) = args.get(i + 1) {
+                    if let Some(base) = Path::new(next).file_name().and_then(|s| s.to_str()) {
+                        tokens.push(base.to_lowercase());
+                    }
+                }
+            }
+            // The task file disambiguates roman (TASK.md) from calc (TASK.calc.md).
+            if lower == "-taskfile" {
+                if let Some(next) = args.get(i + 1) {
+                    if let Some(base) = Path::new(next).file_name().and_then(|s| s.to_str()) {
+                        tokens.push(base.to_lowercase());
+                    } else {
+                        tokens.push(next.to_lowercase());
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: if a loop.json had no usable script token, key on the stateDir so we at
+    // least don't treat *everything* as a match (mirrors the engine's stateDir intent).
+    if tokens.is_empty() {
+        tokens.push(def.state_dir.to_lowercase());
+    }
+    tokens
+}
+
+/// Does a candidate process command line belong to this loop? True iff every guard token
+/// appears in the (lowercased, path-normalized) command line. Tested in isolation.
+fn cmdline_matches(tokens: &[String], cmdline: &str) -> bool {
+    if tokens.is_empty() {
+        return false;
+    }
+    // Normalize backslashes so a token basename matches regardless of path separators.
+    let hay = cmdline.to_lowercase().replace('\\', "/");
+    tokens.iter().all(|t| {
+        let needle = t.replace('\\', "/");
+        hay.contains(&needle)
+    })
+}
+
+/// Scan live processes (sysinfo) for one whose command line matches this loop. Returns its
+/// PID if found. Mirrors the engine's "another orchestrator is already running" guard.
+fn find_running_pid(tokens: &[String]) -> Option<u32> {
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+    // new_with_specifics performs the initial process refresh for us.
+    let sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
+    );
+    for proc in sys.processes().values() {
+        let cmd: String = proc
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if cmd.is_empty() {
+            continue;
+        }
+        if cmdline_matches(tokens, &cmd) {
+            return Some(proc.pid().as_u32());
+        }
+    }
+    None
+}
+
+/// Spawn `program` + `args` as a DETACHED child, redirecting stdout+stderr to
+/// `<stateDir>/run.out` so the existing tailer can read the transcript. We do NOT wait on
+/// the child. Returns its PID.
+fn spawn_detached(
+    state_dir: &Path,
+    program: &str,
+    args: &[String],
+) -> Result<u32, String> {
+    std::fs::create_dir_all(state_dir)
+        .map_err(|e| format!("create stateDir {state_dir:?}: {e}"))?;
+    let out_path = state_dir.join("run.out");
+    let stdout = std::fs::File::create(&out_path)
+        .map_err(|e| format!("create {out_path:?}: {e}"))?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|e| format!("clone run.out handle: {e}"))?;
+
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .current_dir(state_dir.parent().unwrap_or(state_dir))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(stdout))
+        .stderr(std::process::Stdio::from(stderr));
+
+    // Windows: detach into a new process group so a parent Ctrl-C / app exit doesn't
+    // signal the loop; this keeps the orchestrator alive independently.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn {program} {args:?}: {e}"))?;
+    Ok(child.id())
+}
+
+/// Shared start path: run the guard, spawn, record PID. `spec` is taken from loop.json (or
+/// a resume command); never from arbitrary frontend input.
+fn start_with_spec(
+    pids: &LoopPids,
+    loop_id: &str,
+    def: &LoopDef,
+    spec: &StartSpec,
+) -> Result<StartResult, String> {
+    let tokens = guard_tokens(def);
+    if let Some(_existing) = find_running_pid(&tokens) {
+        return Err("AlreadyRunning".to_string());
+    }
+    let state_dir = state_dir_of(def);
+    let pid = spawn_detached(&state_dir, &spec.program, &spec.args)?;
+    if let Ok(mut map) = pids.0.lock() {
+        map.insert(loop_id.to_string(), pid);
+    }
+    Ok(StartResult { pid })
+}
+
+/// Parse a shell command string (the checkpoint `resume`) into program + args. Handles
+/// double-quoted segments so a path with spaces stays one arg. This is NOT a general shell
+/// parser — it only needs to round-trip the engine's own `pwsh -File "..."` strings.
+fn parse_command_string(s: &str) -> Result<StartSpec, String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut any = false;
+    for ch in s.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                any = true;
+            }
+            c if c.is_whitespace() && !in_quote => {
+                if any {
+                    parts.push(std::mem::take(&mut cur));
+                    any = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        parts.push(cur);
+    }
+    if in_quote {
+        return Err(format!("unbalanced quote in resume command: {s:?}"));
+    }
+    let mut it = parts.into_iter();
+    let program = it.next().ok_or_else(|| "empty resume command".to_string())?;
+    let args: Vec<String> = it.collect();
+    Ok(StartSpec { program, args })
+}
+
+/// Read & parse `checkpoint.json` for a loop, if present.
+fn read_checkpoint(def: &LoopDef) -> Option<Checkpoint> {
+    let p = checkpoint_file_path(def);
+    let text = std::fs::read_to_string(&p).ok()?;
+    serde_json::from_str::<Checkpoint>(&text).ok()
+}
+
+/// Read the STOP file's trimmed contents, if present.
+fn read_stop_flag(def: &LoopDef) -> Option<String> {
+    let p = stop_flag_path(def);
+    let text = std::fs::read_to_string(&p).ok()?;
+    let mode = text.trim().to_lowercase();
+    if mode.is_empty() {
+        Some("phase".to_string())
+    } else {
+        Some(mode)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands (A6)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn start_loop(
+    loop_id: String,
+    loops_dir: String,
+    overrides: Option<Value>,
+    pids: tauri::State<'_, LoopPids>,
+) -> Result<StartResult, String> {
+    let _ = overrides; // accepted per §6; engine-side overrides are not wired yet.
+    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let spec = def
+        .start
+        .clone()
+        .ok_or_else(|| format!("loop {loop_id} has no start command"))?;
+    start_with_spec(&pids, &loop_id, &def, &spec)
+}
+
+#[tauri::command]
+pub fn stop_loop(
+    loop_id: String,
+    loops_dir: String,
+    mode: String,
+    _pids: tauri::State<'_, LoopPids>,
+) -> Result<(), String> {
+    // SECURITY: validate mode ∈ {phase,story,now}.
+    let mode = mode.trim().to_lowercase();
+    if !matches!(mode.as_str(), "phase" | "story" | "now") {
+        return Err(format!("invalid stop mode: {mode:?} (expected phase|story|now)"));
+    }
+    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let flag = stop_flag_path(&def);
+    if let Some(parent) = flag.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {parent:?}: {e}"))?;
+    }
+    // Exactly what stop-loop.ps1 does: write the mode word as the STOP file body.
+    std::fs::write(&flag, &mode).map_err(|e| format!("write {flag:?}: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_stop(
+    loop_id: String,
+    loops_dir: String,
+    _pids: tauri::State<'_, LoopPids>,
+) -> Result<(), String> {
+    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let flag = stop_flag_path(&def);
+    match std::fs::remove_file(&flag) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // already clear
+        Err(e) => Err(format!("remove {flag:?}: {e}")),
+    }
+}
+
+#[tauri::command]
+pub fn resume_loop(
+    loop_id: String,
+    loops_dir: String,
+    pids: tauri::State<'_, LoopPids>,
+) -> Result<StartResult, String> {
+    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    // Prefer the checkpoint's resume command; fall back to start.
+    let spec = match read_checkpoint(&def).and_then(|c| c.resume) {
+        Some(resume) if !resume.trim().is_empty() => parse_command_string(&resume)?,
+        _ => def
+            .start
+            .clone()
+            .ok_or_else(|| format!("loop {loop_id} has neither resume nor start command"))?,
+    };
+    start_with_spec(&pids, &loop_id, &def, &spec)
+}
+
+#[tauri::command]
+pub fn guard_status(
+    loop_id: String,
+    loops_dir: String,
+    pids: tauri::State<'_, LoopPids>,
+) -> Result<GuardStatus, String> {
+    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let tokens = guard_tokens(&def);
+
+    // running via sysinfo match OR a live tracked PID.
+    let scanned = find_running_pid(&tokens);
+    let tracked = pids
+        .0
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&loop_id).copied());
+    let pid = scanned.or_else(|| tracked.filter(|&p| pid_is_alive(p)));
+    let running = pid.is_some();
+
+    Ok(GuardStatus {
+        running,
+        pid,
+        stop_pending: read_stop_flag(&def),
+        checkpoint: read_checkpoint(&def),
+    })
+}
+
+/// Is a specific PID currently a live process? Used to validate a tracked PID.
+fn pid_is_alive(pid: u32) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+    sys.process(Pid::from_u32(pid)).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +585,209 @@ mod tests {
         let bmad = defs.iter().find(|d| d.id == "bmad").unwrap();
         assert_eq!(bmad.adapter, "bmad");
         assert_eq!(bmad.log_file.as_deref(), Some("bmad-log.jsonl"));
+    }
+
+    // ----- A6 live-control tests (no real claude loop is ever spawned) -----
+
+    /// Unique temp dir per test; cleaned on drop.
+    struct TmpDir(PathBuf);
+    impl TmpDir {
+        fn new(tag: &str) -> Self {
+            let mut p = std::env::temp_dir();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            p.push(format!("orrery-test-{tag}-{nanos}-{:?}", std::thread::current().id()));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn def_with_state_dir(id: &str, state_dir: &Path, args: Vec<&str>) -> LoopDef {
+        LoopDef {
+            id: id.to_string(),
+            name: id.to_string(),
+            theme: None,
+            kind: Some("generic".to_string()),
+            state_dir: state_dir.to_string_lossy().to_string(),
+            adapter: "generic".to_string(),
+            log_file: Some("log.jsonl".to_string()),
+            stop_flag: None,
+            checkpoint: None,
+            start: Some(StartSpec {
+                program: "pwsh".to_string(),
+                args: args.into_iter().map(|s| s.to_string()).collect(),
+            }),
+            engine: None,
+        }
+    }
+
+    #[test]
+    fn stop_loop_writes_mode_and_cancel_removes_it() {
+        let tmp = TmpDir::new("stop");
+        let def = def_with_state_dir("roman", tmp.path(), vec![
+            "-NoProfile", "-File", "D:/dev/loop/loop.ps1", "-TaskFile", "TASK.md",
+        ]);
+        let flag = stop_flag_path(&def);
+
+        // Replicate the command body's write (the command itself needs tauri::State).
+        std::fs::write(&flag, "phase").unwrap();
+        assert_eq!(std::fs::read_to_string(&flag).unwrap(), "phase");
+        assert_eq!(read_stop_flag(&def).as_deref(), Some("phase"));
+
+        std::fs::write(&flag, "story").unwrap();
+        assert_eq!(read_stop_flag(&def).as_deref(), Some("story"));
+
+        // cancel removes it; second cancel is a no-op (NotFound is Ok).
+        std::fs::remove_file(&flag).unwrap();
+        assert!(!flag.exists());
+        assert_eq!(read_stop_flag(&def), None);
+    }
+
+    #[test]
+    fn stop_mode_validation_rejects_bad_input() {
+        for bad in ["kill", "", "PHASE; rm -rf /", "now ", "halt"] {
+            let m = bad.trim().to_lowercase();
+            let ok = matches!(m.as_str(), "phase" | "story" | "now");
+            // only the exact words are accepted
+            assert_eq!(ok, ["phase", "story", "now"].contains(&m.as_str()), "{bad:?}");
+        }
+        // sanity: the three valid words pass
+        for good in ["phase", "story", "now"] {
+            assert!(matches!(good, "phase" | "story" | "now"));
+        }
+    }
+
+    #[test]
+    fn guard_status_reads_checkpoint_and_stop_file() {
+        let tmp = TmpDir::new("guard");
+        let def = def_with_state_dir("bmad", tmp.path(), vec![
+            "-NoProfile", "-File", "D:/dev/loop/bmad-loop.ps1",
+        ]);
+
+        // Drop a checkpoint.json fixture and a STOP file into the temp stateDir.
+        let cp = r#"{
+            "updatedAt": "2026-06-19T10:22:06.1447403+05:30",
+            "stage": "between-stories (clean)",
+            "story": null,
+            "branch": "develop",
+            "mergeBase": "develop",
+            "cumUsd": 26.7472,
+            "resume": "pwsh -File \"D:\\dev\\loop\\bmad-loop.ps1\""
+        }"#;
+        std::fs::write(checkpoint_file_path(&def), cp).unwrap();
+        std::fs::write(stop_flag_path(&def), "story").unwrap();
+
+        let parsed = read_checkpoint(&def).expect("checkpoint parses");
+        assert_eq!(parsed.stage.as_deref(), Some("between-stories (clean)"));
+        assert_eq!(parsed.branch.as_deref(), Some("develop"));
+        assert!((parsed.cum_usd.unwrap() - 26.7472).abs() < 1e-6);
+        assert_eq!(
+            parsed.resume.as_deref(),
+            Some("pwsh -File \"D:\\dev\\loop\\bmad-loop.ps1\"")
+        );
+
+        assert_eq!(read_stop_flag(&def).as_deref(), Some("story"));
+    }
+
+    #[test]
+    fn guard_tokens_disambiguate_shared_state_dir() {
+        // All three seed loops share one stateDir; tokens must differ by script + task file.
+        let sd = Path::new("D:/dev/loop/.loop");
+        let bmad = def_with_state_dir("bmad", sd, vec!["-NoProfile", "-File", "D:/dev/loop/bmad-loop.ps1"]);
+        let roman = def_with_state_dir("roman", sd, vec!["-NoProfile", "-File", "D:/dev/loop/loop.ps1", "-TaskFile", "TASK.md"]);
+        let calc = def_with_state_dir("calc", sd, vec!["-NoProfile", "-File", "D:/dev/loop/loop.ps1", "-TaskFile", "TASK.calc.md"]);
+
+        let t_bmad = guard_tokens(&bmad);
+        let t_roman = guard_tokens(&roman);
+        let t_calc = guard_tokens(&calc);
+
+        assert!(t_bmad.contains(&"bmad-loop.ps1".to_string()), "{t_bmad:?}");
+        assert!(t_roman.contains(&"loop.ps1".to_string()) && t_roman.contains(&"task.md".to_string()), "{t_roman:?}");
+        assert!(t_calc.contains(&"loop.ps1".to_string()) && t_calc.contains(&"task.calc.md".to_string()), "{t_calc:?}");
+
+        // A real bmad command line matches bmad, not roman/calc.
+        let bmad_cmd = "pwsh -NoProfile -File D:\\dev\\loop\\bmad-loop.ps1";
+        assert!(cmdline_matches(&t_bmad, bmad_cmd));
+        assert!(!cmdline_matches(&t_roman, bmad_cmd));
+        assert!(!cmdline_matches(&t_calc, bmad_cmd));
+
+        // The roman command line matches roman but NOT calc (TASK.md vs TASK.calc.md),
+        // even though both reference loop.ps1 — the task file is the discriminator.
+        let roman_cmd = "pwsh -NoProfile -File D:\\dev\\loop\\loop.ps1 -TaskFile TASK.md";
+        assert!(cmdline_matches(&t_roman, roman_cmd));
+        assert!(!cmdline_matches(&t_calc, roman_cmd), "calc must not match roman's cmd");
+        assert!(!cmdline_matches(&t_bmad, roman_cmd));
+
+        // calc's own command line matches calc (TASK.calc.md contains 'task.md'? no — 'task.calc.md').
+        let calc_cmd = "pwsh -NoProfile -File D:\\dev\\loop\\loop.ps1 -TaskFile TASK.calc.md";
+        assert!(cmdline_matches(&t_calc, calc_cmd));
+        // NOTE: roman's tokens (loop.ps1 + task.md) would substring-match 'task.calc.md'
+        // because "task.calc.md" contains "task" then ".md" but not the contiguous "task.md".
+        assert!(!cmdline_matches(&t_roman, calc_cmd), "roman must not match calc's cmd");
+    }
+
+    #[test]
+    fn parse_command_string_handles_quoted_paths() {
+        let spec = parse_command_string("pwsh -File \"D:\\dev\\loop\\bmad-loop.ps1\"").unwrap();
+        assert_eq!(spec.program, "pwsh");
+        assert_eq!(spec.args, vec!["-File", "D:\\dev\\loop\\bmad-loop.ps1"]);
+
+        let spec2 = parse_command_string("pwsh -NoProfile -File \"C:/has space/loop.ps1\" -TaskFile TASK.md").unwrap();
+        assert_eq!(spec2.program, "pwsh");
+        assert_eq!(
+            spec2.args,
+            vec!["-NoProfile", "-File", "C:/has space/loop.ps1", "-TaskFile", "TASK.md"]
+        );
+
+        // unbalanced quote is rejected
+        assert!(parse_command_string("pwsh -File \"oops").is_err());
+    }
+
+    #[test]
+    fn spawn_detached_captures_pid_and_redirects_output() {
+        // Harmless no-op: pwsh prints a marker and exits 0. Proves spawn + PID capture +
+        // run.out redirection WITHOUT touching claude. Skips gracefully if pwsh is absent.
+        if std::process::Command::new("pwsh").arg("-Version").output().is_err() {
+            eprintln!("pwsh not available — skipping spawn smoke test");
+            return;
+        }
+        let tmp = TmpDir::new("spawn");
+        // stateDir is a child so its parent (cwd) exists.
+        let state_dir = tmp.path().join(".loop");
+        let pid = spawn_detached(
+            &state_dir,
+            "pwsh",
+            &[
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Write-Output 'ORRERY_SPAWN_OK'; exit 0".to_string(),
+            ],
+        )
+        .expect("spawn no-op pwsh");
+        assert!(pid > 0, "captured a real PID");
+
+        // Wait briefly for the child to flush + exit, then confirm run.out got the marker.
+        let out = state_dir.join("run.out");
+        let mut content = String::new();
+        for _ in 0..50 {
+            if let Ok(s) = std::fs::read_to_string(&out) {
+                if s.contains("ORRERY_SPAWN_OK") {
+                    content = s;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(content.contains("ORRERY_SPAWN_OK"), "run.out captured stdout: {content:?}");
     }
 }

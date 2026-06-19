@@ -51,8 +51,21 @@ export function createTransport(choice: LoopChoice, opts: TransportOpts): Transp
   return new ReplayTransport(cfg, opts);
 }
 
-// The three seeded loops (PROTOCOL §7). Fixture URLs resolve under static/.
+// The seeded loops (PROTOCOL §7) + the A3 synthetic showcase. Fixture URLs
+// resolve under static/.
 export const LOOPS: LoopChoice[] = [
+  {
+    // A3 synthetic stream: claimed-green→audit→seal, a refute, rollback+strike,
+    // cooperative-stop→ember→reignite, and a weekly quota-frost. Designed to be
+    // scrubbed in the TransportBar so every signature moment is visible.
+    id: 'demo',
+    name: 'A3 showcase — auditor · rollback · rest-states',
+    theme: 'plasma',
+    adapter: 'bmad',
+    stateDir: 'D:/dev/loop/.loop',
+    fixtureUrl: 'fixtures/demo-events.jsonl',
+    rateMs: 700,
+  },
   {
     id: 'bmad',
     name: 'BMAD — brain2 sprint',

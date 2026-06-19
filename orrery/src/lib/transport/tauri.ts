@@ -8,10 +8,15 @@ import { apply, finalize, initialState } from '../reduce';
 import { normalizeAll } from '../adapters';
 import type { Transport, TransportOpts } from './index';
 
+// Absolute path to the loops/ registry. A5 (loop library) will source this from
+// config / list_loops; until then the control commands resolve it from here.
+const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
+
 export interface TauriConfig {
   stateDir: string;
   adapter: string;
   loopId: string;
+  loopsDir?: string;
 }
 
 export class TauriTransport implements Transport {
@@ -68,24 +73,26 @@ export class TauriTransport implements Transport {
 
   async control(action: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
+    const loopId = this.cfg.loopId;
+    const loopsDir = this.cfg.loopsDir ?? DEFAULT_LOOPS_DIR;
     switch (action) {
       case 'start':
-        await invoke('start_loop', { loopId: this.cfg.loopId });
+        await invoke('start_loop', { loopId, loopsDir });
         break;
       case 'stop:phase':
-        await invoke('stop_loop', { loopId: this.cfg.loopId, mode: 'phase' });
+        await invoke('stop_loop', { loopId, loopsDir, mode: 'phase' });
         break;
       case 'stop:story':
-        await invoke('stop_loop', { loopId: this.cfg.loopId, mode: 'story' });
+        await invoke('stop_loop', { loopId, loopsDir, mode: 'story' });
         break;
       case 'stop:now':
-        await invoke('stop_loop', { loopId: this.cfg.loopId, mode: 'now' });
+        await invoke('stop_loop', { loopId, loopsDir, mode: 'now' });
         break;
       case 'cancel-stop':
-        await invoke('cancel_stop', { loopId: this.cfg.loopId });
+        await invoke('cancel_stop', { loopId, loopsDir });
         break;
       case 'resume':
-        await invoke('resume_loop', { loopId: this.cfg.loopId });
+        await invoke('resume_loop', { loopId, loopsDir });
         break;
       default:
         // eslint-disable-next-line no-console
