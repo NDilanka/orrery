@@ -55,7 +55,21 @@
   Per-phase model tiering: a hashtable @{ discover; execute; judge; hard } whose
   values are 'haiku'|'sonnet'|'opus'. Defaults to
   @{ discover='haiku'; execute='sonnet'; judge='haiku'; hard='opus' }. The
-  execute tier drives the main iteration; the judge tier drives the verifier.
+  execute tier drives the main iteration; the judge tier drives the verifier;
+  the discover tier drives the Q&A auto-decider.
+
+.PARAMETER AutoDecide
+  E5. When the agent emits a `QUESTION: <text>` marker (and no UI answer.json is
+  waiting), auto-answer it via a cheap-model decider (the discover tier) so an
+  unattended overnight run is not blocked. Off by default — without it (and with
+  no answer.json) the loop just proceeds. Emits review-question / review-answer.
+  The actual decider claude call is ISOLATED in Invoke-DeciderClaude (stubbable).
+
+  Prompt caching is ALWAYS on (it is just call structuring + usage parsing): the
+  stable prefix (system instructions + task spec + frozen AC contract) is placed
+  first so it is eligible for Anthropic prompt caching; the volatile failing-test
+  context goes last. Each iteration emits a `cache {hitRatio,warm}` event parsed
+  from the returned JSON usage (tolerant of absence).
 
 .EXAMPLE
   pwsh -File loop.ps1 -DryRun
@@ -85,6 +99,7 @@ param(
   [int]       $DefaultQuotaWaitMin = 30, # E3: wait minutes when no reset time is parseable
   [int]       $IterTimeoutMin = 0,     # E4: per-iteration wall-clock cap (0 = disabled; >0 kills a hung claude)
   [int]       $ConsecutiveFailLimit = 3, # E4: consecutive no-progress iters -> recover-once -> handoff
+  [switch]    $AutoDecide,             # E5: auto-answer an agent QUESTION via a cheap-model decider (off by default)
   [switch]   $DryRun,
   [switch]   $Fresh,
   [switch]   $AllowConcurrent
@@ -106,8 +121,9 @@ if (-not $GateStages -or $GateStages.Count -eq 0) {
 $ModelDefaults = @{ discover = 'haiku'; execute = 'sonnet'; judge = 'haiku'; hard = 'opus' }
 if ($Models) { foreach ($k in $Models.Keys) { $ModelDefaults[$k] = $Models[$k] } }
 $Models = $ModelDefaults
-$ExecuteModel = Get-ModelForPhase -Phase 'execute' -Models $Models
-$JudgeModel   = Get-ModelForPhase -Phase 'judge'   -Models $Models
+$ExecuteModel = Get-ModelForPhase -Phase 'execute'  -Models $Models
+$JudgeModel   = Get-ModelForPhase -Phase 'judge'    -Models $Models
+$DeciderModel = Get-ModelForPhase -Phase 'discover' -Models $Models  # E5: Q&A auto-decider tier
 
 function Write-Log($obj) { ($obj | ConvertTo-Json -Compress) | Add-Content -Path "$StateDir/log.jsonl" }
 
@@ -146,6 +162,43 @@ Set pass=true ONLY if every criterion is demonstrably satisfied by the diff.
     '--allowedTools', 'Read'
   )
   & claude @judgeArgs 2>$null | Out-String
+}
+
+function Invoke-DeciderClaude {
+  # E5. ISOLATED, stubbable claude call for the Q&A AUTO-DECIDER. The ONLY place
+  # -AutoDecide spends quota; selftest-final.ps1 never reaches it (it tests the
+  # marker detection + answer.json consume + event shapes with NO claude). A
+  # cheap-model (discover tier) decider that reads ONLY the agent's open question
+  # + the task/contract context and returns a SHORT directive answer the next
+  # iteration acts on. Plan-mode, read-only, single turn — bounded + cheap.
+  # Returns the decider's raw stdout string (the answer text).
+  param(
+    [string]   $Question,
+    [string]   $Task,
+    [string[]] $Criteria,
+    [string]   $Model
+  )
+  $contractText = ($Criteria | ForEach-Object { "- $_" }) -join "`n"
+  $deciderPrompt = @"
+You are the ORCHESTRATOR acting as a cheap DECIDER. The autonomous worker paused
+and asked ONE question. Give the SHORTEST actionable directive that unblocks it,
+consistent with the task and its frozen acceptance criteria. Do NOT ask a question
+back. Answer in one or two sentences of plain text (no JSON, no preamble).
+
+TASK: $Task
+
+FROZEN ACCEPTANCE CRITERIA:
+$contractText
+
+WORKER QUESTION:
+$Question
+"@
+  $deciderArgs = @(
+    '-p', $deciderPrompt, '--output-format', 'text', '--max-turns', '1',
+    '--model', $Model, '--permission-mode', 'plan',
+    '--allowedTools', 'Read'
+  )
+  (& claude @deciderArgs 2>$null | Out-String).Trim()
 }
 
 # --- E3: quota survival -----------------------------------------------------
@@ -441,6 +494,75 @@ function Update-Spend {
   }
 }
 
+function Write-CacheTelemetry {
+  # E5. Parse the cache token counters from this iteration's claude result and emit
+  # the PROTOCOL §2 `cache {hitRatio,warm}` event so the Orrery tailer can render
+  # cache-teal recycled-fuel live. Tolerant of absence (no usage block -> 0/cold).
+  # Pure parse via Get-CacheUsage; this wrapper just logs + prints.
+  param([object] $Result)
+  $usage = if ($Result -and $Result.PSObject -and ($Result.PSObject.Properties.Name -contains 'usage')) { $Result.usage } else { $null }
+  $cu = Get-CacheUsage -Usage $usage
+  Write-Log (New-CacheEvent -HitRatio $cu.HitRatio -Warm $cu.Warm)
+  $warmTag = if ($cu.Warm) { 'warm' } else { 'cold' }
+  Write-Host ("  [CACHE] {0} hitRatio={1} (read={2} input={3})" -f $warmTag, $cu.HitRatio, $cu.CacheRead, $cu.Input) -ForegroundColor DarkCyan
+  $cu
+}
+
+function Resolve-Question {
+  # E5 ANSWER INBOX / Q&A surface. Detect an agent QUESTION marker in this iter's
+  # result body and/or progress.md (pure Get-QuestionMarker). When found, emit
+  # review-question, then resolve the answer in priority order:
+  #   (a) <StateDir>/answer.json present + matches this turn -> emit review-answer,
+  #       CONSUME (delete) the file, feed the answer back into progress.md;
+  #   (b) else if -AutoDecide -> cheap-model decider answers (isolated, stubbable),
+  #       emit review-answer, feed it back;
+  #   (c) else proceed unanswered (the question is logged; the run continues).
+  # Returns the answer string when one was produced (a|b), else $null. The "turn"
+  # is the iteration number (the generic loop's Q&A turn key).
+  param(
+    [int]    $Turn,
+    [string] $ResultText
+  )
+  $progressPath = "$StateDir/progress.md"
+  $progressText = if (Test-Path $progressPath) { Get-Content $progressPath -Raw -ErrorAction SilentlyContinue } else { '' }
+  # Look in the agent's result body first, then progress.md (first marker wins).
+  $q = Get-QuestionMarker -Text $ResultText
+  if (-not $q) { $q = Get-QuestionMarker -Text $progressText }
+  if (-not $q) { return $null }
+
+  Write-Log (New-ReviewQuestionEvent -Turn $Turn -Q $q)
+  Write-Host "  [Q&A] question (turn $Turn): $q" -ForegroundColor Cyan
+
+  # (a) UI answer inbox — answer.json the UI's "answer from UI" wrote.
+  $answerPath = "$StateDir/answer.json"
+  if (Test-Path $answerPath) {
+    $content = Get-Content $answerPath -Raw -ErrorAction SilentlyContinue
+    $inbox = Read-AnswerInbox -Content $content -Turn $Turn
+    if ($inbox.Matched) {
+      Remove-Item $answerPath -Force -ErrorAction SilentlyContinue   # consume once
+      Write-Log (New-ReviewAnswerEvent -Turn $Turn -A $inbox.A)
+      Write-Host "  [Q&A] answered from UI inbox: $($inbox.A)" -ForegroundColor Green
+      Add-Content -Path $progressPath -Value "`n## Answer (turn $Turn, from UI)`nQUESTION: $q`nANSWER: $($inbox.A)`nProceed accordingly; clear the QUESTION line."
+      return $inbox.A
+    }
+  }
+
+  # (b) auto-decider (cheap model) when enabled.
+  if ($AutoDecide) {
+    $ans = Invoke-DeciderClaude -Question $q -Task $TaskFile -Criteria $FrozenContract -Model $DeciderModel
+    if ($ans) {
+      Write-Log (New-ReviewAnswerEvent -Turn $Turn -A $ans)
+      Write-Host "  [Q&A] auto-decided (model=$DeciderModel): $ans" -ForegroundColor Green
+      Add-Content -Path $progressPath -Value "`n## Answer (turn $Turn, auto-decided)`nQUESTION: $q`nANSWER: $ans`nProceed accordingly; clear the QUESTION line."
+      return $ans
+    }
+  }
+
+  # (c) no answer available — log only; the run proceeds (the question persists).
+  Write-Host "  [Q&A] no answer.json and -AutoDecide off — proceeding unanswered" -ForegroundColor DarkYellow
+  return $null
+}
+
 $base       = Invoke-GateAndLog -LogEvent (-not $DryRun)
 $BaseTotal  = $base.Total
 $BestPass   = $base.Pass
@@ -451,16 +573,37 @@ if ($DryRun) {
   $stageNames = ($GateStages | ForEach-Object { $_.Name }) -join ','
   Write-Host "`nDryRun OK — gate wired. git=$UseGit  bestPass=$BestPass  testHash=$($TestHash0.Substring(0,12))..."
   Write-Host "    stages=[$stageNames]  lockGlob=$LockGlob  lockedFiles=$($HashMap0.Count)  tools=$($AllowedTools.Count)  permMode=$PermissionMode  maxTurns=$MaxTurns"
-  Write-Host "    models: execute=$ExecuteModel  judge=$JudgeModel   verify=$([bool]$Verify)  contractCriteria=$($FrozenContract.Count)"
+  Write-Host "    models: execute=$ExecuteModel  judge=$JudgeModel  decider=$DeciderModel   verify=$([bool]$Verify)  contractCriteria=$($FrozenContract.Count)"
   $itLabel = if ($IterTimeoutSec -gt 0) { "${IterTimeoutMin}m" } else { 'off' }
   Write-Host "    resilience: iterTimeout=$itLabel  consecutiveFailLimit=$ConsecutiveFailLimit"
+  Write-Host "    E5: promptCaching=on (stable-prefix)  cacheTelemetry=on  autoDecide=$([bool]$AutoDecide)  qaInbox=$StateDir/answer.json"
   Write-Host "No claude calls, no quota spent." -ForegroundColor Cyan
   exit 0
 }
 if ($base.Green) { Stop-Loop "already green at baseline" $true }
 
 # --- the loop --------------------------------------------------------------
+# E5 PROMPT CACHING. The prompt is structured STABLE-PREFIX-FIRST so the leading
+# block (system instructions + the task spec name + the FROZEN acceptance-criteria
+# contract) is byte-identical every iteration and therefore eligible for Anthropic
+# prompt caching (the repeated prefix is served from cache, not re-charged at full
+# input price). The only volatile per-iteration steer (the recover/verifier
+# feedback) is written into .loop/progress.md, which the agent reads itself — so
+# even that stays out of the cached prefix. Cache effect is observed via the
+# `cache {hitRatio,warm}` event parsed from each result's `usage` (Get-CacheUsage).
+$ContractBlock = if ($FrozenContract -and $FrozenContract.Count) {
+  "FROZEN ACCEPTANCE CRITERIA (do not weaken; the work is done only when ALL hold):`n" +
+  (($FrozenContract | ForEach-Object { "- $_" }) -join "`n")
+} else {
+  "FROZEN ACCEPTANCE CRITERIA: see the '## Acceptance Criteria' / '## Definition of done' section of $TaskFile."
+}
 $prompt = @"
+You are an autonomous fix-until-green worker. Follow these stable instructions
+every turn; they do not change between iterations.
+
+$ContractBlock
+
+PROCEDURE:
 Read $TaskFile and .loop/progress.md first.
 
 Then run ``bun test``, read the FIRST failing assertion, and make the SMALLEST
@@ -469,6 +612,8 @@ skip, or delete any *.test.ts file, and do not break a test that already passes.
 Re-run ``bun test`` to confirm no regression. Finally update .loop/progress.md
 with what you changed, what still fails, and the next step. If you are stuck,
 write ``BLOCKED: <reason>`` on the first line of .loop/progress.md and stop.
+If you need a human/orchestrator decision to proceed, write
+``QUESTION: <your one question>`` on the first line of .loop/progress.md and stop.
 "@
 
 # Build claude args from the parametrized tool set / permission mode.
@@ -522,6 +667,11 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   # cost-ceiling stop sees the updated cum)
   Update-Spend -IterCost ([double]$res.total_cost_usd)
 
+  # E5 CACHE TELEMETRY. Emit a `cache {hitRatio,warm}` event from this iter's
+  # result usage (only for a productive iter — a timed-out iter has no result).
+  # Stable-prefix caching means hitRatio climbs after the first warm iteration.
+  if ($null -ne $res) { Write-CacheTelemetry -Result $res | Out-Null }
+
   # 4. EVAL GATE + integrity signals
   $g            = Invoke-GateAndLog
   # E2 per-file tamper detection: diff the current hash-map against baseline so
@@ -532,6 +682,14 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   $countDropped = ($g.Total -lt $BaseTotal)
   $blocked      = [bool](Select-String -Path "$StateDir/progress.md" -Pattern '^BLOCKED' -Quiet)
   $changed      = if ($UseGit) { [bool](git status --porcelain) } else { $true }
+
+  # E5 ANSWER INBOX / Q&A SURFACE. If the agent paused with a QUESTION marker (in
+  # its result body or progress.md), raise review-question, then either consume a
+  # UI answer.json, auto-decide (cheap model, when -AutoDecide), or proceed. The
+  # answer is fed back through progress.md for the next iteration. No-op (no event,
+  # transparent) when there is no QUESTION — preserves default behavior exactly.
+  $resultBody = if ($res -and $res.PSObject -and ($res.PSObject.Properties.Name -contains 'result')) { "$($res.result)" } else { '' }
+  Resolve-Question -Turn $script:Iter -ResultText $resultBody | Out-Null
 
   # 5. VERIFY (anti-false-green). Only when -Verify AND the gate claims green AND
   # integrity is intact (no point auditing a tampered/dropped tree). A SECOND,
