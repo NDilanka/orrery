@@ -27,15 +27,23 @@
   import VerdictPanel from '$lib/panels/VerdictPanel.svelte';
   import TransportBar from '$lib/panels/TransportBar.svelte';
   import BodyView from '$lib/panels/BodyView.svelte';
+  import TuningConsole from '$lib/panels/TuningConsole.svelte';
+  import ModeBar from '$lib/panels/ModeBar.svelte';
+  import StaleBadge from '$lib/panels/StaleBadge.svelte';
+  import QAConsole from '$lib/panels/QAConsole.svelte';
+  import PlanetariumOverlay from '$lib/panels/PlanetariumOverlay.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
+  import { uiStore } from '$lib/stores/ui.svelte';
   import {
     createTransport,
     hasTauri,
+    hasWsServer,
     LOOPS,
     type LoopChoice,
     type Transport,
+    type WsStatus,
   } from '$lib/transport';
   import { isPlayback, type PlaybackState, type PlaybackTransport } from '$lib/transport/replay';
 
@@ -55,6 +63,14 @@
     total: 0,
     done: false,
   });
+  // A7 ws freshness badge (only populated when the WebSocket transport is active)
+  let wsStatus = $state<WsStatus | null>(null);
+  // observe-only when web/no-token (ws transport says so) — disables answer/control
+  const observeOnly = $derived(wsStatus?.observeOnly ?? false);
+  // an answer fn the QAConsole can call (present on tauri + ws; replay no-ops)
+  function answer(qid: string, text: string): void | Promise<void> {
+    return transport?.answer?.(qid, text);
+  }
 
   const activeLoopName = $derived(
     activeLoop ? LOOPS.find((l) => l.id === activeLoop)?.name ?? activeLoop : null,
@@ -75,12 +91,19 @@
     transport?.stop();
     runStore.reset();
     playback = null;
+    wsStatus = null;
     const choice = LOOPS.find((l) => l.id === id);
     if (!choice) return;
-    transport = createTransport(withBase(choice), { onState: (s) => runStore.set(s) });
+    transport = createTransport(withBase(choice), {
+      onState: (s) => runStore.set(s),
+      onWsStatus: (st) => (wsStatus = st),
+    });
     if (isPlayback(transport)) {
       playback = transport;
       transport.onPlayback((p) => (playbackState = p));
+    } else if (uiStore.mode === 'rewind') {
+      // Rewind needs a scrubbable run; a live feed can't scrub → fall back.
+      uiStore.setMode('observatory');
     }
     await transport.start();
   }
@@ -89,6 +112,7 @@
     transport?.stop();
     transport = null;
     playback = null;
+    wsStatus = null;
     runStore.reset();
   }
 
@@ -126,9 +150,13 @@
   }
 
   onMount(() => {
-    mode = hasTauri() ? 'live' : 'replay';
+    mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
+    const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
     void cosmosStore.load();
-    return () => transport?.stop();
+    return () => {
+      teardownUi();
+      transport?.stop();
+    };
   });
 </script>
 
@@ -153,15 +181,33 @@
     <!-- ── SYSTEM (the existing Observatory, scoped to the active loop) ─────── -->
     {#if view === 'system' || view === 'body'}
       <div class="layer system-layer {view === 'system' ? 'in' : 'out-near'}">
+        <!-- the canvas always renders; it consults uiStore for the tier/mode -->
         <Observatory />
-        <Mechanism />
-        <CostQuotaStrip />
-        <Hud />
-        <VerdictPanel />
-        {#if playback}
-          <TransportBar transport={playback} state={playbackState} />
+
+        {#if uiStore.ambient}
+          <!-- PLANETARIUM: ambient Tier-1; only threshold text, recessed exit. -->
+          <PlanetariumOverlay />
+        {:else}
+          <!-- OBSERVATORY / REWIND chrome (the full instrument). The gear
+               Mechanism is Tier-2 → hidden on a phone (uiStore.tierOne). -->
+          {#if !uiStore.tierOne}
+            <Mechanism />
+          {/if}
+          <CostQuotaStrip />
+          <Hud />
+          <VerdictPanel />
+          <QAConsole {answer} {observeOnly} />
+          {#if playback}
+            <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+          {/if}
+          <RunControlBar {control} />
         {/if}
-        <RunControlBar {control} />
+
+        <!-- mode toggle + ws freshness badge sit above every mode -->
+        {#if view === 'system'}
+          <ModeBar canRewind={!!playback} />
+        {/if}
+        <StaleBadge status={wsStatus} />
       </div>
     {/if}
 
@@ -209,39 +255,34 @@
       </div>
     </nav>
 
-    <!-- ✦ ignite-new-loop affordance (only at the Cosmos altitude) -->
+    <!-- ✦ ignite-new-loop + ✎ edit affordances (only at the Cosmos altitude) -->
     {#if view === 'cosmos'}
       <button class="ignite-fab" onclick={() => cosmosStore.igniteNew()}>
         ✦ ignite new loop
       </button>
+      {#if cosmosStore.loops.length}
+        <div class="edit-rail">
+          <span class="rail-label mono">recalibrate</span>
+          {#each cosmosStore.loops as l (l.id)}
+            <button class="edit-chip mono" onclick={() => cosmosStore.editLoop(l.id)} title="edit {l.name}">
+              ✎ {l.id}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
 
-    <!-- A5 stub: Tuning Console placeholder -->
-    {#if cosmosStore.ignitePlaceholder}
-      <div
-        class="modal-scrim"
-        role="presentation"
-        onclick={() => cosmosStore.dismissIgnite()}
-        onkeydown={(e) => e.key === 'Escape' && cosmosStore.dismissIgnite()}
-      >
-        <div
-          class="modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Tuning Console placeholder"
-          tabindex="-1"
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.stopPropagation()}
-        >
-          <div class="mtitle mono">✦ SET ORBITAL PARAMETERS</div>
-          <p class="mbody">
-            The Tuning Console — blueprint + three dials + a destination — is coming in
-            <strong>A5</strong>. Creating a loop here will <em>ignite a new star</em> into the
-            Cosmos.
-          </p>
-          <button class="nbtn" onclick={() => cosmosStore.dismissIgnite()}>got it</button>
-        </div>
-      </div>
+    <!-- A5: the Tuning Console (create / edit a loop) -->
+    {#if cosmosStore.console}
+      <TuningConsole
+        mode={cosmosStore.console.mode}
+        editId={cosmosStore.console.editId}
+        onClose={() => cosmosStore.dismissIgnite()}
+        onCreated={(id) => {
+          void cosmosStore.load();
+          void id;
+        }}
+      />
     {/if}
   {/if}
 </main>
@@ -401,42 +442,38 @@
     background: color-mix(in srgb, var(--amber) 16%, transparent);
   }
 
-  /* A5 stub modal */
-  .modal-scrim {
+  /* A5: per-loop "recalibrate" (edit) rail along the bottom-left */
+  .edit-rail {
     position: absolute;
-    inset: 0;
+    bottom: 18px;
+    left: 18px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    background: rgba(7, 9, 18, 0.6);
-    backdrop-filter: blur(3px);
-    z-index: 30;
+    gap: 7px;
+    flex-wrap: wrap;
+    max-width: 40vw;
+    z-index: 20;
   }
-  .modal {
-    width: min(440px, 90vw);
-    padding: 24px 26px;
+  .rail-label {
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .edit-chip {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    padding: 5px 11px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
     background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .mtitle {
-    font-size: 13px;
-    letter-spacing: 0.18em;
-    color: var(--brass);
-  }
-  .mbody {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.55;
     color: var(--text-dim);
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: border-color 0.18s, color 0.18s;
   }
-  .mbody strong {
-    color: var(--starlight);
-  }
-  .modal .nbtn {
-    align-self: flex-start;
+  .edit-chip:hover {
+    border-color: var(--brass);
+    color: var(--brass);
   }
 </style>
