@@ -154,6 +154,11 @@ interface Verdict{ pass: boolean; failingCriteria: string[]; evidence?: string; 
 1. **Pure, keyed, idempotent.** `apply(state, event) -> state`. Re-applying the full log twice yields
    identical state. Items keyed by `key`, groups by `id`, QA by `kind+turn+(epic||'')`.
 2. **`cumUsd` is running-max**, never additive: `cumUsd = max(cumUsd, event.cum ?? event.cumUsd ?? 0)`.
+   **Reset the running-max (and `cost.cumUsd`) to 0 on each `start` event** — the bmad log can
+   concatenate multiple runs whose `cum` restarts, and the displayed cumUsd must reflect the *current*
+   run so it matches `checkpoint.cumUsd` (e.g. the bmad fixture → 26.75, the last run's high-water, not
+   the whole-file 75.23). The cost `series` is NOT cleared on `start` (it keeps the multi-run sawtooth).
+   `start` also clears `quota.active` and `restState`.
 3. **Cost series** appends a sample `{t, cum}` whenever a `cum`-bearing event arrives; `ratePerMin`
    is derived from the last ~N samples. `t` is ms since epoch (caller stamps; in tests use the line index ×1000).
 4. **Status authority:** sprint-status.yaml is authoritative for items NOT currently in flight; a live
