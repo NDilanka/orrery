@@ -1,0 +1,532 @@
+//! Universal `RunState` and sub-structs (PROTOCOL.md §3), plus `LoopDef` (§7) and the
+//! `Delta` channel enum (§6). All wire shapes are `camelCase` JSON.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+// ---------------------------------------------------------------------------
+// Enums (string unions on the wire)
+// ---------------------------------------------------------------------------
+
+/// `type RunStatus = 'idle'|'running'|'stopping'|'stopped'|'quota-wait'|'handoff'|'error';`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunStatus {
+    Idle,
+    Running,
+    Stopping,
+    Stopped,
+    QuotaWait,
+    Handoff,
+    Error,
+}
+
+impl Default for RunStatus {
+    fn default() -> Self {
+        RunStatus::Idle
+    }
+}
+
+/// `type SixPhase = 'discover'|'assemble'|'execute'|'verify'|'persist'|'decide';`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SixPhase {
+    Discover,
+    Assemble,
+    Execute,
+    Verify,
+    Persist,
+    Decide,
+}
+
+/// `type ItemStatus = 'backlog'|'ready'|'in-progress'|'review'|'done'|'blocked'|'failed';`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ItemStatus {
+    Backlog,
+    Ready,
+    InProgress,
+    Review,
+    Done,
+    Blocked,
+    Failed,
+}
+
+impl Default for ItemStatus {
+    fn default() -> Self {
+        ItemStatus::Backlog
+    }
+}
+
+/// `type RestState = 'certified-done'|'stopped-ember'|'quota-frost'|'handoff-beacon'|null;`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestState {
+    CertifiedDone,
+    StoppedEmber,
+    QuotaFrost,
+    HandoffBeacon,
+}
+
+/// `'haiku'|'sonnet'|'opus'`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTier {
+    Haiku,
+    Sonnet,
+    Opus,
+}
+
+/// `stopPending: 'phase'|'story'|'now'|null`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StopPending {
+    Phase,
+    Story,
+    Now,
+}
+
+/// `resetType: 'five_hour'|'weekly'|null`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetType {
+    FiveHour,
+    Weekly,
+}
+
+/// Group lifecycle: `'backlog'|'in-progress'|'done'`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroupStatus {
+    Backlog,
+    InProgress,
+    Done,
+}
+
+impl Default for GroupStatus {
+    fn default() -> Self {
+        GroupStatus::Backlog
+    }
+}
+
+/// Retro lifecycle: `'optional'|'done'|'pending'|null`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RetroStatus {
+    Optional,
+    Done,
+    Pending,
+}
+
+/// QA kind: `'review'|'retro'`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QaKind {
+    Review,
+    Retro,
+}
+
+/// `answeredBy: 'agent'|'ui'|null`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnsweredBy {
+    Agent,
+    Ui,
+}
+
+// ---------------------------------------------------------------------------
+// RunState and sub-structs (§3)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunState {
+    pub loop_id: String,
+    pub run: Run,
+    /// epics (rings). generic loops may have 0-1 group.
+    pub groups: BTreeMap<String, Group>,
+    /// stories / iterations-as-one-item
+    pub items: BTreeMap<String, WorkItem>,
+    pub current_item: Option<String>,
+    pub phase: Phase,
+    pub cost: Cost,
+    pub quota: Quota,
+    pub cache: Cache,
+    pub questions: Vec<Qa>,
+    /// by item key, latest
+    pub verdicts: BTreeMap<String, Verdict>,
+    /// raw event count
+    pub events: u64,
+}
+
+impl RunState {
+    pub fn new(loop_id: impl Into<String>) -> Self {
+        RunState {
+            loop_id: loop_id.into(),
+            run: Run::default(),
+            groups: BTreeMap::new(),
+            items: BTreeMap::new(),
+            current_item: None,
+            phase: Phase::default(),
+            cost: Cost::default(),
+            quota: Quota::default(),
+            cache: Cache::default(),
+            questions: Vec::new(),
+            verdicts: BTreeMap::new(),
+            events: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Run {
+    pub status: RunStatus,
+    /// which "not-running" palette, if any
+    pub rest_state: Option<RestState>,
+    pub pid: Option<i64>,
+    /// current work item / goal
+    pub target: Option<String>,
+    pub branch: Option<String>,
+    pub merge_base: String,
+    /// RUNNING-MAX of every cum/cumUsd seen (never additive)
+    pub cum_usd: f64,
+    /// from checkpoint
+    pub stage: Option<String>,
+    pub stop_pending: Option<StopPending>,
+    pub resume_cmd: Option<String>,
+    pub started_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+impl Default for Run {
+    fn default() -> Self {
+        Run {
+            status: RunStatus::Idle,
+            rest_state: None,
+            pid: None,
+            target: None,
+            branch: None,
+            merge_base: String::new(),
+            cum_usd: 0.0,
+            stage: None,
+            stop_pending: None,
+            resume_cmd: None,
+            started_at: None,
+            updated_at: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Group {
+    pub id: String,
+    pub status: GroupStatus,
+    pub retro_status: Option<RetroStatus>,
+    pub ring_index: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItem {
+    pub key: String,
+    pub group: Option<String>,
+    pub index: i64,
+    pub status: ItemStatus,
+    pub gate: Option<Gate>,
+    pub smoke: Option<Smoke>,
+    pub pr: Option<Pr>,
+    /// frozen AC contract
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ghost: Option<Ghost>,
+    pub strikes: i64,
+    pub strike_budget: i64,
+    /// verifier sealed it (vs claimed-green)
+    pub certified: bool,
+    pub cost_attributed: f64,
+    /// for sprint-status vs live-event conflict resolution
+    pub last_event_ts: f64,
+}
+
+impl WorkItem {
+    pub fn new(key: impl Into<String>) -> Self {
+        WorkItem {
+            key: key.into(),
+            group: None,
+            index: 0,
+            status: ItemStatus::Backlog,
+            gate: None,
+            smoke: None,
+            pr: None,
+            ghost: None,
+            strikes: 0,
+            strike_budget: 0,
+            certified: false,
+            cost_attributed: 0.0,
+            last_event_ts: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Gate {
+    pub green: bool,
+    pub pass: i64,
+    pub fail: i64,
+    pub total: i64,
+    pub baseline_pass: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stages: Option<Vec<Stage>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stage {
+    pub name: String,
+    pub ok: bool,
+    pub exit: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Smoke {
+    pub iter: i64,
+    pub passed: bool,
+    pub verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timed_out: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pr {
+    pub url: String,
+    pub base: String,
+    pub merged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ghost {
+    pub criteria: Vec<Criterion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Criterion {
+    pub text: String,
+    pub met: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Phase {
+    pub name: Option<String>,
+    pub label: Option<String>,
+    pub six_phase: Option<SixPhase>,
+    pub model: Option<ModelTier>,
+}
+
+impl Default for Phase {
+    fn default() -> Self {
+        Phase {
+            name: None,
+            label: None,
+            six_phase: None,
+            model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cost {
+    pub cum_usd: f64,
+    pub ceiling_usd: Option<f64>,
+    /// last threshold crossed
+    pub alert_pct: Option<i64>,
+    pub series: Vec<CostSample>,
+    pub rate_per_min: f64,
+}
+
+impl Default for Cost {
+    fn default() -> Self {
+        Cost {
+            cum_usd: 0.0,
+            ceiling_usd: None,
+            alert_pct: None,
+            series: Vec::new(),
+            rate_per_min: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostSample {
+    /// ms since epoch
+    pub t: f64,
+    pub cum: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quota {
+    pub active: bool,
+    pub label: Option<String>,
+    pub reset_at: Option<String>,
+    pub resume_at: Option<String>,
+    pub reset_type: Option<ResetType>,
+    pub probe: i64,
+    pub wait_sec: i64,
+}
+
+impl Default for Quota {
+    fn default() -> Self {
+        Quota {
+            active: false,
+            label: None,
+            reset_at: None,
+            resume_at: None,
+            reset_type: None,
+            probe: 0,
+            wait_sec: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cache {
+    pub hit_ratio: f64,
+    pub warm: bool,
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        Cache {
+            hit_ratio: 0.0,
+            warm: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Qa {
+    pub id: String,
+    pub kind: QaKind,
+    pub turn: i64,
+    pub q: String,
+    pub a: Option<String>,
+    pub summary: Option<String>,
+    pub answered_by: Option<AnsweredBy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Verdict {
+    pub pass: bool,
+    pub failing_criteria: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// LoopDef (§7)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopDef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub theme: Option<String>,
+    /// 'generic' | 'external'
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub state_dir: String,
+    /// 'generic' | 'bmad' | 'custom'
+    pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_flag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<StartSpec>,
+    /// present when kind=generic (the 6 blocks as config); kept opaque here
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSpec {
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Delta channel enum (§6)
+// ---------------------------------------------------------------------------
+
+/// `Delta = { kind: 'snapshot', state } | { kind: 'event', event } | { kind: 'state', state }`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Delta {
+    Snapshot { state: RunState },
+    Event { event: serde_json::Value },
+    State { state: RunState },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delta_wire_shape_matches_protocol() {
+        let snap = Delta::Snapshot {
+            state: RunState::new("x"),
+        };
+        let v = serde_json::to_value(&snap).unwrap();
+        assert_eq!(v["kind"], "snapshot");
+        assert!(v.get("state").is_some());
+
+        let ev = Delta::Event {
+            event: serde_json::json!({"event":"iter"}),
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["kind"], "event");
+        assert_eq!(v["event"]["event"], "iter");
+
+        let st = Delta::State {
+            state: RunState::new("x"),
+        };
+        assert_eq!(serde_json::to_value(&st).unwrap()["kind"], "state");
+    }
+
+    #[test]
+    fn runstate_uses_camelcase_keys() {
+        let v = serde_json::to_value(&RunState::new("loop1")).unwrap();
+        assert!(v.get("loopId").is_some(), "loopId camelCase");
+        assert!(v.get("currentItem").is_some(), "currentItem camelCase");
+        assert!(v["run"].get("cumUsd").is_some(), "run.cumUsd camelCase");
+        assert!(v["run"].get("restState").is_some(), "run.restState camelCase");
+        assert!(v["run"].get("stopPending").is_some(), "run.stopPending camelCase");
+        assert!(v["cost"].get("ratePerMin").is_some(), "cost.ratePerMin camelCase");
+        assert!(v["quota"].get("resetAt").is_some(), "quota.resetAt camelCase");
+        assert!(v["cache"].get("hitRatio").is_some(), "cache.hitRatio camelCase");
+    }
+}

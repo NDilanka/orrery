@@ -1,0 +1,88 @@
+/* The Orrery v2 — design tokens (plan §3). Obsidian-and-brass instrument
+   language. Status is never by hue alone in the renderer; these are the palette
+   primitives. Numbers are tabular for honest cost/quota readouts. */
+
+:root {
+  /* ── v1 core palette ── */
+  --void: #070912; /* deep space background */
+  --brass: #c9a24b; /* clockwork / structure */
+  --starlight: #eaf0ff; /* primary text / star core */
+  --ember: #ff7a3c; /* warm-banked stop */
+  --plasma-cyan: #46e0ff; /* rewind / time-shimmer / motes */
+  --amber: #ffc24b; /* override dots, 50% horizon, beacon warm */
+  --plasma-green: #5bf09b; /* healthy / certified */
+  --crimson: #ff3b5c; /* fail / refute / crash */
+  --indigo-night: #1a1740; /* polar-night desaturation base */
+
+  /* ── v2 additions ── */
+  --auditor-white: #f4f8ff; /* lighthouse / verifier beam */
+  --ghost-brass: rgba(201, 162, 75, 0.22); /* frozen AC wireframe */
+  --cache-teal: #2fd9c9; /* recycled-fuel reservoir */
+  --horizon-rose: #ff6b7e; /* 80% cost horizon */
+  --frost: #9fb6ff; /* weekly / polar-night crystal */
+
+  /* ── model spectral class (heat) ── */
+  --spectral-haiku: #ff6a4d; /* red dwarf */
+  --spectral-sonnet: var(--brass); /* gold */
+  --spectral-opus: #9fd0ff; /* blue-white */
+
+  /* ── derived surfaces ── */
+  --void-2: #0b0e1c;
+  --void-3: #11142a;
+  --panel: rgba(11, 14, 28, 0.72);
+  --panel-edge: rgba(201, 162, 75, 0.28);
+  --hairline: rgba(234, 240, 255, 0.08);
+  --text-dim: rgba(234, 240, 255, 0.56);
+  --text-faint: rgba(234, 240, 255, 0.34);
+
+  /* ── typography ── */
+  --font-grotesk: "Space Grotesk", "Inter", system-ui, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", ui-monospace,
+    "Consolas", monospace;
+  --num: "JetBrains Mono", ui-monospace, "Consolas", monospace;
+
+  --radius: 10px;
+  --radius-pill: 999px;
+}
+
+/* base obsidian theme */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--void);
+  color: var(--starlight);
+  font-family: var(--font-grotesk);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* tabular numerals everywhere we print a cost/count/countdown */
+.tabular,
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-family: var(--num);
+  letter-spacing: 0.01em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* reduced-motion is first-class (plan §3 accessibility) */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
