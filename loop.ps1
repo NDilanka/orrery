@@ -80,6 +80,9 @@ param(
   [switch]   $Verify,                  # run the anti-false-green verifier subagent
   [string[]] $Contract        = $null, # frozen AC; default = parsed from TaskFile
   [hashtable] $Models         = $null, # per-phase model tiering (defaults below)
+  [switch]    $NoQuotaWait,            # E3: disable wait-and-resume (fail fast on a limit)
+  [int]       $MaxQuotaWaits = 30,     # E3: give-up backstop on repeated quota waits
+  [int]       $DefaultQuotaWaitMin = 30, # E3: wait minutes when no reset time is parseable
   [switch]   $DryRun,
   [switch]   $Fresh,
   [switch]   $AllowConcurrent
@@ -143,6 +146,67 @@ Set pass=true ONLY if every criterion is demonstrably satisfied by the diff.
   & claude @judgeArgs 2>$null | Out-String
 }
 
+# --- E3: quota survival -----------------------------------------------------
+# Two ISOLATED side-effect wrappers — the ONLY places that spend quota / sleep —
+# so selftest-resume.ps1 can override them with stubs (NO real claude, NO real
+# sleep in tests). All the DECIDING (limited? reset? waitSec? event shapes?) is
+# pure and lives in loopcore.ps1.
+function Invoke-QuotaProbe {
+  # Cheap authoritative probe. Runs `claude -p "ok" --output-format stream-json
+  # --max-turns 1`, captures stdout+stderr, and hands the text to the PURE
+  # Resolve-QuotaStatus parser. Records the chosen reset on $script:LastQuota.
+  # Returns $true when quota is AVAILABLE, $false when LIMITED.
+  $errF = [System.IO.Path]::GetTempFileName()
+  $praw = (& claude -p "ok" --output-format stream-json --verbose --max-turns 1 2>$errF) | Out-String
+  $perr = ""; if (Test-Path $errF) { $perr = Get-Content $errF -Raw; Remove-Item $errF -Force }
+  $all  = ($praw + "`n" + $perr)
+  $status = Resolve-QuotaStatus -Text $all
+  $script:LastQuota = $status
+  return (-not $status.Limited)
+}
+
+function Start-QuotaSleep([int]$Seconds) {
+  # ISOLATED real sleep. Tests override this with a no-op so zero real time passes.
+  Start-Sleep -Seconds $Seconds
+}
+
+function Wait-ForQuota([string]$Label) {
+  # Wait-and-resume loop. PROBE FIRST (a false-positive costs no sleep); on a real
+  # limit, emit quota-wait, sleep until reset (+buffer) via the isolated wrappers,
+  # re-probe. Emits quota-resume on recovery. Returns $true on resume, $false if
+  # MaxQuotaWaits is exhausted. NoQuotaWait short-circuits to a fail-fast $false.
+  if ($NoQuotaWait) { return $false }
+  for ($i = 1; $i -le $MaxQuotaWaits; $i++) {
+    if (Invoke-QuotaProbe) {
+      Write-Host "  [QUOTA] quota available — resuming '$Label'" -ForegroundColor Green
+      Write-Log (New-QuotaResumeEvent -Label $Label -Probe $i)
+      return $true
+    }
+    $resetAt   = if ($script:LastQuota) { $script:LastQuota.ResetAt } else { $null }
+    $resetType = if ($script:LastQuota) { $script:LastQuota.ResetType } else { $null }
+    $waitSec   = Get-QuotaWaitSec -ResetAt $resetAt -DefaultWaitMin $DefaultQuotaWaitMin
+    $ev        = New-QuotaWaitEvent -Label $Label -Cum $script:Cum -WaitSec $waitSec -Probe $i -ResetType $resetType
+    Write-Host ("  [QUOTA] '{0}' paused — sleeping {1}m, resume ~{2} (probe {3}/{4})" -f `
+                $Label, [int]($waitSec/60), ([datetime]$ev.resumeAt).ToString('HH:mm'), $i, $MaxQuotaWaits) -ForegroundColor Magenta
+    Write-Log $ev
+    Start-QuotaSleep -Seconds $waitSec
+  }
+  return $false
+}
+
+function Resolve-Quota([string]$Label) {
+  # Called when an iteration's claude call looked like it FAILED. Probe the
+  # AUTHORITATIVE rate_limit_info (never phase content). If genuinely limited:
+  # emit quota-hit, then run the wait-and-resume loop. Returns $true if the loop
+  # may retry the iteration (quota recovered), $false if it should hand off.
+  if ($NoQuotaWait) { return $false }
+  if (Invoke-QuotaProbe) { return $false }   # not a quota problem — let the caller fail normally
+  $resetAt = if ($script:LastQuota) { $script:LastQuota.ResetAt } else { $null }
+  Write-Log (New-QuotaHitEvent -Label $Label -Cum $script:Cum -ResetAt $resetAt)
+  Write-Host "  [QUOTA] limit hit during '$Label' — entering wait-and-resume" -ForegroundColor Magenta
+  return (Wait-ForQuota $Label)
+}
+
 function Stop-Loop($reason, $green) {
   if (-not $green -and $UseGit -and $BestCommit) { git reset --hard $BestCommit *>$null }  # leave best-known-good tree
   $tag = if ($green) { "[OK]" } else { "[HANDOFF]" }
@@ -150,6 +214,10 @@ function Stop-Loop($reason, $green) {
   Write-Host "`n$tag $reason" -ForegroundColor $col
   Write-Host ("    iters={0}  cumulative=`${1}  bestPass={2}/{3}" -f $script:Iter, [math]::Round($script:Cum,4), $BestPass, $BaseTotal)
   Write-Log @{ event="stop"; reason=$reason; green=$green; iter=$script:Iter; cum=$script:Cum; bestPass=$BestPass }
+  # E3: write/update checkpoint.json at normal stop too, so the run is legible
+  # (a green stop records the certified tree; a handoff records best-known-good).
+  $script:CurStage = if ($green) { 'done' } else { 'handoff' }
+  try { Write-LoopCheckpoint | Out-Null } catch {}
   exit ($(if ($green) { 0 } else { 1 }))
 }
 
@@ -251,6 +319,61 @@ $Stale       = 0
 $Plateau     = 0
 $RegressCount = 0
 $AlertFired  = @()              # cost thresholds already fired (each fires once)
+$script:LastQuota = $null       # E3: last quota probe result (set by Invoke-QuotaProbe)
+$script:CurStage  = 'preflight' # E3: coarse stage label for the checkpoint
+# E3: branch + merge-base for the checkpoint. The generic single-goal loop has no
+# story branches, so mergeBase = the baseline commit and branch = the current ref.
+$script:Branch    = if ($UseGit) { ("" + (git rev-parse --abbrev-ref HEAD 2>$null)).Trim() } else { $null }
+$script:MergeBase = if ($UseGit) { ("" + (git rev-parse HEAD 2>$null)).Trim() } else { $null }
+# E3: the goal/item label for rollback/handoff events = the TaskFile leaf or 'goal'.
+$script:Item = if ($TaskFile) { Split-Path -Leaf $TaskFile } else { 'goal' }
+
+# E3: cooperative-stop + checkpoint resume. The SAFE checkpoint for the generic
+# loop is BETWEEN iterations (nothing is killed mid-iteration). Write the exact
+# command needed to continue, so a stop is legible and resume = re-running loop.ps1.
+function Get-ResumeCommand {
+  $a = @("-File", "`"$PSCommandPath`"")
+  if ($TaskFile -ne 'TASK.md') { $a += @('-TaskFile', "`"$TaskFile`"") }
+  if ($StateDir -ne '.loop')   { $a += @('-StateDir', "`"$StateDir`"") }
+  "pwsh " + ($a -join ' ')
+}
+
+function Write-LoopCheckpoint {
+  # Persist PROTOCOL §7 checkpoint.json (built by the pure New-Checkpoint).
+  if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Path $StateDir | Out-Null }
+  $cp = New-Checkpoint -Stage $script:CurStage -Story $null -Branch $script:Branch `
+          -MergeBase $script:MergeBase -CumUsd $script:Cum -Resume (Get-ResumeCommand)
+  ($cp | ConvertTo-Json) | Set-Content -Path "$StateDir/checkpoint.json" -Encoding utf8
+  $cp
+}
+
+function Stop-IfRequested([string]$Scope) {
+  # Honor a cooperative STOP flag at a SAFE boundary. $Scope is the boundary we're
+  # at: 'story' = between iterations (clean); 'phase' = a within-iteration commit
+  # point. A 'story'-mode request is held until a 'story' scope. When honored:
+  # commit current work (if git + changed), write the checkpoint, emit
+  # cooperative-stop, consume the flag, exit 0 — nothing killed mid-iteration.
+  $flag = "$StateDir/STOP"
+  $content = if (Test-Path $flag) { Get-Content $flag -Raw -ErrorAction SilentlyContinue } else { $null }
+  $req = Get-StopMode -FlagContent $content -Scope $Scope
+  if (-not $req.Honor) { return }
+
+  if ($UseGit -and (git status --porcelain)) {
+    git add -A *>$null
+    git commit -q -m "loop: cooperative stop ($($req.Mode)) at iter $($script:Iter)" *>$null
+    $script:Branch    = ("" + (git rev-parse --abbrev-ref HEAD 2>$null)).Trim()
+  }
+  Write-LoopCheckpoint | Out-Null
+  Remove-Item $flag -Force -ErrorAction SilentlyContinue   # consume the request
+  $ev = New-CooperativeStopEvent -Scope $Scope -Mode $req.Mode -Stage $script:CurStage `
+          -Story $null -Branch $script:Branch -Cum $script:Cum
+  Write-Log $ev
+  Write-Host "`n[STOPPED] graceful stop honored ($($req.Mode)) at: $($script:CurStage)" -ForegroundColor Cyan
+  Write-Host "  Work is safe — committed; git + $StateDir/progress.md are the source of truth." -ForegroundColor Cyan
+  Write-Host "  Spent this run: `$$([math]::Round($script:Cum,4)).  Checkpoint: $StateDir/checkpoint.json" -ForegroundColor Cyan
+  Write-Host "  Resume anytime:  $(Get-ResumeCommand)" -ForegroundColor White
+  exit 0
+}
 
 function Invoke-GateAndLog {
   # Run the multi-stage gate, then emit the Protocol `gate` event. Returns $g.
@@ -311,16 +434,33 @@ foreach ($t in $AllowedTools) { $toolArgs += $t }
 for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   Write-Host "`n=== iteration $($script:Iter)/$MaxIters  (cum `$$([math]::Round($script:Cum,4))  best $BestPass/$BaseTotal) ===" -ForegroundColor Cyan
 
-  # 3. EXECUTE (execute tier of the model ladder)
+  # E3: cooperative safe-stop. BETWEEN iterations is the safe checkpoint for the
+  # generic loop — the previous iteration already committed its work, so nothing
+  # is killed mid-iteration. Honor a 'story'/'now'/'phase' STOP here.
+  $script:CurStage = "iter $($script:Iter)"
+  Stop-IfRequested -Scope 'story'
+
+  # 3. EXECUTE (execute tier of the model ladder). Wrapped in a quota-survival
+  # retry: a claude call that fails BECAUSE of a real usage limit triggers
+  # quota-hit -> wait-and-resume -> retry the SAME iteration (no wasted iter).
   $cliArgs = @(
     '-p', $prompt, '--output-format', 'json', '--max-turns', "$MaxTurns",
     '--model', $ExecuteModel,
     '--permission-mode', $PermissionMode,
     '--allowedTools'
   ) + $toolArgs
-  $rawText = & claude @cliArgs 2>$null | Out-String
-  try   { $res = $rawText | ConvertFrom-Json }
-  catch { Write-Log @{ event="parse_error"; iter=$script:Iter }; Stop-Loop "could not parse claude JSON output" $false }
+  $res = $null
+  while ($true) {
+    $rawText = & claude @cliArgs 2>$null | Out-String
+    $parsed = $null
+    try { $parsed = $rawText | ConvertFrom-Json } catch { $parsed = $null }
+    $callFailed = ($null -eq $parsed) -or ($parsed.is_error -eq $true)
+    if (-not $callFailed) { $res = $parsed; break }
+    # The call looked like a failure — was it a quota limit? Probe authoritatively.
+    if (Resolve-Quota "iter $($script:Iter)") { continue }   # recovered -> retry iter
+    if ($null -eq $parsed) { Write-Log @{ event="parse_error"; iter=$script:Iter }; Stop-Loop "could not parse claude JSON output" $false }
+    $res = $parsed; break   # a non-quota error result -> fall through with what we got
+  }
 
   # spend accounting + 50/80/100% alerts (must happen before the verdict so the
   # cost-ceiling stop sees the updated cum)
@@ -384,6 +524,12 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
   switch ($dec.Action) {
     'stop' {
       if ($g.Pass -gt $BestPass) { $BestPass = $g.Pass }   # keep summary/log accurate on one-shot green
+      # E3: a regression-handoff stop (strikes exhausted) raises the handoff
+      # beacon BEFORE the stop, naming the item + how many consecutive strikes.
+      if ($dec.Reason -match 'repeated regressions') {
+        Write-Log (New-HandoffEvent -Item $script:Item -Reason $dec.Reason -Consecutive ($RegressCount + 1))
+        Write-Host "  [HANDOFF] $($script:Item): $($dec.Reason)" -ForegroundColor Yellow
+      }
       if ($dec.Green -and $UseGit -and $changed) {
         git add -A *>$null; git commit -q -m "loop $($script:Iter): GREEN $($g.Pass)/$($g.Total)" *>$null
       }
@@ -392,7 +538,10 @@ for ($script:Iter = 1; $script:Iter -le $MaxIters; $script:Iter++) {
     'rollback' {
       if ($UseGit) { git reset --hard $BestCommit *>$null }
       $RegressCount++
-      Write-Host "  rollback -> best $BestPass/$BaseTotal (regress $RegressCount/$RegressLimit)" -ForegroundColor DarkYellow
+      # E3: surface the rollback as a strike against the budget (RegressLimit).
+      Write-Log (New-RollbackEvent -Item $script:Item -ToIter $script:Iter `
+                   -BestPass $BestPass -Strike $RegressCount -StrikeBudget $RegressLimit)
+      Write-Host "  rollback -> best $BestPass/$BaseTotal (strike $RegressCount/$RegressLimit)" -ForegroundColor DarkYellow
     }
     'continue' {
       if ($UseGit -and $changed) {

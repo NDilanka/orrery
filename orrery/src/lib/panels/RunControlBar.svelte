@@ -1,8 +1,10 @@
 <script lang="ts">
-  // Run control bar — Start / Stop(phase|story) / Resume. Calls the transport's
-  // control() method. In dev replay these no-op gracefully (logged); in the real
-  // Tauri app they invoke start_loop / stop_loop / resume_loop (§6). The
-  // mechanism is braked, never killed.
+  // Run control bar — Start / Stop(phase|story) / Cancel / Resume (B10). Calls the
+  // transport's control() method. In dev replay these no-op gracefully (logged);
+  // in the real Tauri app they invoke start_loop / stop_loop / cancel_stop /
+  // resume_loop (§6). The mechanism is BRAKED, never killed: a stop coasts to the
+  // next safe tooth, banks to an ember, and Resume re-engages the same tooth.
+  // Reflects run.stopPending and run.restState live.
 
   import { runStore } from '../stores/run.svelte';
 
@@ -11,6 +13,9 @@
   const s = $derived(runStore.state);
   const running = $derived(s.run.status === 'running' || s.run.status === 'quota-wait');
   const stopPending = $derived(s.run.stopPending);
+  const rest = $derived(s.run.restState);
+  // banked ember (you stopped it) or there is a resume command → can reignite
+  const banked = $derived(rest === 'stopped-ember' || s.run.status === 'stopped');
 
   async function fire(action: string) {
     await control(action);
@@ -18,7 +23,7 @@
 </script>
 
 <div class="control">
-  {#if !running}
+  {#if !running && !banked}
     <button class="btn ignite" onclick={() => fire('start')}>✦ Ignite</button>
   {/if}
 
@@ -35,12 +40,14 @@
     <button class="btn cancel" onclick={() => fire('cancel-stop')}>Cancel brake</button>
   {/if}
 
-  {#if !running && (s.run.restState === 'stopped-ember' || s.run.resumeCmd)}
-    <button class="btn resume" onclick={() => fire('resume')}>Reignite</button>
+  {#if banked || s.run.resumeCmd}
+    <button class="btn resume" onclick={() => fire('resume')}>↻ Reignite</button>
   {/if}
 
   {#if stopPending}
-    <span class="pending mono">brake → {stopPending}</span>
+    <span class="pending mono braking">⏛ stopping at next {stopPending}</span>
+  {:else if banked}
+    <span class="pending mono ember">banked ember · parked at {s.run.stage ?? 'tooth'}</span>
   {/if}
 </div>
 
@@ -94,7 +101,19 @@
   .btn.cancel { color: var(--text-dim); }
   .pending {
     font-size: 11px;
-    color: var(--ember);
     letter-spacing: 0.06em;
+  }
+  .pending.braking {
+    color: var(--ember);
+    animation: brakePulse 1.4s ease-in-out infinite;
+  }
+  .pending.ember { color: var(--ember); opacity: 0.8; }
+  @keyframes brakePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  /* reduced-motion: no pulsing (urgency reads from text, not blink) */
+  @media (prefers-reduced-motion: reduce) {
+    .pending.braking { animation: none; }
   }
 </style>

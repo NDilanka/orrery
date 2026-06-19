@@ -13,6 +13,7 @@
   import CostQuotaStrip from '$lib/render/CostQuotaStrip.svelte';
   import Hud from '$lib/panels/Hud.svelte';
   import RunControlBar from '$lib/panels/RunControlBar.svelte';
+  import VerdictPanel from '$lib/panels/VerdictPanel.svelte';
   import TransportBar from '$lib/panels/TransportBar.svelte';
   import { runStore } from '$lib/stores/run.svelte';
   import {
@@ -24,7 +25,7 @@
   } from '$lib/transport';
   import { isPlayback, type PlaybackState, type PlaybackTransport } from '$lib/transport/replay';
 
-  let selected = $state<string>('bmad');
+  let selected = $state<string>('demo');
   let transport: Transport | null = null;
   let mode = $state<'live' | 'replay'>('replay');
 
@@ -95,6 +96,7 @@
     <Mechanism />
     <CostQuotaStrip />
     <Hud />
+    <VerdictPanel />
     {#if playback}
       <TransportBar transport={playback} state={playbackState} />
     {/if}

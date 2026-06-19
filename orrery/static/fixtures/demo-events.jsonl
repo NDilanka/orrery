@@ -1,0 +1,40 @@
+{"event":"start","target":"1-1-auth-token","branch":"feat/demo","baselinePass":40}
+{"event":"model","phase":"create-story","model":"haiku"}
+{"event":"story-start","story":"1-1-auth-token","status":"in-progress","epic":"1","index":0}
+{"event":"story-start","story":"1-2-refresh-flow","status":"ready","epic":"1","index":1}
+{"event":"story-start","story":"1-3-rate-limit","status":"ready","epic":"1","index":2}
+{"event":"model","phase":"dev-story","model":"sonnet"}
+{"event":"dev-gate","story":"1-1-auth-token","epic":"1","cum":0.42,"green":false,"pass":36,"fail":4,"total":40,"baselinePass":40,"status":"in-progress","codegenOk":true,"lintOk":true,"testOk":false}
+{"event":"cache","hitRatio":0.35,"warm":true}
+{"event":"dev-gate","story":"1-1-auth-token","epic":"1","cum":0.91,"green":true,"pass":40,"fail":0,"total":40,"baselinePass":40,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"model","phase":"code-review","model":"haiku"}
+{"event":"verdict","item":"1-1-auth-token","pass":true,"evidence":"40/40 acceptance tests pass; 401 returned on expired token; refresh path covered.","nextAction":"merge to develop","model":"haiku"}
+{"event":"pr-created","story":"1-1-auth-token","branch":"feat/story-1-1","base":"develop","url":"https://example/pr/1"}
+{"event":"pr-merged","story":"1-1-auth-token","base":"develop","pr":"#101"}
+{"event":"story-start","story":"1-2-refresh-flow","status":"in-progress","epic":"1","index":1}
+{"event":"model","phase":"dev-story","model":"sonnet"}
+{"event":"dev-gate","story":"1-2-refresh-flow","epic":"1","cum":1.48,"green":true,"pass":52,"fail":0,"total":52,"baselinePass":52,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"model","phase":"code-review","model":"haiku"}
+{"event":"verdict","item":"1-2-refresh-flow","pass":false,"failingCriteria":["refresh token is not rotated on use","missing test for concurrent refresh race"],"evidence":"unit suite green but the AC contract requires single-use refresh tokens; reused token still validates.","nextAction":"rotate refresh token + add race test, then re-run gate","model":"haiku"}
+{"event":"model","phase":"dev-story","model":"sonnet"}
+{"event":"dev-gate","story":"1-2-refresh-flow","epic":"1","cum":1.95,"green":false,"pass":48,"fail":4,"total":54,"baselinePass":52,"status":"in-progress","codegenOk":true,"lintOk":true,"testOk":false}
+{"event":"rollback","item":"1-2-refresh-flow","toIter":3,"bestPass":52,"strike":1,"strikeBudget":3}
+{"event":"model","phase":"dev-story","model":"opus"}
+{"event":"dev-gate","story":"1-2-refresh-flow","epic":"1","cum":2.6,"green":true,"pass":56,"fail":0,"total":56,"baselinePass":56,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"verdict","item":"1-2-refresh-flow","pass":true,"evidence":"refresh tokens now single-use + rotated; race test added and green; 56/56.","nextAction":"merge","model":"haiku"}
+{"event":"pr-created","story":"1-2-refresh-flow","branch":"feat/story-1-2","base":"develop","url":"https://example/pr/2"}
+{"event":"pr-merged","story":"1-2-refresh-flow","base":"develop","pr":"#102"}
+{"event":"story-start","story":"1-3-rate-limit","status":"in-progress","epic":"1","index":2}
+{"event":"model","phase":"dev-story","model":"sonnet"}
+{"event":"dev-gate","story":"1-3-rate-limit","epic":"1","cum":3.05,"green":false,"pass":18,"fail":6,"total":24,"baselinePass":0,"status":"in-progress","codegenOk":true,"lintOk":true,"testOk":false}
+{"event":"cost-alert","pct":50,"cum":3.05,"ceiling":6.0}
+{"event":"cooperative-stop","scope":"story","mode":"story","stage":"dev-gate","story":"1-3-rate-limit","branch":"feat/demo","cum":3.05}
+{"event":"quota-hit","label":"dev-story","cum":3.05,"resetAt":"2026-06-26T07:30:00.000+05:30"}
+{"event":"quota-wait","label":"dev-story","cum":3.05,"waitSec":540000,"resumeAt":"2026-06-26T07:30:00.000+05:30","probe":1,"resetType":"weekly"}
+{"event":"quota-resume","label":"dev-story","probe":2}
+{"event":"model","phase":"dev-story","model":"opus"}
+{"event":"dev-gate","story":"1-3-rate-limit","epic":"1","cum":3.62,"green":true,"pass":24,"fail":0,"total":24,"baselinePass":24,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"verdict","item":"1-3-rate-limit","pass":true,"evidence":"sliding-window limiter holds at 24/24; 429 returned past budget.","nextAction":"merge","model":"haiku"}
+{"event":"pr-created","story":"1-3-rate-limit","branch":"feat/story-1-3","base":"develop","url":"https://example/pr/3"}
+{"event":"pr-merged","story":"1-3-rate-limit","base":"develop","pr":"#103"}
+{"event":"stop","ok":true,"reason":"all stories merged · epic 1 certified","cum":3.62}
