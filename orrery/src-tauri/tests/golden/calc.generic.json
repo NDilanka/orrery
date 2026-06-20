@@ -1,0 +1,80 @@
+{
+  "cache": {
+    "hitRatio": 0.0,
+    "warm": false
+  },
+  "cost": {
+    "alertPct": null,
+    "ceilingUsd": null,
+    "cumUsd": 0.30258599999999997,
+    "ratePerMin": 0.0,
+    "series": [
+      {
+        "cum": 0.30258599999999997,
+        "t": 0.0
+      },
+      {
+        "cum": 0.30258599999999997,
+        "t": 1000.0
+      }
+    ]
+  },
+  "currentItem": "iter",
+  "events": 2,
+  "groups": {},
+  "items": {
+    "iter": {
+      "certified": false,
+      "costAttributed": 0.30258599999999997,
+      "gate": {
+        "baselinePass": 3,
+        "fail": 0,
+        "green": true,
+        "pass": 9,
+        "total": 9
+      },
+      "ghost": null,
+      "group": null,
+      "index": 0,
+      "key": "iter",
+      "lastEventTs": 0.0,
+      "pr": null,
+      "smoke": null,
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    }
+  },
+  "loopId": "calc",
+  "phase": {
+    "label": "stop",
+    "model": null,
+    "name": null,
+    "sixPhase": "decide"
+  },
+  "questions": [],
+  "quota": {
+    "active": false,
+    "label": null,
+    "probe": 0,
+    "resetAt": null,
+    "resetType": null,
+    "resumeAt": null,
+    "waitSec": 0
+  },
+  "run": {
+    "branch": null,
+    "cumUsd": 0.30258599999999997,
+    "mergeBase": "main",
+    "pid": null,
+    "restState": "certified-done",
+    "resumeCmd": null,
+    "stage": null,
+    "startedAt": null,
+    "status": "stopped",
+    "stopPending": null,
+    "target": null,
+    "updatedAt": null
+  },
+  "verdicts": {}
+}

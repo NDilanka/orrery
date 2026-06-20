@@ -17,6 +17,11 @@ const RATE_WINDOW: usize = 8;
 /// Holds the reduced state plus a little reducer-private bookkeeping that is not on the wire.
 pub struct Reducer {
     pub state: RunState,
+    /// Generic-loop cost scoping (PROTOCOL §4.2, generic branch): a `stop`/`cooperative-stop`
+    /// ends a run, so the next cum-bearing event begins a fresh per-run running-max. Set `true`
+    /// when a stop is seen, cleared by the next `bump_cum` (which rebases the running-max).
+    /// bmad keeps its explicit `start`-reset path; this covers generic logs that have no `start`.
+    run_ended: bool,
 }
 
 impl Reducer {
@@ -25,7 +30,10 @@ impl Reducer {
         // event-driven and handles both supersets, so it is not needed for state init today.
         let _adapter = adapter.into();
         let state = RunState::new(loop_id);
-        Reducer { state }
+        Reducer {
+            state,
+            run_ended: false,
+        }
     }
 
     /// Apply one already-parsed JSON event with a caller-supplied timestamp (ms since epoch).
@@ -99,15 +107,29 @@ impl Reducer {
 
     /// running-max cumUsd + append a cost sample. Mirrors run.cumUsd into cost.cumUsd.
     ///
-    /// The series is keyed by sample timestamp `t` so a true re-apply of the same log (same
-    /// per-index `t`) is idempotent — re-applying upserts the sample rather than duplicating it.
+    /// BUG-FIX #1 (generic cost scoping): the running-max is scoped to the CURRENT run. A
+    /// `stop`/`cooperative-stop` sets `run_ended`; the first cum-bearing event after it rebases
+    /// the running-max to that event's cum (a fresh run's high-water), instead of carrying a
+    /// prior run's high-water forward. bmad's explicit `start`-reset still applies; this handles
+    /// generic logs that concatenate runs with no `start` boundary. The `series` is NOT cleared
+    /// (the multi-run sawtooth is preserved).
+    ///
+    /// BUG-FIX #2 (same-timestamp collision): a sample slot is identified by `(t, cum)` rather
+    /// than `t` alone, so two genuinely-distinct events sharing an identical `t` (same ms) are
+    /// BOTH kept instead of the second clobbering the first. A true re-apply of the same log
+    /// re-produces the same `(t, cum)` pairs and upserts in place, so it stays idempotent.
     fn bump_cum(&mut self, obj: &Value, ts: f64) {
         if let Some(c) = Self::read_cum(obj) {
-            if c > self.state.run.cum_usd {
+            if self.run_ended {
+                // first cum of a new run → rebase the per-run running-max
+                self.state.run.cum_usd = c;
+                self.run_ended = false;
+            } else if c > self.state.run.cum_usd {
                 self.state.run.cum_usd = c;
             }
             self.state.cost.cum_usd = self.state.run.cum_usd;
-            match self.state.cost.series.iter_mut().find(|s| s.t == ts) {
+            // series tracks the raw per-event cum (sawtooth), keyed by (t, cum) for the tie-break.
+            match self.state.cost.series.iter_mut().find(|s| s.t == ts && s.cum == c) {
                 Some(existing) => existing.cum = c,
                 None => self.state.cost.series.push(CostSample { t: ts, cum: c }),
             }
@@ -223,11 +245,14 @@ impl Reducer {
 
     fn on_stop(&mut self, obj: &Value, ts: f64) {
         self.bump_cum(obj, ts);
+        // a stop ends the current run; the next cum-bearing event rebases the per-run running-max.
+        self.run_ended = true;
         // BMAD `stop` carries {ok}; generic `stop` carries {green}.
         let ok = obj.get("ok").and_then(Value::as_bool);
         let green = obj.get("green").and_then(Value::as_bool).unwrap_or(false);
         self.state.run.status = RunStatus::Stopped;
         self.state.phase.six_phase = Some(SixPhase::Decide);
+        self.state.phase.label = Some("stop".to_string());
 
         if green {
             // green stop → the synthetic generic item is done
@@ -415,7 +440,10 @@ impl Reducer {
     fn on_quota_resume(&mut self, obj: &Value) {
         self.state.quota.active = false;
         self.state.quota.probe = obj.get("probe").and_then(Value::as_i64).unwrap_or(self.state.quota.probe);
-        // resuming work
+        // night is over: clear the wait/resume countdown and re-engage (mirrors reduce.ts).
+        self.state.quota.wait_sec = 0;
+        self.state.quota.resume_at = None;
+        self.state.run.stop_pending = None;
         self.state.run.status = RunStatus::Running;
     }
 
@@ -428,6 +456,7 @@ impl Reducer {
         // cumUsd reflects the *current* run (matches checkpoint.cumUsd & test expectation).
         self.state.run.cum_usd = 0.0;
         self.state.cost.cum_usd = 0.0;
+        self.run_ended = false; // explicit start supersedes any pending stop-rebase
         self.state.run.status = RunStatus::Running;
         self.state.quota.active = false;
         self.state.run.rest_state = None;
@@ -502,7 +531,16 @@ impl Reducer {
         if let Some(e) = Self::epic_of(&story) {
             self.ensure_group(&e);
         }
-        let gate = Self::build_gate(obj);
+        let mut gate = Self::build_gate(obj);
+        // dev-gate carries codegenOk/lintOk/testOk booleans → synthesize the 3 sub-stages
+        // (mirrors reduce.ts dev-gate). Only present booleans become stages.
+        let mut stages: Vec<Stage> = Vec::new();
+        for (name, key) in [("codegen", "codegenOk"), ("lint", "lintOk"), ("test", "testOk")] {
+            if let Some(ok) = obj.get(key).and_then(Value::as_bool) {
+                stages.push(Stage { name: name.to_string(), ok, exit: if ok { 0 } else { 1 } });
+            }
+        }
+        gate.stages = if stages.is_empty() { None } else { Some(stages) };
         let status = obj.get("status").and_then(Value::as_str).and_then(Self::parse_item_status);
         let cum = self.state.run.cum_usd;
         let epic = Self::epic_of(&story);
@@ -640,7 +678,8 @@ impl Reducer {
             .map(String::from)
             .or_else(|| self.state.current_item.clone());
         let url = obj.get("url").and_then(Value::as_str).unwrap_or("").to_string();
-        let base = obj.get("base").and_then(Value::as_str).unwrap_or("").to_string();
+        // base defaults to "develop" (mirrors reduce.ts) when the event omits it.
+        let base = obj.get("base").and_then(Value::as_str).unwrap_or("develop").to_string();
         if let Some(key) = story {
             let it = self.item_mut(&key);
             it.last_event_ts = ts;
@@ -663,24 +702,26 @@ impl Reducer {
             Some(s) => s,
             None => return,
         };
-        let pr_url = obj.get("pr").and_then(Value::as_str).unwrap_or("").to_string();
-        let base = obj.get("base").and_then(Value::as_str).unwrap_or("").to_string();
+        let pr_id = obj.get("pr").and_then(Value::as_str).unwrap_or("").to_string();
+        let base = obj.get("base").and_then(Value::as_str).map(String::from);
         let it = self.item_mut(&story);
         it.last_event_ts = ts;
         match it.pr.as_mut() {
             Some(p) => {
                 p.merged = true;
-                if !pr_url.is_empty() {
-                    p.url = pr_url;
+                // keep the pr-created URL (reduce.ts: url = existing ?? ev.pr); the merge event's
+                // `pr` only fills the URL when none was set at pr-created time.
+                if p.url.is_empty() && !pr_id.is_empty() {
+                    p.url = pr_id;
                 }
-                if !base.is_empty() {
-                    p.base = base;
+                if let Some(b) = base {
+                    p.base = b;
                 }
             }
             None => {
                 it.pr = Some(Pr {
-                    url: pr_url,
-                    base,
+                    url: pr_id,
+                    base: base.unwrap_or_else(|| "develop".to_string()),
                     merged: true,
                 });
             }
@@ -691,6 +732,8 @@ impl Reducer {
 
     fn on_cooperative_stop(&mut self, obj: &Value, ts: f64) {
         self.bump_cum(obj, ts);
+        // cooperative-stop also ends the current run (per-run cost scoping).
+        self.run_ended = true;
         self.state.run.status = RunStatus::Stopped;
         self.state.phase.six_phase = Some(SixPhase::Decide);
         if let Some(stage) = obj.get("stage").and_then(Value::as_str) {
@@ -711,19 +754,24 @@ impl Reducer {
     // -----------------------------------------------------------------------
 
     fn derive_rest_state(&mut self) {
-        // all items done & merged → certified-done
+        // all items done & (merged OR no-PR) → a clean finish. A generic green stop has no PR,
+        // so "no PR" counts as merged-ok (mirrors reduce.ts). Ordering matches reduce.ts:
+        // handoff → quota → certified-done(&& not running) → stopped/error → null.
         let all_done_merged = !self.state.items.is_empty()
             && self.state.items.values().all(|it| {
-                it.status == ItemStatus::Done && it.pr.as_ref().map(|p| p.merged).unwrap_or(false)
+                it.status == ItemStatus::Done && it.pr.as_ref().map(|p| p.merged).unwrap_or(true)
             });
 
-        let rest = if all_done_merged {
-            Some(RestState::CertifiedDone)
-        } else if self.state.run.status == RunStatus::Handoff {
+        let rest = if self.state.run.status == RunStatus::Handoff {
             Some(RestState::HandoffBeacon)
         } else if self.state.quota.active {
             Some(RestState::QuotaFrost)
-        } else if self.state.run.status == RunStatus::Stopped {
+        } else if all_done_merged && self.state.run.status != RunStatus::Running {
+            // a clean finish is a certified seal, not a banked ember — even when the run ends
+            // with a stop{ok:true} (PROTOCOL §4.5: the ember is reserved for a stop that left
+            // work unfinished).
+            Some(RestState::CertifiedDone)
+        } else if self.state.run.status == RunStatus::Stopped || self.state.run.status == RunStatus::Error {
             Some(RestState::StoppedEmber)
         } else {
             None
@@ -816,7 +864,11 @@ impl Reducer {
 pub fn reduce_events(loop_id: &str, adapter: &str, events: &[Value]) -> RunState {
     let mut r = Reducer::new(loop_id, adapter);
     for (i, ev) in events.iter().enumerate() {
-        r.apply(ev, (i as f64) * 1000.0);
+        // `t` is line-index×1000 (PROTOCOL §3), unless the event carries a test-only `_t` override
+        // (the series-collision fixture uses it to force two events onto the same millisecond).
+        // Real logs never carry `_t`; reduce.ts honors it identically so goldens stay in lockstep.
+        let t = ev.get("_t").and_then(Value::as_f64).unwrap_or((i as f64) * 1000.0);
+        r.apply(ev, t);
     }
     r.state
 }

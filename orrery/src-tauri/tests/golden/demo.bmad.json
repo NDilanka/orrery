@@ -1,0 +1,254 @@
+{
+  "cache": {
+    "hitRatio": 0.35,
+    "warm": true
+  },
+  "cost": {
+    "alertPct": 50,
+    "ceilingUsd": 6.0,
+    "cumUsd": 3.62,
+    "ratePerMin": 3.6,
+    "series": [
+      {
+        "cum": 0.42,
+        "t": 6000.0
+      },
+      {
+        "cum": 0.91,
+        "t": 8000.0
+      },
+      {
+        "cum": 1.48,
+        "t": 15000.0
+      },
+      {
+        "cum": 1.95,
+        "t": 19000.0
+      },
+      {
+        "cum": 2.6,
+        "t": 22000.0
+      },
+      {
+        "cum": 3.05,
+        "t": 28000.0
+      },
+      {
+        "cum": 3.05,
+        "t": 29000.0
+      },
+      {
+        "cum": 3.05,
+        "t": 30000.0
+      },
+      {
+        "cum": 3.05,
+        "t": 31000.0
+      },
+      {
+        "cum": 3.05,
+        "t": 32000.0
+      },
+      {
+        "cum": 3.62,
+        "t": 35000.0
+      },
+      {
+        "cum": 3.62,
+        "t": 39000.0
+      }
+    ]
+  },
+  "currentItem": "1-3-rate-limit",
+  "events": 40,
+  "groups": {
+    "1": {
+      "id": "1",
+      "retroStatus": null,
+      "ringIndex": 1,
+      "status": "in-progress"
+    }
+  },
+  "items": {
+    "1-1-auth-token": {
+      "certified": true,
+      "costAttributed": 0.91,
+      "gate": {
+        "baselinePass": 40,
+        "fail": 0,
+        "green": true,
+        "pass": 40,
+        "stages": [
+          {
+            "exit": 0,
+            "name": "codegen",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "lint",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "test",
+            "ok": true
+          }
+        ],
+        "total": 40
+      },
+      "ghost": null,
+      "group": "1",
+      "index": 0,
+      "key": "1-1-auth-token",
+      "lastEventTs": 12000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://example/pr/1"
+      },
+      "smoke": null,
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "1-2-refresh-flow": {
+      "certified": true,
+      "costAttributed": 2.6,
+      "gate": {
+        "baselinePass": 56,
+        "fail": 0,
+        "green": true,
+        "pass": 56,
+        "stages": [
+          {
+            "exit": 0,
+            "name": "codegen",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "lint",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "test",
+            "ok": true
+          }
+        ],
+        "total": 56
+      },
+      "ghost": null,
+      "group": "1",
+      "index": 1,
+      "key": "1-2-refresh-flow",
+      "lastEventTs": 25000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://example/pr/2"
+      },
+      "smoke": null,
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 1
+    },
+    "1-3-rate-limit": {
+      "certified": true,
+      "costAttributed": 3.62,
+      "gate": {
+        "baselinePass": 24,
+        "fail": 0,
+        "green": true,
+        "pass": 24,
+        "stages": [
+          {
+            "exit": 0,
+            "name": "codegen",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "lint",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "test",
+            "ok": true
+          }
+        ],
+        "total": 24
+      },
+      "ghost": null,
+      "group": "1",
+      "index": 2,
+      "key": "1-3-rate-limit",
+      "lastEventTs": 38000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://example/pr/3"
+      },
+      "smoke": null,
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    }
+  },
+  "loopId": "demo",
+  "phase": {
+    "label": "stop",
+    "model": "opus",
+    "name": "dev-story",
+    "sixPhase": "decide"
+  },
+  "questions": [],
+  "quota": {
+    "active": false,
+    "label": "dev-story",
+    "probe": 2,
+    "resetAt": "2026-06-26T07:30:00.000+05:30",
+    "resetType": "weekly",
+    "resumeAt": null,
+    "waitSec": 0
+  },
+  "run": {
+    "branch": "feat/demo",
+    "cumUsd": 3.62,
+    "mergeBase": "main",
+    "pid": null,
+    "restState": "certified-done",
+    "resumeCmd": null,
+    "stage": "dev-gate",
+    "startedAt": null,
+    "status": "stopped",
+    "stopPending": null,
+    "target": "1-3-rate-limit",
+    "updatedAt": null
+  },
+  "verdicts": {
+    "1-1-auth-token": {
+      "evidence": "40/40 acceptance tests pass; 401 returned on expired token; refresh path covered.",
+      "failingCriteria": [],
+      "model": "haiku",
+      "nextAction": "merge to develop",
+      "pass": true
+    },
+    "1-2-refresh-flow": {
+      "evidence": "refresh tokens now single-use + rotated; race test added and green; 56/56.",
+      "failingCriteria": [],
+      "model": "haiku",
+      "nextAction": "merge",
+      "pass": true
+    },
+    "1-3-rate-limit": {
+      "evidence": "sliding-window limiter holds at 24/24; 429 returned past budget.",
+      "failingCriteria": [],
+      "model": "haiku",
+      "nextAction": "merge",
+      "pass": true
+    }
+  }
+}

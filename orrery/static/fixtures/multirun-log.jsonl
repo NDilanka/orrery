@@ -1,0 +1,7 @@
+{"event":"iter","iter":1,"cost":1.0,"cum":1.0,"pass":2,"total":5,"best":2,"changed":true,"regress":0}
+{"event":"iter","iter":2,"cost":2.0,"cum":3.0,"pass":4,"total":5,"best":4,"changed":true,"regress":0}
+{"event":"iter","iter":3,"cost":2.0,"cum":5.0,"pass":4,"total":5,"best":4,"changed":false,"regress":0}
+{"event":"stop","reason":"max iters reached, not green","iter":3,"green":false,"cum":5.0,"bestPass":4}
+{"event":"iter","iter":1,"cost":0.5,"cum":0.5,"pass":3,"total":5,"best":3,"changed":true,"regress":0}
+{"event":"iter","iter":2,"cost":1.5,"cum":2.0,"pass":5,"total":5,"best":5,"changed":true,"regress":0}
+{"event":"stop","reason":"all tests green at iter 2","iter":2,"green":true,"cum":2.0,"bestPass":5}

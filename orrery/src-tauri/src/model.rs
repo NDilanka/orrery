@@ -207,7 +207,7 @@ impl Default for Run {
             pid: None,
             target: None,
             branch: None,
-            merge_base: String::new(),
+            merge_base: "main".to_string(),
             cum_usd: 0.0,
             stage: None,
             stop_pending: None,
@@ -237,8 +237,8 @@ pub struct WorkItem {
     pub gate: Option<Gate>,
     pub smoke: Option<Smoke>,
     pub pr: Option<Pr>,
-    /// frozen AC contract
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// frozen AC contract. Always serialized (as `null` when absent) so the wire shape matches
+    /// reduce.ts, which always emits `ghost: null`.
     pub ghost: Option<Ghost>,
     pub strikes: i64,
     pub strike_budget: i64,
@@ -261,7 +261,7 @@ impl WorkItem {
             pr: None,
             ghost: None,
             strikes: 0,
-            strike_budget: 0,
+            strike_budget: 3,
             certified: false,
             cost_attributed: 0.0,
             last_event_ts: 0.0,

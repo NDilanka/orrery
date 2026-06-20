@@ -1,0 +1,502 @@
+{
+  "cache": {
+    "hitRatio": 0.0,
+    "warm": false
+  },
+  "cost": {
+    "alertPct": null,
+    "ceilingUsd": null,
+    "cumUsd": 26.747233249999994,
+    "ratePerMin": 11.72034270588235,
+    "series": [
+      {
+        "cum": 0.0,
+        "t": 2000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 3000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 4000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 6000.0
+      },
+      {
+        "cum": 11.803573000000002,
+        "t": 9000.0
+      },
+      {
+        "cum": 11.803573000000002,
+        "t": 10000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 17000.0
+      },
+      {
+        "cum": 0.4629865,
+        "t": 22000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 27000.0
+      },
+      {
+        "cum": 0.0,
+        "t": 28000.0
+      },
+      {
+        "cum": 17.1284145,
+        "t": 30000.0
+      },
+      {
+        "cum": 34.2935879,
+        "t": 40000.0
+      },
+      {
+        "cum": 16.131215000000005,
+        "t": 43000.0
+      },
+      {
+        "cum": 2.2418365,
+        "t": 54000.0
+      },
+      {
+        "cum": 17.2641235,
+        "t": 57000.0
+      },
+      {
+        "cum": 29.2388547,
+        "t": 66000.0
+      },
+      {
+        "cum": 12.384228000000002,
+        "t": 69000.0
+      },
+      {
+        "cum": 27.174825499999997,
+        "t": 79000.0
+      },
+      {
+        "cum": 12.162449499999996,
+        "t": 82000.0
+      },
+      {
+        "cum": 12.13958395,
+        "t": 98000.0
+      },
+      {
+        "cum": 12.13958395,
+        "t": 99000.0
+      },
+      {
+        "cum": 16.784941949999997,
+        "t": 101000.0
+      },
+      {
+        "cum": 46.90358745,
+        "t": 113000.0
+      },
+      {
+        "cum": 75.23289295000001,
+        "t": 127000.0
+      },
+      {
+        "cum": 75.23289295000001,
+        "t": 128000.0
+      },
+      {
+        "cum": 75.23289295000001,
+        "t": 129000.0
+      },
+      {
+        "cum": 2.6188474500000005,
+        "t": 141000.0
+      },
+      {
+        "cum": 14.5838665,
+        "t": 144000.0
+      },
+      {
+        "cum": 26.747233249999994,
+        "t": 152000.0
+      }
+    ]
+  },
+  "currentItem": "3-4-semantic-search",
+  "events": 153,
+  "groups": {
+    "2": {
+      "id": "2",
+      "retroStatus": "done",
+      "ringIndex": 2,
+      "status": "in-progress"
+    },
+    "3": {
+      "id": "3",
+      "retroStatus": null,
+      "ringIndex": 3,
+      "status": "in-progress"
+    }
+  },
+  "items": {
+    "2-2-ai-classification-pipeline": {
+      "certified": false,
+      "costAttributed": 11.803573000000002,
+      "gate": {
+        "baselinePass": 135,
+        "fail": 0,
+        "green": true,
+        "pass": 135,
+        "stages": [
+          {
+            "exit": 0,
+            "name": "codegen",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "lint",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "test",
+            "ok": true
+          }
+        ],
+        "total": 135
+      },
+      "ghost": null,
+      "group": "2",
+      "index": 0,
+      "key": "2-2-ai-classification-pipeline",
+      "lastEventTs": 21000.0,
+      "pr": {
+        "base": "develop",
+        "merged": false,
+        "url": "https://github.com/example/demo-project/pull/2"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: http://localhost:3000 serves 200 and renders the authenticated main app (capture thread + Browse/Capture/Digest nav, theme toggle, Clerk UserButton); zero console errors/warnings, all critical requests 200 (Clerk JS/session/tokens OK), only noise is favicon 404 + Cler"
+      },
+      "status": "review",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "2-3-classification-display-and-confidence-feedback": {
+      "certified": false,
+      "costAttributed": 17.1284145,
+      "gate": {
+        "baselinePass": 135,
+        "fail": 0,
+        "green": true,
+        "pass": 198,
+        "total": 198
+      },
+      "ghost": null,
+      "group": "2",
+      "index": 1,
+      "key": "2-3-classification-display-and-confidence-feedback",
+      "lastEventTs": 37000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/3"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC9 all verified in the browser via reactive Convex-driven state + computed-style/ARIA/animation inspection (app healthy, console clean); backend query internals for getCategories/getReviewNotes (auth, user-isolation, index usag"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "2-4-one-tap-correction-and-learning-signals": {
+      "certified": false,
+      "costAttributed": 16.131215000000005,
+      "gate": {
+        "baselinePass": 231,
+        "fail": 0,
+        "green": true,
+        "pass": 230,
+        "total": 230
+      },
+      "ghost": null,
+      "group": "2",
+      "index": 1,
+      "key": "2-4-one-tap-correction-and-learning-signals",
+      "lastEventTs": 53000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/4"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: Verified in-browser AC1 (dropdown + ordering + HSL swatches + current-category check), AC2 (optimistic chip+border update + mutation fires/persists), AC3.1 (categoryId persisted across reload, confidence:1→high), AC4.1 (normal toast ≤85%), AC4.2/4.3 (high-confidence o"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "2-5-atomic-note-extraction-and-linking": {
+      "certified": false,
+      "costAttributed": 12.384228000000002,
+      "gate": {
+        "baselinePass": 23,
+        "fail": 0,
+        "green": true,
+        "pass": 253,
+        "total": 253
+      },
+      "ghost": null,
+      "group": "2",
+      "index": 1,
+      "key": "2-5-atomic-note-extraction-and-linking",
+      "lastEventTs": 78000.0,
+      "pr": null,
+      "smoke": {
+        "iter": 2,
+        "passed": true,
+        "verdict": "SMOKE_PASS: verified in-browser AC3 (sibling cards + per-child chips + CapturedTogetherLink), AC4 (expand ΓåÆ original date/50-char preview + merge affordance), AC5 (merge deletes children, restores+re-classifies parent, toast \"Got it ΓÇö I'll keep these together\"), AC6 (3+ split"
+      },
+      "status": "review",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "2-6-embedding-generation-pipeline": {
+      "certified": false,
+      "costAttributed": 12.162449499999996,
+      "gate": {
+        "baselinePass": 260,
+        "fail": 0,
+        "green": true,
+        "pass": 284,
+        "total": 284
+      },
+      "ghost": null,
+      "group": "2",
+      "index": 1,
+      "key": "2-6-embedding-generation-pipeline",
+      "lastEventTs": 89000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/6"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: app healthy (home + /capture render, auth session active, capture persists, prior classified notes display correctly, console clean); Story 2.6 is backend-only with no UI surface — AC1 (generate embedding), AC2 (store vector + auditLog), AC3 (failure never touches sta"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "3-1-note-browsing-and-category-filtering": {
+      "certified": false,
+      "costAttributed": 16.784941949999997,
+      "gate": {
+        "baselinePass": 284,
+        "fail": 0,
+        "green": true,
+        "pass": 321,
+        "total": 321
+      },
+      "ghost": null,
+      "group": "3",
+      "index": 2,
+      "key": "3-1-note-browsing-and-category-filtering",
+      "lastEventTs": 110000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/7"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: verified in browser AC1 (sort/card/chip/line-clamp/timestamp/border/pending), AC2 (2s pulse + 200ms gate), AC3 (sidebar counts/colors/filter), AC4 (mobile filter bar select+All), AC5 (category-empty copy, no CTA), AC7 (feed/article roles, keyboard nav, focus rings); d"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "3-2-note-detail-view-and-deletion": {
+      "certified": false,
+      "costAttributed": 46.90358745,
+      "gate": {
+        "baselinePass": 324,
+        "fail": 0,
+        "green": true,
+        "pass": 366,
+        "total": 366
+      },
+      "ghost": null,
+      "group": "3",
+      "index": 3,
+      "key": "3-2-note-detail-view-and-deletion",
+      "lastEventTs": 124000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/8"
+      },
+      "smoke": {
+        "iter": 2,
+        "passed": true,
+        "verdict": "SMOKE_PASS: verified in browser AC1.1/1.2/1.3, AC2.1/2.2/2.3/2.4/2.5, AC3.1/3.2, AC4.1/4.2/4.3/4.4, AC5.1/5.5/5.6, AC6.1/6.2/6.3, AC7.2/7.3/7.4 (and 7.1/7.5 via focus/keyboard); deferred to tests as backend-only/no-seed-data: AC2.6, AC2.7, AC5.2, AC5.3, AC5.4; AC6.4 N/A (read-onl"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "3-3-related-notes-panel": {
+      "certified": false,
+      "costAttributed": 75.23289295000001,
+      "gate": {
+        "baselinePass": 381,
+        "fail": 0,
+        "green": true,
+        "pass": 381,
+        "total": 381
+      },
+      "ghost": null,
+      "group": "3",
+      "index": 1,
+      "key": "3-3-related-notes-panel",
+      "lastEventTs": 140000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/9"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: Verified live — AC1 visibility gate (section hidden when no embedding+not recent), AC3.1 \"Connections are still forming...\" (exact copy + text-xs muted-foreground), AC6.1 role=\"region\"/aria-label=\"Related notes\", AC6.3 aria-live=\"polite\", AC2.3 openNote→?note= routing"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "3-4-semantic-search": {
+      "certified": false,
+      "costAttributed": 14.5838665,
+      "gate": {
+        "baselinePass": 381,
+        "fail": 0,
+        "green": true,
+        "pass": 400,
+        "total": 400
+      },
+      "ghost": null,
+      "group": "3",
+      "index": 1,
+      "key": "3-4-semantic-search",
+      "lastEventTs": 151000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/10"
+      },
+      "smoke": {
+        "iter": 1,
+        "passed": true,
+        "verdict": "SMOKE_PASS: verified in browser AC1 (mobile bottom-Sheet trigger), AC2 (desktop ⌘K/Ctrl+K centered panel + autofocus + placeholder), AC3.1/AC3.3 (300ms debounce + loading skeleton/aria-busy), AC7 (empty-input copy), AC8 (Escape dismiss), AC10 (searchbox/listbox roles + aria-busy)"
+      },
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    }
+  },
+  "loopId": "bmad",
+  "phase": {
+    "label": "smoke[1]",
+    "model": null,
+    "name": null,
+    "sixPhase": "decide"
+  },
+  "questions": [
+    {
+      "a": "**Option 1 — Apply every patch now.**  Patch findings are by definition real, in-scope correctness/security bugs warranting safe minimal fixes, so I'll fix all three now and leave the defer/dismiss items as written.",
+      "answeredBy": "agent",
+      "id": "review-1-",
+      "kind": "review",
+      "q": "How would you like to handle the 3 `patch` findings? 1) Apply every patch now (fix all three; defer/decision items untouched) — Recommended; 2) Leave as action items (already written to the story file); 3) Walk through each patch before deciding.",
+      "summary": null,
+      "turn": 1
+    },
+    {
+      "a": "**[1] Apply the patch now (then re-run tsc + eslint + vitest gates).**  This is a real, in-scope correctness/leak bug introduced by this story — uncleared `setTimeout` handles can fire callbacks after unmount — and the clear-on-unmount fix is minimal, safe, and preserves the documented non-destructive bias, so it belongs in a patch rather than deferred.",
+      "answeredBy": "agent",
+      "id": "review-2-",
+      "kind": "review",
+      "q": "How should I handle the 1 `patch` finding — \"Deferred-delete timers are never cleared on provider unmount\" [components/providers/NoteDeletionProvider.tsx:62-102] (fix: add `useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current.clear(); }, [])`, clearing rather than firing on unmount to match the documented non-destructive bias)? [1] Apply the patch now (then re-run tsc + eslint + vitest gates); [2] Leave as an action item — it's already written in the story's Review Findings; [3] Walk through the patch with full detail before deciding.",
+      "summary": "Story 3-4-semantic-search reviewed (3 layers); 3 patches applied & verified (400 tests green), 6 deferred, 10 dismissed; status → done and sprint synced.",
+      "turn": 2
+    },
+    {
+      "a": null,
+      "answeredBy": null,
+      "id": "review-3-",
+      "kind": "review",
+      "q": "",
+      "summary": "Story 3-2 reviewed (3 layers); 1 patch applied (timer-cleanup leak), 1 decision deferred (concurrent-delete lost-undo), 2 defers logged, 7 dismissed; gates green (366 tests); status → done.",
+      "turn": 3
+    },
+    {
+      "a": "I have enough to answer decisively without the deployment check (permission wasn't granted, and the documentary evidence is conclusive).  ## Answer: **(B) — Classification verified live; Gemini embeddings (2.6) never run live yet**  **Why I'm confident, from reviewing the work:**  - **Story 2.6 is the smoking gun.** It's explicitly *backend-only* — \"invisible to the user today (no UI).\" Every gate that closed it was mocked: `vi.stubGlobal(\"fetch\", ...)`, `process.env.GEMINI_API_KEY = \"test-key\"`, and the verification record is purely `tsc` + `eslint` + `vitest run` (284 passed). The provider (`gemini-embedding-001`) was *finalized in this very story*, and `GEMINI_API_KEY` is documented as a `npx convex env set` step — with **no record it was ever set or that a single real `embedContent` call happened.** No browser smoke could have touched it because there's no UI path to it until Epic 3. - **Classification (2.2–2.4), by contrast, has UI and went through AC-aware browser smoke** — a real capture rendering a real classification implies a live OpenRouter call against `qwen3-next-80b:free`. So that half is credibly live. - One honesty caveat: I tried to read the live deployment's env vars to confirm both keys this session and the permission wasn't granted — so even classification's \"live\" status rests on the story-time browser smoke, not a fresh re-check.  **What went well:** TDD + 3-layer adversarial review (Blind Hunter / Edge Case / Acceptance Auditor) per story, disciplined deferred-work tracking, and genuinely tight seam reuse (2.2 pre-provisioned the embedding rate-limit, audit action, and chaining placeholders — 2.6 wrote almost no new infra). The decoupling discipline (\"classification is sacred, embedding is best-effort\") is sound architecture.  **What to improve:** \"All green + merged\" conflated *mocked-green* with *live-verified* for the one path that has no UI to smoke. Mocked vitest is necessary but not sufficient for a brand-new external provider.  **Action items (concrete, few):** 1. **Before any Epic 3 story starts:** set `GEMINI_API_KEY` on the dev deployment, run one real capture, and confirm a 1536-dim vector lands on `notes.embedding` + one `action:\"embedding\"` audit row. Epic 3 (search, related-notes) reads this field — shipping it on Epic 3 would mean debugging two unverified layers at once. *This is the single highest-priority gap.* 2. Re-confirm `OPENROUTER_API_KEY` is set on the deployment and do one fresh capture→classify in the browser to formally close the classification \"live\" claim. 3. Add a one-line **\"live smoke against the real provider\"** step to the Definition of Done for any story introducing a new external API — so a no-UI backend story can't reach `done` on mocks alone.",
+      "answeredBy": "agent",
+      "epic": "2",
+      "id": "retro-1-2",
+      "kind": "retro",
+      "q": "Has the Epic 2 AI pipeline been verified LIVE end-to-end (real API calls, env vars set on the Convex deployment), or only via mocked unit tests? Options: (A) Both OpenRouter classification AND Gemini embeddings verified live end-to-end; (B) Classification verified live, but Gemini embeddings (GEMINI_API_KEY / 2.6) never run live yet; (C) Neither — only mocked `vitest` runs so far, no real API calls; (D) Already deployed and in real personal use.",
+      "summary": null,
+      "turn": 1
+    },
+    {
+      "a": null,
+      "answeredBy": null,
+      "epic": "2",
+      "id": "retro-2-2",
+      "kind": "retro",
+      "q": "",
+      "summary": "Epic 2 retro saved (epic-2-retro-2026-06-18.md) and sprint-status marked done; 6/6 stories shipped with strong lib-reuse and idempotency discipline, key finding = embeddings (2.6) are mocked-green but never live-verified — top Epic 3 prep gate is set GEMINI_API_KEY + live smoke + backfill pre-2.6 notes before search/related-notes; doc debt (project-context.md / architecture.md drift) carried from Epic 1 still open.",
+      "turn": 2
+    }
+  ],
+  "quota": {
+    "active": false,
+    "label": "code-review[1]",
+    "probe": 2,
+    "resetAt": "2026-06-19T08:40:00.0000000+05:30",
+    "resetType": null,
+    "resumeAt": null,
+    "waitSec": 0
+  },
+  "run": {
+    "branch": "develop",
+    "cumUsd": 26.747233249999994,
+    "mergeBase": "develop",
+    "pid": null,
+    "restState": "stopped-ember",
+    "resumeCmd": "pwsh -File \"bmad-loop.ps1\"",
+    "stage": "between-stories (clean)",
+    "startedAt": null,
+    "status": "stopped",
+    "stopPending": null,
+    "target": "3-4-semantic-search",
+    "updatedAt": "2026-06-19T10:22:06.1447403+05:30"
+  },
+  "verdicts": {}
+}
