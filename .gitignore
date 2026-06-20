@@ -25,9 +25,17 @@ dist/
 .loop/devserver.out
 .loop/reprodev.out
 
-# Example loops produce their own state dir + caches
+# Example + seeded loops produce their own state dir + caches
 examples/**/.loop/
 examples/**/.pytest_cache/
+orrery/loops/**/.loop/
+orrery/loops/**/.pytest_cache/
+
+# Local PowerShell harness drivers — NOT part of the public repo (the maintained
+# engine is the Python package in engine/; the PS reference impl lives in legacy/).
+# Kept out of tracking so the repo root stays free of *.ps1.
+/bmad-loop.ps1
+/stop-loop.ps1
 
 # Playwright (orrery e2e) artifacts
 test-results/

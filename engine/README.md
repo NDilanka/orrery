@@ -3,8 +3,8 @@
 The **loop engine** for [Orrery](https://github.com/NDilanka/orrery) — a pip-installable,
 cross-platform Python package that drives a coding agent in a **fix-until-green** loop with
 an **external test gate as truth**. A faithful port of the original PowerShell engine
-(`../loop.ps1` / `../loopcore.ps1`), verified byte-compatible with the wire protocol in
-[`../orrery/PROTOCOL.md`](../orrery/PROTOCOL.md) via a golden corpus.
+(`../legacy/loop.ps1` / `../legacy/loopcore.ps1`), verified byte-compatible with the wire
+protocol in [`../orrery/PROTOCOL.md`](../orrery/PROTOCOL.md) via a golden corpus.
 
 ## Install
 
@@ -75,5 +75,7 @@ ruff check engine
 ```
 
 Golden event fixtures are generated from the authoritative PowerShell source via
-`tests/gen_golden.ps1` (PowerShell 7) and assert the Python builders stay byte-compatible
-with `PROTOCOL.md`.
+`../legacy/gen_golden.ps1` (PowerShell 7) and assert the Python builders stay
+byte-compatible with `PROTOCOL.md`. The committed corpus lives at
+`tests/fixtures/golden_events.jsonl`; the test asserts against it and does not run the
+generator.

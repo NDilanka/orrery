@@ -109,8 +109,10 @@ config snippets: **[`docs/capabilities.md`](docs/capabilities.md)**.
 | **Run-quality metrics** | first-try-green + iters/cost-to-green instead of pass@k | `--emit-metrics` / `metrics.emit` | pass@k critique (Chen 2021) |
 | **Anti-false-green verifier** | a second, independent judge tries to *refute* "done" | `--verify` / `verify.enabled` | Krakovna et al. (2020) |
 
-The original PowerShell scripts (`loop.ps1` / `loopcore.ps1`) are the **reference implementation** (Windows / PowerShell); the Python
-package is a faithful port. `engine/tests` holds the golden parity suite (375 tests).
+The original PowerShell scripts (`legacy/loop.ps1` / `legacy/loopcore.ps1`) are the
+**reference implementation** (Windows / PowerShell), kept under [`legacy/`](legacy/) for
+provenance + to regenerate the parity goldens; the Python package is a faithful port.
+`engine/tests` holds the golden parity suite (375 tests).
 
 ---
 
@@ -154,7 +156,7 @@ examples/hello/         a runnable, cross-platform example (pytest gate) ← sta
 src/                    small TypeScript demo tasks (roman / calc) the engine can drive
 docs/capabilities.md    the research-backed, default-off capabilities reference
 loop-engineering.md     the design essay — the WHY behind all of this
-loop*.ps1               the original PowerShell engine (reference implementation)
+legacy/                 the original PowerShell engine (reference impl; goldens source)
 ```
 
 ---

@@ -1,5 +1,5 @@
-"""Tests for ``model_for_phase`` (mirrors selftest-verify.ps1 §4) and the ``loop.json``
-engine-block loader (loads the real roman/loop.json + asserts defaults fill in)."""
+"""Tests for ``model_for_phase`` (mirrors the verify selftest §4) and the ``loop.json``
+engine-block loader (loads the real seeded hello/loop.json + asserts defaults fill in)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from pathlib import Path
 
 from loop.config import EngineConfig, from_loop_json, model_for_phase
 
-ROMAN = Path("orrery/loops/roman/loop.json")
+# The seeded, self-contained Python loop the visualizer ships (pytest gate).
+HELLO = Path("orrery/loops/hello/loop.json")
 
 
 # =====================================================================
@@ -39,19 +40,19 @@ def test_model_unknown_phase_safe_middle_tier():
 
 
 # =====================================================================
-# from_loop_json — the real roman/loop.json
+# from_loop_json — the real seeded hello/loop.json
 # =====================================================================
 
 
-def test_load_roman_loop_json():
-    cfg = from_loop_json(ROMAN)
+def test_load_hello_loop_json():
+    cfg = from_loop_json(HELLO)
     assert cfg.task == "TASK.md"
     assert cfg.models == {
         "discover": "haiku", "execute": "sonnet", "judge": "haiku", "hard": "opus",
     }
-    assert cfg.max_turns == 30
+    assert cfg.max_turns == 20
     assert cfg.allowed_tools == [
-        "Read", "Edit", "Write", "Bash(bun test)", "Bash(bun test:*)",
+        "Read", "Edit", "Write", "Bash(pytest)", "Bash(pytest:*)",
     ]
     assert cfg.permission_mode == "acceptEdits"
 
@@ -59,18 +60,18 @@ def test_load_roman_loop_json():
     assert len(cfg.gate.stages) == 1
     stage = cfg.gate.stages[0]
     assert stage.name == "test"
-    assert stage.command == "bun test"
-    assert stage.pass_pattern == r"(\d+)\s+pass"
-    assert stage.fail_pattern == r"(\d+)\s+fail"
+    assert stage.command == "pytest -q"
+    assert stage.pass_pattern == r"(\d+) passed"
+    assert stage.fail_pattern == r"(\d+) failed"
     assert cfg.gate.green_when == "exit==0"
-    assert cfg.gate.lock_globs == ["**/*.test.ts"]
+    assert cfg.gate.lock_globs == ["**/test_*.py"]
 
     # cost
-    assert cfg.cost.ceiling_usd == 3.0
+    assert cfg.cost.ceiling_usd == 0.5
     assert cfg.cost.alert_pct == [50, 80, 100]
 
     # stop
-    assert cfg.stop.max_iters == 15
+    assert cfg.stop.max_iters == 8
     assert cfg.stop.stagnation_limit == 2
     assert cfg.stop.plateau_limit == 3
     assert cfg.stop.regress_limit == 3
@@ -82,7 +83,7 @@ def test_load_roman_loop_json():
 
 
 def test_model_for_via_config():
-    cfg = from_loop_json(ROMAN)
+    cfg = from_loop_json(HELLO)
     assert cfg.model_for("execute") == "sonnet"
     assert cfg.model_for("frobnicate") == "sonnet"
 
@@ -158,4 +159,4 @@ def test_snake_case_keys_accepted():
 
 
 def test_isinstance_engine_config():
-    assert isinstance(from_loop_json(ROMAN), EngineConfig)
+    assert isinstance(from_loop_json(HELLO), EngineConfig)

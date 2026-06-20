@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn resolve_loop_reads_seed_def() {
         let loops_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../loops"));
-        let (state_dir, adapter, log_file) = resolve_loop(&loops_dir, "roman").expect("resolve roman");
+        let (state_dir, adapter, log_file) = resolve_loop(&loops_dir, "hello").expect("resolve hello");
         assert_eq!(adapter, "generic");
         assert_eq!(log_file.as_deref(), Some("log.jsonl"));
         assert!(state_dir.to_string_lossy().contains(".loop"));

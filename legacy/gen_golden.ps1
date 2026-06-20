@@ -9,15 +9,17 @@
   gate/model/cost-alert/verdict — are emitted here from their PROTOCOL.md §2 spec so the
   golden corpus is the single source of truth the Python builders are checked against.
 
-  Run: pwsh -NoProfile -File engine/tests/gen_golden.ps1
+  Run: pwsh -NoProfile -File legacy/gen_golden.ps1
 #>
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = (Resolve-Path (Join-Path $here '..\..')).Path
-. (Join-Path $repoRoot 'loopcore.ps1')
+# loopcore.ps1 is now a sibling in legacy/; the repo root is one level up.
+$repoRoot = (Resolve-Path (Join-Path $here '..')).Path
+. (Join-Path $here 'loopcore.ps1')
 
-$fixturesDir = Join-Path $here 'fixtures'
+# The Python engine asserts against the COMMITTED corpus at engine/tests/fixtures/.
+$fixturesDir = Join-Path $repoRoot 'engine/tests/fixtures'
 New-Item -ItemType Directory -Force -Path $fixturesDir | Out-Null
 $outFile = Join-Path $fixturesDir 'golden_events.jsonl'
 

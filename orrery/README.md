@@ -53,13 +53,17 @@ analogous (`tauri ios …`, macOS only).
 
 ## The loops it visualizes
 
-Loop definitions live in `loops/<id>/loop.json` (seeded: **`roman`**, **`calc`** — generic
-fix-until-green demos). The visualizer is engine-agnostic; it renders the `log.jsonl` any
-loop emits. The primary engine is the Python package in [`../engine`](../engine) (run
-`loop` / `loop-bmad` directly); the seeded loops' live **start** command currently launches
-the original PowerShell reference engine (`../loop.ps1`) — repointing them to the Python
-engine is on the roadmap. The **BMAD** adapter is supported and exercised by the demo
-fixture `static/fixtures/bmad-log.jsonl`.
+Loop definitions live in `loops/<id>/loop.json`. The seeded loop is **`hello`** — a
+self-contained, generic fix-until-green demo (a tiny Python project with a deliberate bug
+and a `pytest` gate) whose **start** command runs the Python engine directly
+(`loop --loop-json loop.json --cwd . --state-dir .loop`), so it has no external
+dependencies. The visualizer is engine-agnostic; it renders the `log.jsonl` any loop emits,
+and the primary engine is the Python package in [`../engine`](../engine).
+
+Two further demos — **`roman`** and **`calc`** — ship as **replay** fixtures only
+(`static/fixtures/{roman,calc}-log.jsonl`, registered in `src/lib/transport/index.ts`); they
+are pre-recorded runs for the in-app Rewind/Planetarium, not live seeds. The **BMAD** adapter
+is supported and exercised by the demo fixture `static/fixtures/bmad-log.jsonl`.
 
 ## Verification
 
@@ -85,7 +89,7 @@ orrery/
   src-tauri/tests/        golden_parity.rs + committed RunState goldens
   src/lib/                transport (tauri|ws|replay), stores, adapters, render (Pixi), panels
   src/lib/reduce.ts       the TS reducer (mirrors reducer.rs; parity-tested)
-  loops/<id>/loop.json    seeded loop definitions (roman, calc) + user-authored
+  loops/<id>/loop.json    seeded loop definition (hello — Python pytest gate) + user-authored
   static/fixtures/        real-log fixtures the app replays in dev / browser mode
   fixtures/               fixtures used by the Rust unit tests
   e2e/                    Playwright smoke tests
@@ -98,6 +102,7 @@ orrery/
 - Cross-run **lessons memory** (a Phase-4 engine capability) isn't surfaced in the viz yet —
   it lives in a side `memory.jsonl`, so surfacing it needs a new protocol event (a `TODO` is
   marked in `MetricsPanel.svelte`).
-- The seeded `loops/*.json` still launch the PowerShell reference engine for live control;
-  repointing them to the Python engine (with portable relative paths) is on the roadmap.
+- The seeded `loops/hello` runs through the Python engine and is self-contained (its
+  `stateDir` is the relative `.loop`, resolved against the loop's own dir), so it works from
+  the desktop app with no repo-root layout assumptions.
 - Native mobile is scaffolded but the APK isn't built/committed (see above).

@@ -351,22 +351,40 @@ fn load_loop_def(loops_dir: &Path, loop_id: &str) -> Result<LoopDef, String> {
     serde_json::from_str::<LoopDef>(&text).map_err(|e| format!("parse {p:?}: {e}"))
 }
 
-fn state_dir_of(def: &LoopDef) -> PathBuf {
-    PathBuf::from(&def.state_dir)
+/// The loop's own base dir is `loops_dir/<loop_id>` (where its loop.json lives).
+/// A RELATIVE path in loop.json (stateDir / stopFlag / checkpoint) resolves against
+/// it; an ABSOLUTE path is left untouched. This is what makes a self-contained
+/// `stateDir: ".loop"` resolve under the loop's own dir rather than the app's cwd.
+fn loop_base_dir(loops_dir: &Path, loop_id: &str) -> PathBuf {
+    loops_dir.join(loop_id)
 }
 
-fn stop_flag_path(def: &LoopDef) -> PathBuf {
-    // Honor an explicit stopFlag if the loop.json sets one; else `<stateDir>/STOP`.
-    match &def.stop_flag {
-        Some(p) => PathBuf::from(p),
-        None => state_dir_of(def).join("STOP"),
+/// Resolve `p` against `base` when relative; return it as-is when absolute.
+fn resolve_under(base: &Path, p: &str) -> PathBuf {
+    let pb = PathBuf::from(p);
+    if pb.is_absolute() {
+        pb
+    } else {
+        base.join(pb)
     }
 }
 
-fn checkpoint_file_path(def: &LoopDef) -> PathBuf {
+fn state_dir_of(def: &LoopDef, base_dir: &Path) -> PathBuf {
+    resolve_under(base_dir, &def.state_dir)
+}
+
+fn stop_flag_path(def: &LoopDef, base_dir: &Path) -> PathBuf {
+    // Honor an explicit stopFlag if the loop.json sets one; else `<stateDir>/STOP`.
+    match &def.stop_flag {
+        Some(p) => resolve_under(base_dir, p),
+        None => state_dir_of(def, base_dir).join("STOP"),
+    }
+}
+
+fn checkpoint_file_path(def: &LoopDef, base_dir: &Path) -> PathBuf {
     match &def.checkpoint {
-        Some(p) => PathBuf::from(p),
-        None => state_dir_of(def).join("checkpoint.json"),
+        Some(p) => resolve_under(base_dir, p),
+        None => state_dir_of(def, base_dir).join("checkpoint.json"),
     }
 }
 
@@ -493,13 +511,14 @@ fn start_with_spec(
     pids: Option<&LoopPids>,
     loop_id: &str,
     def: &LoopDef,
+    base_dir: &Path,
     spec: &StartSpec,
 ) -> Result<StartResult, String> {
     let tokens = guard_tokens(def);
     if let Some(_existing) = find_running_pid(&tokens) {
         return Err("AlreadyRunning".to_string());
     }
-    let state_dir = state_dir_of(def);
+    let state_dir = state_dir_of(def, base_dir);
     let pid = spawn_detached(&state_dir, &spec.program, &spec.args)?;
     if let Some(pids) = pids {
         if let Ok(mut map) = pids.0.lock() {
@@ -512,25 +531,29 @@ fn start_with_spec(
 /// Core of `start_loop` without Tauri `LoopPids` state — used by the LAN `/api/control` route.
 /// Runs the concurrency guard and spawns the loop's own declared start command. Returns the PID.
 pub fn start_loop_core(loop_id: &str, loops_dir: &str) -> Result<u32, String> {
-    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
+    let loops = PathBuf::from(loops_dir);
+    let def = load_loop_def(&loops, loop_id)?;
+    let base_dir = loop_base_dir(&loops, loop_id);
     let spec = def
         .start
         .clone()
         .ok_or_else(|| format!("loop {loop_id} has no start command"))?;
-    start_with_spec(None, loop_id, &def, &spec).map(|r| r.pid)
+    start_with_spec(None, loop_id, &def, &base_dir, &spec).map(|r| r.pid)
 }
 
 /// Core of `resume_loop` without Tauri state — prefers the checkpoint resume command, else start.
 pub fn resume_loop_core(loop_id: &str, loops_dir: &str) -> Result<u32, String> {
-    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
-    let spec = match read_checkpoint(&def).and_then(|c| c.resume) {
+    let loops = PathBuf::from(loops_dir);
+    let def = load_loop_def(&loops, loop_id)?;
+    let base_dir = loop_base_dir(&loops, loop_id);
+    let spec = match read_checkpoint(&def, &base_dir).and_then(|c| c.resume) {
         Some(resume) if !resume.trim().is_empty() => parse_command_string(&resume)?,
         _ => def
             .start
             .clone()
             .ok_or_else(|| format!("loop {loop_id} has neither resume nor start command"))?,
     };
-    start_with_spec(None, loop_id, &def, &spec).map(|r| r.pid)
+    start_with_spec(None, loop_id, &def, &base_dir, &spec).map(|r| r.pid)
 }
 
 /// A8 — core of `answer_question`. Resolve the loop's stateDir and write the PROTOCOL §1 answer
@@ -543,8 +566,10 @@ pub fn answer_question_core(
     qid: &str,
     text: &str,
 ) -> Result<(), String> {
-    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
-    let state_dir = state_dir_of(&def);
+    let loops = PathBuf::from(loops_dir);
+    let def = load_loop_def(&loops, loop_id)?;
+    let base_dir = loop_base_dir(&loops, loop_id);
+    let state_dir = state_dir_of(&def, &base_dir);
     std::fs::create_dir_all(&state_dir)
         .map_err(|e| format!("create stateDir {state_dir:?}: {e}"))?;
     let path = state_dir.join("answer.json");
@@ -599,15 +624,15 @@ fn parse_command_string(s: &str) -> Result<StartSpec, String> {
 }
 
 /// Read & parse `checkpoint.json` for a loop, if present.
-fn read_checkpoint(def: &LoopDef) -> Option<Checkpoint> {
-    let p = checkpoint_file_path(def);
+fn read_checkpoint(def: &LoopDef, base_dir: &Path) -> Option<Checkpoint> {
+    let p = checkpoint_file_path(def, base_dir);
     let text = std::fs::read_to_string(&p).ok()?;
     serde_json::from_str::<Checkpoint>(&text).ok()
 }
 
 /// Read the STOP file's trimmed contents, if present.
-fn read_stop_flag(def: &LoopDef) -> Option<String> {
-    let p = stop_flag_path(def);
+fn read_stop_flag(def: &LoopDef, base_dir: &Path) -> Option<String> {
+    let p = stop_flag_path(def, base_dir);
     let text = std::fs::read_to_string(&p).ok()?;
     let mode = text.trim().to_lowercase();
     if mode.is_empty() {
@@ -629,12 +654,14 @@ pub fn start_loop(
     pids: tauri::State<'_, LoopPids>,
 ) -> Result<StartResult, String> {
     let _ = overrides; // accepted per §6; engine-side overrides are not wired yet.
-    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let loops = PathBuf::from(&loops_dir);
+    let def = load_loop_def(&loops, &loop_id)?;
+    let base_dir = loop_base_dir(&loops, &loop_id);
     let spec = def
         .start
         .clone()
         .ok_or_else(|| format!("loop {loop_id} has no start command"))?;
-    start_with_spec(Some(&pids), &loop_id, &def, &spec)
+    start_with_spec(Some(&pids), &loop_id, &def, &base_dir, &spec)
 }
 
 /// Core of `stop_loop`, shared by the Tauri command and the LAN `/api/control` route. Validates
@@ -645,8 +672,10 @@ pub fn stop_loop_core(loop_id: &str, loops_dir: &str, mode: &str) -> Result<(), 
     if !matches!(mode.as_str(), "phase" | "story" | "now") {
         return Err(format!("invalid stop mode: {mode:?} (expected phase|story|now)"));
     }
-    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
-    let flag = stop_flag_path(&def);
+    let loops = PathBuf::from(loops_dir);
+    let def = load_loop_def(&loops, loop_id)?;
+    let base_dir = loop_base_dir(&loops, loop_id);
+    let flag = stop_flag_path(&def, &base_dir);
     if let Some(parent) = flag.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {parent:?}: {e}"))?;
     }
@@ -657,8 +686,10 @@ pub fn stop_loop_core(loop_id: &str, loops_dir: &str, mode: &str) -> Result<(), 
 
 /// Core of `cancel_stop`: delete the STOP flag (idempotent on absence).
 pub fn cancel_stop_core(loop_id: &str, loops_dir: &str) -> Result<(), String> {
-    let def = load_loop_def(&PathBuf::from(loops_dir), loop_id)?;
-    let flag = stop_flag_path(&def);
+    let loops = PathBuf::from(loops_dir);
+    let def = load_loop_def(&loops, loop_id)?;
+    let base_dir = loop_base_dir(&loops, loop_id);
+    let flag = stop_flag_path(&def, &base_dir);
     match std::fs::remove_file(&flag) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // already clear
@@ -691,16 +722,18 @@ pub fn resume_loop(
     loops_dir: String,
     pids: tauri::State<'_, LoopPids>,
 ) -> Result<StartResult, String> {
-    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let loops = PathBuf::from(&loops_dir);
+    let def = load_loop_def(&loops, &loop_id)?;
+    let base_dir = loop_base_dir(&loops, &loop_id);
     // Prefer the checkpoint's resume command; fall back to start.
-    let spec = match read_checkpoint(&def).and_then(|c| c.resume) {
+    let spec = match read_checkpoint(&def, &base_dir).and_then(|c| c.resume) {
         Some(resume) if !resume.trim().is_empty() => parse_command_string(&resume)?,
         _ => def
             .start
             .clone()
             .ok_or_else(|| format!("loop {loop_id} has neither resume nor start command"))?,
     };
-    start_with_spec(Some(&pids), &loop_id, &def, &spec)
+    start_with_spec(Some(&pids), &loop_id, &def, &base_dir, &spec)
 }
 
 /// A8 — `answer_question(loopId, loopsDir, qid, text)` (PROTOCOL §6, stretch). Writes the
@@ -721,7 +754,9 @@ pub fn guard_status(
     loops_dir: String,
     pids: tauri::State<'_, LoopPids>,
 ) -> Result<GuardStatus, String> {
-    let def = load_loop_def(&PathBuf::from(&loops_dir), &loop_id)?;
+    let loops = PathBuf::from(&loops_dir);
+    let def = load_loop_def(&loops, &loop_id)?;
+    let base_dir = loop_base_dir(&loops, &loop_id);
     let tokens = guard_tokens(&def);
 
     // running via sysinfo match OR a live tracked PID.
@@ -737,8 +772,8 @@ pub fn guard_status(
     Ok(GuardStatus {
         running,
         pid,
-        stop_pending: read_stop_flag(&def),
-        checkpoint: read_checkpoint(&def),
+        stop_pending: read_stop_flag(&def, &base_dir),
+        checkpoint: read_checkpoint(&def, &base_dir),
     })
 }
 
@@ -889,12 +924,11 @@ mod tests {
         let loops_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../loops"));
         let defs = list_loops(loops_dir.to_string_lossy().to_string()).unwrap();
         let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
-        assert!(ids.contains(&"roman"));
-        assert!(ids.contains(&"calc"));
-        // roman def carries logFile + adapter
-        let roman = defs.iter().find(|d| d.id == "roman").unwrap();
-        assert_eq!(roman.adapter, "generic");
-        assert_eq!(roman.log_file.as_deref(), Some("log.jsonl"));
+        assert!(ids.contains(&"hello"));
+        // the hello seed is a self-contained generic loop carrying logFile + adapter
+        let hello = defs.iter().find(|d| d.id == "hello").unwrap();
+        assert_eq!(hello.adapter, "generic");
+        assert_eq!(hello.log_file.as_deref(), Some("log.jsonl"));
     }
 
     // ----- A6 live-control tests (no real claude loop is ever spawned) -----
@@ -942,25 +976,82 @@ mod tests {
     }
 
     #[test]
+    fn relative_state_dir_resolves_under_loop_base_dir() {
+        // A self-contained seed (stateDir ".loop") must resolve under the loop's own dir
+        // (loops/<id>), NOT the app's cwd — otherwise spawn_detached's current_dir is wrong.
+        let base = Path::new("/loops/hello");
+        let def = LoopDef {
+            id: "hello".into(),
+            name: "hello".into(),
+            theme: None,
+            kind: Some("generic".into()),
+            state_dir: ".loop".into(),
+            adapter: "generic".into(),
+            log_file: Some("log.jsonl".into()),
+            stop_flag: Some(".loop/STOP".into()),
+            checkpoint: Some(".loop/checkpoint.json".into()),
+            start: None,
+            engine: None,
+        };
+        // relative stateDir + STOP + checkpoint all resolve under base.
+        assert_eq!(state_dir_of(&def, base), Path::new("/loops/hello/.loop"));
+        assert_eq!(stop_flag_path(&def, base), Path::new("/loops/hello/.loop/STOP"));
+        assert_eq!(
+            checkpoint_file_path(&def, base),
+            Path::new("/loops/hello/.loop/checkpoint.json")
+        );
+        // and the spawn cwd is the loop's own dir (parent of the resolved stateDir).
+        assert_eq!(state_dir_of(&def, base).parent(), Some(base));
+    }
+
+    #[test]
+    fn absolute_state_dir_is_left_untouched() {
+        // ABSOLUTE stateDir must be used verbatim regardless of base dir (parity with before).
+        let base = Path::new("/somewhere/else");
+        let abs = if cfg!(windows) { "C:/abs/state" } else { "/abs/state" };
+        let def = LoopDef {
+            id: "ext".into(),
+            name: "ext".into(),
+            theme: None,
+            kind: Some("generic".into()),
+            state_dir: abs.into(),
+            adapter: "generic".into(),
+            log_file: Some("log.jsonl".into()),
+            stop_flag: None,
+            checkpoint: None,
+            start: None,
+            engine: None,
+        };
+        assert_eq!(state_dir_of(&def, base), PathBuf::from(abs));
+        assert_eq!(stop_flag_path(&def, base), PathBuf::from(abs).join("STOP"));
+        assert_eq!(
+            checkpoint_file_path(&def, base),
+            PathBuf::from(abs).join("checkpoint.json")
+        );
+    }
+
+    #[test]
     fn stop_loop_writes_mode_and_cancel_removes_it() {
         let tmp = TmpDir::new("stop");
-        let def = def_with_state_dir("roman", tmp.path(), vec![
-            "-NoProfile", "-File", "loop.ps1", "-TaskFile", "TASK.md",
+        let def = def_with_state_dir("hello", tmp.path(), vec![
+            "--loop-json", "loop.json", "--cwd", ".", "--state-dir", ".loop",
         ]);
-        let flag = stop_flag_path(&def);
+        // stateDir is absolute (the temp dir) so the base dir is irrelevant here.
+        let base = tmp.path();
+        let flag = stop_flag_path(&def, base);
 
         // Replicate the command body's write (the command itself needs tauri::State).
         std::fs::write(&flag, "phase").unwrap();
         assert_eq!(std::fs::read_to_string(&flag).unwrap(), "phase");
-        assert_eq!(read_stop_flag(&def).as_deref(), Some("phase"));
+        assert_eq!(read_stop_flag(&def, base).as_deref(), Some("phase"));
 
         std::fs::write(&flag, "story").unwrap();
-        assert_eq!(read_stop_flag(&def).as_deref(), Some("story"));
+        assert_eq!(read_stop_flag(&def, base).as_deref(), Some("story"));
 
         // cancel removes it; second cancel is a no-op (NotFound is Ok).
         std::fs::remove_file(&flag).unwrap();
         assert!(!flag.exists());
-        assert_eq!(read_stop_flag(&def), None);
+        assert_eq!(read_stop_flag(&def, base), None);
     }
 
     #[test]
@@ -994,10 +1085,11 @@ mod tests {
             "cumUsd": 26.7472,
             "resume": "pwsh -File \"bmad-loop.ps1\""
         }"#;
-        std::fs::write(checkpoint_file_path(&def), cp).unwrap();
-        std::fs::write(stop_flag_path(&def), "story").unwrap();
+        let base = tmp.path();
+        std::fs::write(checkpoint_file_path(&def, base), cp).unwrap();
+        std::fs::write(stop_flag_path(&def, base), "story").unwrap();
 
-        let parsed = read_checkpoint(&def).expect("checkpoint parses");
+        let parsed = read_checkpoint(&def, base).expect("checkpoint parses");
         assert_eq!(parsed.stage.as_deref(), Some("between-stories (clean)"));
         assert_eq!(parsed.branch.as_deref(), Some("develop"));
         assert!((parsed.cum_usd.unwrap() - 26.7472).abs() < 1e-6);
@@ -1006,7 +1098,7 @@ mod tests {
             Some("pwsh -File \"bmad-loop.ps1\"")
         );
 
-        assert_eq!(read_stop_flag(&def).as_deref(), Some("story"));
+        assert_eq!(read_stop_flag(&def, base).as_deref(), Some("story"));
     }
 
     #[test]
