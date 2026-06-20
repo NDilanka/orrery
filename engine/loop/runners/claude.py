@@ -1,0 +1,113 @@
+"""ClaudeRunner — a faithful port of the ``claude -p`` invocation in ``loop.ps1``.
+
+The two side-effecting paths the PowerShell harness isolates so it can stub them are both
+here, and both go through :mod:`loop.proc` (the ONE place a real ``claude`` process spawns):
+
+- :meth:`ClaudeRunner.run` ports the execute call (``loop.ps1`` ~635): build the exact argv,
+  run it, parse the ``--output-format json`` result object into an :class:`AgentResult`.
+- :meth:`ClaudeRunner.probe_quota` ports ``Invoke-QuotaProbe`` (``loop.ps1`` ~209): a cheap
+  ``stream-json`` probe whose combined stdout+stderr is handed to the PURE
+  :func:`loop.quota.resolve_quota_status` parser.
+
+Tests monkeypatch this module's ``proc`` reference so no real ``claude`` is ever spawned.
+"""
+
+from __future__ import annotations
+
+import json
+
+from loop import proc, quota
+from loop.runners.base import AgentResult, AgentRunner, QuotaStatus
+
+
+class ClaudeRunner(AgentRunner):
+    """The ``claude`` CLI backend. Full capabilities: quota probe, sessions, cache telemetry."""
+
+    name = "claude"
+    supports_quota_probe = True
+    supports_sessions = True
+    supports_cache_telemetry = True
+
+    def run(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        allowed_tools,
+        permission_mode: str,
+        max_turns: int,
+        cwd,
+        timeout_sec: int = 0,
+        resume_session: str | None = None,
+        output_format: str = "json",
+    ) -> AgentResult:
+        # Build argv EXACTLY like loop.ps1 (~635): a single --allowedTools flag followed by
+        # the tool list spread as separate positional args (PS: '--allowedTools' + $toolArgs).
+        argv = [
+            "claude",
+            "-p",
+            prompt,
+            "--output-format",
+            output_format,
+            "--max-turns",
+            str(max_turns),
+            "--model",
+            model,
+            "--permission-mode",
+            permission_mode,
+            "--allowedTools",
+            *list(allowed_tools),
+        ]
+        if resume_session:
+            argv += ["--resume", resume_session]
+
+        res = proc.run_with_timeout(argv, cwd=cwd, timeout_sec=timeout_sec)
+
+        # A killed (hung) claude is a non-productive run: error + timed_out, no parse attempt.
+        if res.timed_out:
+            return AgentResult(raw=res.stdout or "", is_error=True, timed_out=True)
+
+        raw = res.stdout or ""
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # Unparseable stdout — same verdict the PS loop reaches ($parsed -eq $null ->
+            # callFailed). Flag parse_failed so the driver can emit parse_error + stop even when
+            # raw is a non-empty garbage string (loop.ps1:662).
+            return AgentResult(raw=raw, is_error=True, parse_failed=True)
+
+        if not isinstance(parsed, dict):
+            return AgentResult(raw=raw, is_error=True, parse_failed=True)
+
+        is_error = bool(parsed.get("is_error", False))
+        return AgentResult(
+            raw=raw,
+            text=parsed.get("result", "") or "",
+            cost_usd=float(parsed.get("total_cost_usd", 0.0) or 0.0),
+            is_error=is_error,
+            session_id=parsed.get("session_id"),
+            usage=parsed.get("usage"),
+            quota_limited=is_error and quota.test_quota_limited_text(raw),
+        )
+
+    def probe_quota(self) -> QuotaStatus:
+        # Port of Invoke-QuotaProbe (loop.ps1 ~209): a cheap stream-json probe; hand the
+        # combined stdout+stderr to the pure resolver.
+        argv = [
+            "claude",
+            "-p",
+            "ok",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--max-turns",
+            "1",
+        ]
+        res = proc.run_with_timeout(argv, cwd=None, timeout_sec=0)
+        combined = (res.stdout or "") + "\n" + (res.stderr or "")
+        status = quota.resolve_quota_status(combined)
+        return QuotaStatus(
+            limited=status.limited,
+            reset_at=status.reset_at,
+            reset_type=status.reset_type,
+        )

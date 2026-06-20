@@ -2,3 +2,25 @@ node_modules/
 .loop/log.jsonl
 *.log
 bun.lockb
+
+# Python (engine/ harness)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Engine runtime state (.loop/)
+.loop/*.out
+.loop/*.jsonl
+.loop/checkpoint.json
+.loop/STOP
+.loop/answer.json
+.loop/progress.md
+.loop/devserver.out
+.loop/reprodev.out

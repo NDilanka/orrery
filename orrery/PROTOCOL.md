@@ -53,6 +53,17 @@ All numeric costs are USD. Timestamps are ISO-8601 strings unless noted.
 { "event": "phase-timeout", "label": string, "timeoutSec": int }
 ```
 
+### Core (engine v3 additions — emit when present)
+Additive only; all behind default-off engine flags. **Unknown events are logged-but-ignored
+by the reducer**, so an older reducer skips these and a default-config run never emits them —
+fully backward-compatible.
+```
+{ "event": "metrics", "firstTryGreen": bool, "itersToGreen": int|null, "costToGreen": float|null,
+  "rollbacks": int, "regressionRate": float, "totalIters": int, "totalCost": float, "finalGreen": bool }
+// emitted ONCE at stop when engine.metrics.emit is on; a run-quality fold of the event stream
+// (loop.metrics.compute_metrics). first-try-green + iters/cost-to-green replace pass@k for loops.
+```
+
 ### Quota (engine v2 — see BMAD)
 ```
 { "event": "quota-hit",    "label": string, "cum": float, "resetAt": iso|null }

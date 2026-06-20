@@ -1,0 +1,22 @@
+{"case":"iter","expected":{"event":"iter","iter":4,"cost":0.12,"cum":1.5,"pass":8,"total":10,"best":8,"changed":true,"stale":0,"plateau":1,"regress":0,"action":"continue","reason":"advance"}}
+{"case":"stop","expected":{"event":"stop","reason":"all tests green at iter 4","green":true,"iter":4,"cum":1.5,"bestPass":8}}
+{"case":"parse_error","expected":{"event":"parse_error","iter":4}}
+{"case":"gate","expected":{"event":"gate","story":"S1","cum":1.5,"green":true,"pass":8,"fail":0,"total":8,"baselinePass":6,"stages":[{"name":"test","ok":true,"exit":0}]}}
+{"case":"model","expected":{"event":"model","phase":"execute","model":"sonnet","costPerTurn":0.05}}
+{"case":"cost_alert","expected":{"event":"cost-alert","pct":80,"cum":2.4,"ceiling":3.0}}
+{"case":"verdict","expected":{"event":"verdict","item":"roman","pass":false,"failingCriteria":["handles 0","rejects negatives"],"evidence":"two cases fail","nextAction":"fix zero handling","model":"haiku"}}
+{"case":"cache","expected":{"event":"cache","hitRatio":0.1235,"warm":true}}
+{"case":"plateau","expected":{"event":"plateau","item":"roman","k":3}}
+{"case":"rollback","expected":{"event":"rollback","item":"roman","toIter":7,"bestPass":8,"strike":2,"strikeBudget":3}}
+{"case":"handoff","expected":{"event":"handoff","item":"roman","reason":"strikes exhausted","consecutive":3}}
+{"case":"phase_timeout","expected":{"event":"phase-timeout","label":"iter 4","timeoutSec":600}}
+{"case":"quota_hit_with_reset","expected":{"event":"quota-hit","label":"dev","cum":12.5,"resetAt":"2026-01-02T09:00:00.0000000Z"}}
+{"case":"quota_hit_without_reset","expected":{"event":"quota-hit","label":"dev","cum":12.5,"resetAt":null}}
+{"case":"quota_wait","expected":{"event":"quota-wait","label":"dev","cum":12.5,"waitSec":3600,"resumeAt":"2026-01-02T04:04:05.0000000Z","probe":2,"resetType":"five_hour"}}
+{"case":"quota_wait_no_type","expected":{"event":"quota-wait","label":"dev","cum":12.5,"waitSec":1800,"resumeAt":"2026-01-02T03:34:05.0000000Z","probe":1,"resetType":""}}
+{"case":"quota_resume","expected":{"event":"quota-resume","label":"dev","probe":3}}
+{"case":"cooperative_stop","expected":{"event":"cooperative-stop","scope":"story","mode":"phase","stage":"dev-story","story":"S1","branch":"feat/x","cum":12.5}}
+{"case":"review_question_with_story","expected":{"event":"review-question","turn":1,"q":"Use UTC?","story":"S1"}}
+{"case":"review_question_without_story","expected":{"event":"review-question","turn":2,"q":"Drop seconds?"}}
+{"case":"review_answer","expected":{"event":"review-answer","turn":1,"a":"Yes, UTC."}}
+{"case":"checkpoint","expected":{"updatedAt":"2026-01-02T03:04:05.0000000Z","stage":"dev-story","story":"S1","branch":"feat/x","mergeBase":"abc123","cumUsd":12.3457,"resume":"pwsh -File loop.ps1 -Resume"}}

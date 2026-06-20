@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orrery-loop"
+version = "0.1.0"
+description = "Pure, testable harness logic for the Orrery loop engine (Python port of loopcore.ps1)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["psutil>=5.9"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+loop = "loop.cli:main"
+loop-stop = "loop.cli:main_stop"
+loop-bmad = "loop.cli:main_bmad"
+
+[tool.hatch.build.targets.wheel]
+packages = ["loop"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
