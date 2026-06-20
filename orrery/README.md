@@ -19,6 +19,9 @@ your own loops in the in-app Tuning Console.
 **Requirements:** Node 18+ and a Rust toolchain (Tauri compiles a small Rust core).
 
 ### Desktop (Windows / macOS / Linux)
+**Quickest:** from the repo root, double-click **`run-orrery.bat`** (Windows) or run
+`bash run-orrery.sh` (macOS/Linux) — it opens this desktop app, where you create and
+start/stop loops. Or manually:
 ```bash
 cd orrery
 npm install

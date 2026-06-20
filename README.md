@@ -125,6 +125,12 @@ a general platform; you can author your own loops in its Tuning Console.
 
 **Stack:** Tauri v2 (Rust core) + SvelteKit / Svelte 5 (runes) + PixiJS v8 + uPlot.
 
+**Quickest — double-click to run:** on Windows, double-click **`run-orrery.bat`** at the
+repo root (macOS/Linux: `bash run-orrery.sh`). It installs deps on first run, compiles, and
+opens the desktop app — where you can author loops in the Tuning Console and start/stop
+them. (First launch compiles the Rust core, so it takes a few minutes; needs Node 18+ and a
+[Rust toolchain](https://rustup.rs).) Or run it manually:
+
 ```bash
 cd orrery
 npm install
