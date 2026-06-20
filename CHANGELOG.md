@@ -37,8 +37,8 @@ First public release: a cross-platform Python loop engine plus the Orrery visual
 ### Notes
 
 - **Alpha.** APIs, the wire protocol, and engine internals may change before 1.0.
-- The original PowerShell scripts (`loop*.ps1`, `bmad-loop.ps1`, `stop-loop.ps1`) remain in
-  the repo as the reference implementation.
+- The original generic PowerShell engine (`loop.ps1`, `loopcore.ps1`, `selftest*.ps1`) remains
+  in the repo as the reference implementation.
 
 ### Known limitations / roadmap
 

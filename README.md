@@ -110,8 +110,7 @@ config snippets: **[`docs/capabilities.md`](docs/capabilities.md)**.
 | **Run-quality metrics** | first-try-green + iters/cost-to-green instead of pass@k | `--emit-metrics` / `metrics.emit` | pass@k critique (Chen 2021) |
 | **Anti-false-green verifier** | a second, independent judge tries to *refute* "done" | `--verify` / `verify.enabled` | Krakovna et al. (2020) |
 
-The original PowerShell scripts (`loop.ps1` / `loopcore.ps1` / `bmad-loop.ps1` /
-`stop-loop.ps1`) are the **reference implementation** (Windows / PowerShell); the Python
+The original PowerShell scripts (`loop.ps1` / `loopcore.ps1`) are the **reference implementation** (Windows / PowerShell); the Python
 package is a faithful port. `engine/tests` holds the golden parity suite (373 tests).
 
 ---

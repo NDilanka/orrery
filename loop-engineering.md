@@ -169,22 +169,29 @@ The five required pieces, as implemented in `loop.ps1`:
 
 ## (e) Build sequence — minimal loop → general harness (hardest parts ⚠️)
 
-1. **V0** — the loop in this repo, on one module. Green-or-handoff end to end. ← *you are here*
-2. **V1 — ⚠️ EVALUATION hardening (hardest #1).** Lock test files (hash check),
+1. **V0 ✅** — the loop in this repo, on one module. Green-or-handoff end to end.
+2. **V1 — ⚠️ EVALUATION hardening (hardest #1) · ✅ mostly.** Lock test files (hash check),
    assert test count never drops (catches "delete the failing test"). The gate
-   is the whole ballgame.
-3. **V2 — ⚠️ STATE (hardest #2).** Give `progress.md` a strict schema
+   is the whole ballgame. *Built:* exit-code gate (`codegen+lint+vitest`) + pass-count
+   floor vs baseline + opt-in rollback. *Gap:* per-file hash-lock.
+3. **V2 — ⚠️ STATE (hardest #2) · ✅ mostly.** Give `progress.md` a strict schema
    (done / in-progress / blocked / next). Add pass-count trend analysis to
-   catch silent drift.
-4. **V3 — ⚠️ RECOVERY (hardest #3).** Make the loop crash-restartable: on
-   launch, read `log.jsonl` + last commit and resume. Native dynamic workflows
-   don't give you this (refuted) — own it. Git commits = rollback.
+   catch silent drift. *Built via* `sprint-status.yaml` + `bmad-log.jsonl` +
+   `checkpoint.json`. *Gap:* automated trend-alert.
+4. **V3 — ⚠️ RECOVERY (hardest #3) · ✅ DONE + battle-tested.** Make the loop
+   crash-restartable: on launch, read `log.jsonl` + last commit and resume. Native
+   dynamic workflows don't give you this (refuted) — own it. Git commits = rollback.
+   *Now:* resume = re-run; `First-UnmergedDone` mid-pipeline resume; `stop-loop.ps1`
+   cooperative stop — see §(f).
 5. **V4** — observability + spend dashboard; alert at 50/80/100% of ceiling;
-   wire `--output-format stream-json` for live progress.
+   wire `--output-format stream-json` for live progress. **🟡 partial** — cost
+   accounting + quota-aware waits done; no dashboard/alerts yet.
 6. **V5** — fan-out via subagents (isolated context) once V1–V3 are solid.
+   **⏭️ deferred by design** (8 GB RAM → one process at a time, per §c).
 7. **V6** — generalize: TASK.md becomes a queue; the loop discovers next work
    (block 1) instead of one fixed goal. This is the "write loops, not prompts"
-   machine.
+   machine. **✅ done** — `bmad-loop.ps1` on BMAD/demo-project; `sprint-status.yaml` is
+   the queue. ← *applied track is here*
 
 ### Failure modes → concrete bounds
 
@@ -196,6 +203,48 @@ The five required pieces, as implemented in `loop.ps1`:
 | False-green tests | test-file hash + count delta | tamper → immediate handoff |
 | Silent drift | pass-count trend in `log.jsonl` | alert if green-count decreases |
 | No-progress spin | empty `git status` 2× | stagnation → handoff |
+
+---
+
+## (f) Current state — where this repo actually is (updated 2026-06-19)
+
+The V0 demo (`loop.ps1`/`loopcore.ps1`/`selftest.ps1`, 15/15) proved the pattern. The
+real build is **`bmad-loop.ps1`**, which applies the loop to a live project
+(`/path/to/project`, codename demo-project, BMAD v6.8.0). That applied track has reached
+**V6-shaped** (a real work queue), and the report's **hardest piece — V3 recovery — is
+completed and battle-tested**. Progress is no longer a linear V0→V6 climb; here is the
+truth per axis:
+
+| Axis | State | Evidence |
+|---|---|---|
+| Queue / discover-next (V6) | ✅ | `sprint-status.yaml` *is* the queue; selects the next actionable story across ALL epics + runs epic retrospectives |
+| Eval gate (V1, block 4 ★) | ✅ | `bun codegen+lint+test`, exit-code truth; pass-count floor vs baseline; opt-in rollback |
+| State + persistence (V2) | ✅ | sprint-status + `bmad-log.jsonl` + `checkpoint.json` + git commits/PRs/squash-merges to `develop` |
+| **Recovery + safe-stop (V3)** | ✅ **proven 2×** | resume = re-run (state in sprint-status + git); `First-UnmergedDone` resumes a mid-pipeline story at smoke+merge; `stop-loop.ps1` cooperative stop. Verified live by cutting a *running* loop old→new code at story 3-3's done-but-unmerged point and halting cleanly after 3-3 and again after 3-4 — zero work lost |
+| Quota survival | ✅ | authoritative `rate_limit_info` probe → wait-and-resume across 5h/weekly resets (the Max-plan substitute for a hard $-ceiling) |
+| Observability / spend dashboard (V4) | 🟡 | cumulative `total_cost_usd` logged per phase; no live dashboard / threshold alerts |
+| Test-file hash-lock (V1) | 🟡 | count-delta floor substitutes; no per-file hash |
+| Trend-alert on drift (V2) | 🟡 | pass counts logged, not auto-alerted |
+| Subagent fan-out (V5) | ⏭️ | deferred by design — 8 GB RAM favors one process at a time (§c) |
+
+**Applied loop anatomy** (maps to §b's 6 blocks): DISCOVER (`Get-SprintStories` /
+`First-UnmergedDone` / `Get-PendingRetro`) → ASSEMBLE (phase prompts + AC extraction) →
+EXECUTE (`claude -p`: create-story → dev-story → code-review → browser-smoke) → VERIFY ★
+(`Invoke-BmadGate`, real exit codes) → PERSIST (sprint-status + jsonl + checkpoint + git) →
+DECIDE (advance / retry / quota-wait / cooperative-stop / handoff). Each story → PR →
+squash-merge to `develop` (never `main`, which would trigger `convex deploy` = prod deploy).
+
+**Safe-stop / resume control** (the V3 deliverable): `stop-loop.ps1` writes a `.loop\STOP`
+flag honored *only at safe checkpoints* (between-stories, after dev-story, after
+code-review/pre-smoke). Each phase commits its work first, then the loop writes
+`checkpoint.json`, consumes the flag, and exits 0 — nothing is killed mid-flight. Resume =
+re-run `bmad-loop.ps1` (auto-detects where to continue); `-AfterStory` waits for a clean
+story boundary. The cleverness is that state was *already* durable (sprint-status + git), so
+the only thing the feature adds is a cooperative signal, not a new persistence layer.
+
+**Next concrete steps** (smallest → largest): (1) test-file hash-lock in the gate (V1);
+(2) pass-count trend-alert from `bmad-log.jsonl` (V2/V4); (3) a live spend/progress view via
+`--output-format stream-json` (V4). V5 fan-out stays parked until RAM allows.
 
 ---
 

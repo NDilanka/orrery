@@ -230,4 +230,4 @@ For dev/replay without Tauri, the frontend also accepts a plain array of events 
 }
 ```
 
-Seeded loops: `bmad` (external → bmad-loop.ps1, adapter bmad), `roman` & `calc` (generic → loop.ps1).
+Seeded loops: `roman` & `calc` (generic → loop.ps1). The `bmad` adapter is exercised by the demo fixture (`static/fixtures/bmad-log.jsonl`).
