@@ -6,7 +6,9 @@
   via :func:`~loop.runners.get_runner`, and calls :func:`~loop.core.run_loop`.
 - :func:`main_stop` (``loop-stop``) — self-contained cooperative-stop controller (port of
   ``stop-loop.ps1``): write / cancel / status the ``STOP`` flag in the state dir.
-- :func:`main_bmad` (``loop-bmad``) — stub for the BMAD driver that lands later.
+- :func:`main_bmad` (``loop-bmad``) — the BMAD multi-story driver entrypoint: build a
+  :class:`~loop.bmad.driver.BmadConfig` from the CLI flags, get a base runner, and run the
+  full epic pipeline (:func:`loop.bmad.driver.run`).
 """
 
 from __future__ import annotations
@@ -162,9 +164,41 @@ def main_stop(argv: list[str] | None = None) -> int:
 
 
 def main_bmad(argv: list[str] | None = None) -> int:
-    """``loop-bmad`` entry point — stub. The BMAD driver lands in a later phase."""
-    print("bmad driver lands in a later phase")
-    return 2
+    """``loop-bmad`` entry point — run the BMAD multi-story epic pipeline.
+
+    Port of the ``bmad-loop.ps1`` param surface (reduced to the OSS essentials). Builds a
+    :class:`~loop.bmad.driver.BmadConfig` from the flags, gets the BASE runner via
+    :func:`~loop.runners.get_runner` (the driver wraps it in a quota-surviving
+    ``ResilientRunner``), and dispatches to :func:`loop.bmad.driver.run`. ``--project-root`` is
+    REQUIRED. ``--dry-run`` scans the sprint + runs the gate once and returns 0 without any
+    runner call.
+    """
+    from loop.bmad import driver
+
+    parser = argparse.ArgumentParser(prog="loop-bmad", description="Run the BMAD epic pipeline.")
+    parser.add_argument("--project-root", required=True, help="the BMAD project repo (REQUIRED)")
+    parser.add_argument("--merge-base", default="develop", help="base branch for PRs + merge")
+    parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP/lock)")
+    parser.add_argument("--cwd", default=None, help="override dev-server/gate dir (default project-root)")
+    parser.add_argument("--runner", default="claude", help="agent backend (default: claude)")
+    parser.add_argument("--epic-only", default=None, help="restrict to one epic (e.g. '2')")
+    parser.add_argument("--story", default=None, help="force a specific story key")
+    parser.add_argument("--no-merge", action="store_true", help="open PRs but do NOT auto-merge")
+    parser.add_argument("--no-retro", action="store_true", help="skip epic retrospectives")
+    parser.add_argument("--no-smoke", action="store_true", help="skip the browser-smoke phase")
+    parser.add_argument("--dry-run", action="store_true", help="sprint scan + gate only; no runner")
+    parser.add_argument("--max-stories", type=int, default=None, help="stories-per-launch backstop")
+    parser.add_argument("--max-review-turns", type=int, default=None, help="code-review Q&A cap")
+    parser.add_argument("--max-smoke-iters", type=int, default=None, help="browser-smoke iter cap")
+    parser.add_argument("--smoke-timeout-min", type=int, default=None, help="per-smoke wall-clock cap")
+    parser.add_argument("--max-retro-turns", type=int, default=None, help="retrospective Q&A cap")
+    parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
+    parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
+    args = parser.parse_args(argv)
+
+    config = driver.BmadConfig.from_args(args)
+    runner = get_runner(args.runner)
+    return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)
 
 
 if __name__ == "__main__":

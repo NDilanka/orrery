@@ -91,7 +91,35 @@ def test_loop_stop_default_is_phase_after_story_is_story(tmp_path):
     assert (state / "STOP").read_text(encoding="utf-8").strip() == "story"
 
 
-def test_loop_bmad_stub_returns_2(capsys):
-    rc = cli.main_bmad([])
-    assert rc == 2
-    assert "later phase" in capsys.readouterr().out
+def _init_bmad_project(tmp_path: Path) -> Path:
+    """A minimal BMAD project: a git repo with a sprint-status.yaml under the artifacts dir."""
+    root = tmp_path / "project"
+    artifacts = root / "_bmad-output" / "implementation-artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "sprint-status.yaml").write_text(
+        "development_status:\n"
+        "  epic-2: in-progress\n"
+        "  2-1-capture: ready-for-dev\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=root, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=root, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, capture_output=True)
+    subprocess.run(["git", "branch", "develop"], cwd=root, capture_output=True)
+    return root
+
+
+def test_loop_bmad_dry_run_returns_0_and_calls_no_runner(tmp_path, monkeypatch):
+    root = _init_bmad_project(tmp_path)
+    # any runner get_runner hands back must never be called during --dry-run
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main_bmad(
+        [
+            "--project-root", str(root),
+            "--state-dir", str(tmp_path / "state"),
+            "--dry-run",
+        ]
+    )
+    assert rc == 0

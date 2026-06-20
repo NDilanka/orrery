@@ -386,3 +386,163 @@ def new_checkpoint(
         "cumUsd": round(float(cum_usd), 4),
         "resume": resume,
     }
+
+
+# ---------------------------------------------------------------------------
+# BMAD adapter events (PROTOCOL §2 "BMAD adapter"; built inline in bmad-loop.ps1
+# as ``Write-BLog @{ event=... }`` hashtables). camelCase wire keys exactly.
+#
+# ``review-question`` / ``review-answer`` / ``cooperative-stop`` / ``quota-*`` are
+# already defined above (shared with the core/loopcore events) — NOT duplicated here.
+# ---------------------------------------------------------------------------
+
+
+def start_event(target: str, branch: str, baseline_pass: int) -> dict[str, Any]:
+    """BMAD ``start`` event — ``Write-BLog @{ event="start"; target=...; branch=...;
+    baselinePass=... }``."""
+    return {
+        "event": "start",
+        "target": target,
+        "branch": branch,
+        "baselinePass": baseline_pass,
+    }
+
+
+def story_start_event(
+    story: str,
+    status: str,
+    epic: str | None = None,
+    index: int | None = None,
+) -> dict[str, Any]:
+    """BMAD ``story-start`` event.
+
+    ``epic`` and ``index`` are OMITTED when ``None`` (the real bmad log is
+    non-deterministic and frequently writes lines with neither — the adapter
+    backfills ``epic`` from the story key). When supplied, bmad-loop.ps1 emits both.
+    """
+    o: dict[str, Any] = {"event": "story-start", "story": story, "status": status}
+    if epic is not None:
+        o["epic"] = epic
+    if index is not None:
+        o["index"] = index
+    return o
+
+
+def dev_gate_event(
+    story: str,
+    cum: float,
+    green: bool,
+    pass_: int,
+    fail: int,
+    total: int,
+    baseline_pass: int,
+    status: str,
+    codegen_ok: bool,
+    lint_ok: bool,
+    test_ok: bool,
+) -> dict[str, Any]:
+    """BMAD ``dev-gate`` event. Wire key for ``pass_`` is ``pass``.
+
+    Note: bmad-loop.ps1's inline ``Write-BLog`` omits ``codegenOk``/``lintOk``/``testOk``
+    on the hashtable it writes, but PROTOCOL §2 lists them as required fields of the
+    ``dev-gate`` shape; this builder follows PROTOCOL and always includes all three.
+    """
+    return {
+        "event": "dev-gate",
+        "story": story,
+        "cum": cum,
+        "green": green,
+        "pass": pass_,
+        "fail": fail,
+        "total": total,
+        "baselinePass": baseline_pass,
+        "status": status,
+        "codegenOk": codegen_ok,
+        "lintOk": lint_ok,
+        "testOk": test_ok,
+    }
+
+
+def review_complete_event(turn: int, summary: str) -> dict[str, Any]:
+    """BMAD ``review-complete`` event."""
+    return {"event": "review-complete", "turn": turn, "summary": summary}
+
+
+def retro_start_event(epic: str) -> dict[str, Any]:
+    """BMAD ``retro-start`` event — ``Write-BLog @{ event='retro-start'; epic=... }``."""
+    return {"event": "retro-start", "epic": epic}
+
+
+def retro_question_event(epic: str, turn: int, q: str) -> dict[str, Any]:
+    """BMAD ``retro-question`` event."""
+    return {"event": "retro-question", "epic": epic, "turn": turn, "q": q}
+
+
+def retro_answer_event(epic: str, turn: int, a: str) -> dict[str, Any]:
+    """BMAD ``retro-answer`` event."""
+    return {"event": "retro-answer", "epic": epic, "turn": turn, "a": a}
+
+
+def retro_complete_event(epic: str, summary: str) -> dict[str, Any]:
+    """BMAD ``retro-complete`` event.
+
+    bmad-loop.ps1 also writes a ``turn`` here; PROTOCOL §2 spec's the ``retro-*`` shape
+    as ``{ epic, turn?, ... }`` (turn optional). This builder follows the PROTOCOL/task
+    signature (``epic`` + ``summary``) and omits ``turn``.
+    """
+    return {"event": "retro-complete", "epic": epic, "summary": summary}
+
+
+def smoke_server_event(url: str, root_code: int) -> dict[str, Any]:
+    """BMAD ``smoke-server`` event. Wire key for ``root_code`` is ``rootCode``."""
+    return {"event": "smoke-server", "url": url, "rootCode": root_code}
+
+
+def smoke_iter_event(
+    iter_: int,
+    passed: bool,
+    verdict: str,
+    timed_out: bool | None = None,
+) -> dict[str, Any]:
+    """BMAD ``smoke-iter`` event. Wire keys: ``iter`` (from ``iter_``), ``timedOut``.
+
+    ``timedOut`` is OMITTED when ``None`` — bmad-loop.ps1 writes EITHER a timeout line
+    (``@{ event='smoke-iter'; iter=..; timedOut=$true }``, no ``passed``/``verdict``) OR
+    a result line (``@{ ...; passed=..; verdict=.. }``, no ``timedOut``). This builder
+    keeps ``passed``/``verdict`` always present and only adds ``timedOut`` when supplied.
+    """
+    o: dict[str, Any] = {
+        "event": "smoke-iter",
+        "iter": iter_,
+        "passed": passed,
+        "verdict": verdict,
+    }
+    if timed_out is not None:
+        o["timedOut"] = timed_out
+    return o
+
+
+def pr_created_event(story: str, branch: str, base: str, url: str) -> dict[str, Any]:
+    """BMAD ``pr-created`` event."""
+    return {
+        "event": "pr-created",
+        "story": story,
+        "branch": branch,
+        "base": base,
+        "url": url,
+    }
+
+
+def pr_merged_event(story: str, base: str, pr: str) -> dict[str, Any]:
+    """BMAD ``pr-merged`` event."""
+    return {"event": "pr-merged", "story": story, "base": base, "pr": pr}
+
+
+def bmad_stop_event(ok: bool, reason: str, cum: float) -> dict[str, Any]:
+    """BMAD ``stop`` event — ``Write-BLog @{ event="stop"; ok=..; reason=..; cum=.. }``.
+
+    DISTINCT from the generic :func:`stop_event` (whose shape is
+    ``{event, reason, green, iter, cum, bestPass}``). Both are kept on purpose: the BMAD
+    adapter's ``stop`` carries ``ok`` and NO ``green``/``iter``/``bestPass``.
+    """
+    return {"event": "stop", "ok": ok, "reason": reason, "cum": cum}
