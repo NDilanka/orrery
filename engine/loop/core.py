@@ -345,8 +345,9 @@ def _run_loop_body(
         task_text = read_text(work / config.task) or read_text(config.task) or ""
         contract = contract_criteria(task_text)
 
-    # Baseline gate (no event under dry_run, mirroring loop.ps1 ~566).
-    base = run_gate(stages)
+    # Baseline gate (no event under dry_run, mirroring loop.ps1 ~566). The gate's string-command
+    # stages run in the loop's working dir so `--cwd` targets the right repo.
+    base = run_gate(stages, str(work))
     base_total = base["total"]
     best_pass = base["pass"]
     best_commit = gitutil.head(work) if use_git else None
@@ -492,8 +493,8 @@ def _run_loop_body(
             cu = get_cache_usage(result.usage)
             emit(cache_event(cu.hit_ratio, cu.warm))
 
-        # 5. GATE + integrity signals.
-        g = run_gate(stages)
+        # 5. GATE + integrity signals (string stages run in the loop's working dir).
+        g = run_gate(stages, str(work))
         emit(
             gate_event(
                 cum=cum,
@@ -872,7 +873,7 @@ def _run_mutation_audit(
         """Write the mutant, run the gate, ALWAYS restore the original (bulletproof)."""
         try:
             target.write_text(mutated_source, encoding="utf-8")
-            g = run_gate(stages)
+            g = run_gate(stages, str(work))
             return bool(g["green"])
         finally:
             # Restore unconditionally — never leave the file mutated, even on exception.

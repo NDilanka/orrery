@@ -77,12 +77,13 @@ def parse_counts(
     return {"pass": pass_, "fail": fail, "matched": matched}
 
 
-def _run_command(command: Command) -> tuple[str, int]:
+def _run_command(command: Command, cwd: str | None = None) -> tuple[str, int]:
     """Execute a stage command, returning ``(output_text, exit_code)``.
 
     A callable is the test/extension hook (the PS scriptblock path): it returns its own
-    ``(output, exit)`` and spawns NO external process. A string is run via the shell with
-    stdout+stderr captured (combined), mirroring ``cmd /c "$cmd 2>&1"``.
+    ``(output, exit)`` and spawns NO external process — ``cwd`` does not apply to it. A string is
+    run via the shell with stdout+stderr captured (combined), mirroring ``cmd /c "$cmd 2>&1"``,
+    inside ``cwd`` when given (``None`` -> the current process directory, today's behavior).
     """
     if callable(command):
         output, exit_code = command()
@@ -95,17 +96,24 @@ def _run_command(command: Command) -> tuple[str, int]:
         shell=True,
         capture_output=True,
         text=True,
+        cwd=cwd,
     )
     output = (proc.stdout or "") + (proc.stderr or "")
     return output, proc.returncode if proc.returncode is not None else 0
 
 
-def run_gate(stages: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def run_gate(
+    stages: list[dict[str, Any]] | None = None,
+    cwd: str | None = None,
+) -> dict[str, Any]:
     """Port of ``Invoke-Gate`` (loopcore.ps1 ~lines 114-181).
 
     Runs an ordered list of stages; each stage is ``{name, command, pass_pattern?,
     fail_pattern?}``. ``command`` is a shell string or a callable hook returning
     ``(output, exit)``.
+
+    ``cwd`` is the working directory STRING-command stages run in (``None`` -> the current
+    process directory, byte-identical to today's behavior). Callable hooks are unaffected.
 
     Green = every stage exited 0. ``pass`` / ``fail`` / ``total`` come from the LAST stage
     that reported any counts (so a no-count pre-stage does not zero the totals). When no
@@ -142,7 +150,7 @@ def run_gate(stages: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         if fail_pattern is None:
             fail_pattern = _DEFAULT_FAIL
 
-        output, exit_code = _run_command(cmd)
+        output, exit_code = _run_command(cmd, cwd)
         clean = strip_ansi(output)
 
         counts = parse_counts(clean, pass_pattern, fail_pattern)

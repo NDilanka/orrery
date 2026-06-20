@@ -474,27 +474,14 @@ def _dry_run(config: BmadConfig, project_root: Path, repo: Path) -> int:
 
 
 def _run_gate(config: BmadConfig, repo: Path) -> dict[str, Any]:
-    """Run the configured gate stages from ``repo`` (cd into it for string commands)."""
+    """Run the configured gate stages from ``repo``.
+
+    ``run_gate`` honors ``cwd`` for string-command stages, so the repo is passed straight
+    through (no shell ``cd`` wrapper). Callable hooks (tests) ignore ``cwd``.
+    """
     from loop.gate import run_gate
 
-    stages = config.gate_stages
-    # For string commands, run them with cwd=repo by prefixing a shell `cd`. Callable hooks
-    # (tests) need no cwd. We rebuild string stages to run inside repo.
-    rebuilt: list[dict[str, Any]] = []
-    for s in stages:
-        cmd = s.get("command")
-        if isinstance(cmd, str):
-            rebuilt.append({**s, "command": _cd_command(repo, cmd)})
-        else:
-            rebuilt.append(dict(s))
-    return run_gate(rebuilt)
-
-
-def _cd_command(repo: Path, cmd: str) -> str:
-    """Wrap a shell command so it runs inside ``repo`` (run_gate uses shell=True, no cwd)."""
-    # Quote the path for the shell. On all platforms `cd "<path>" && <cmd>` works under the
-    # shell run_gate spawns (cmd.exe on Windows accepts && and cd "<path>").
-    return f'cd "{repo}" && {cmd}'
+    return run_gate(config.gate_stages, str(repo))
 
 
 def _run_inner(

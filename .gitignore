@@ -24,3 +24,7 @@ dist/
 .loop/progress.md
 .loop/devserver.out
 .loop/reprodev.out
+
+# Example loops produce their own state dir + caches
+examples/**/.loop/
+examples/**/.pytest_cache/

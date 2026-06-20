@@ -8,6 +8,9 @@ hook (no real process spawn — the analog of the PS scriptblock stages).
 
 from __future__ import annotations
 
+import os
+import sys
+
 from loop.gate import parse_counts, run_gate, strip_ansi
 
 # ---- captured sample outputs from real runners (from selftest-gate.ps1) -------------
@@ -250,3 +253,33 @@ def test_raw_collects_each_stage():
     )
     assert "### stage 'lint' (exit=0)" in g["raw"]
     assert "### stage 'test' (exit=0)" in g["raw"]
+
+
+# === cwd threading: string-command stages run in the configured working dir ============
+
+
+def test_string_stage_runs_in_cwd(tmp_path):
+    """A STRING-command gate stage honors run_gate's ``cwd``.
+
+    Regression for: ``loop --cwd <dir>`` ran the gate in the wrong directory because run_gate
+    spawned the shell with no ``cwd``. The stage prints its own getcwd via the venv python; the
+    captured ``raw`` must report the temp dir, NOT the process cwd. Hermetic + cross-platform.
+    """
+    # ``sys.executable`` is the running interpreter (the venv python under pytest). Use -c so no
+    # file needs to exist; -I isolates from site/user config for determinism.
+    cmd = f'"{sys.executable}" -I -c "import os;print(os.getcwd())"'
+    g = run_gate([{"name": "pwd", "command": cmd}], str(tmp_path))
+
+    assert g["stages"][0]["ok"] is True
+    reported = g["raw"].strip().splitlines()[-1].strip()
+    # Compare realpaths so a symlinked temp dir (e.g. macOS /var -> /private/var) still matches.
+    assert os.path.realpath(reported) == os.path.realpath(str(tmp_path))
+
+
+def test_string_stage_default_cwd_is_process_dir():
+    """``cwd=None`` (the default) preserves today's behavior: the gate runs in the process dir."""
+    cmd = f'"{sys.executable}" -I -c "import os;print(os.getcwd())"'
+    g = run_gate([{"name": "pwd", "command": cmd}])
+
+    reported = g["raw"].strip().splitlines()[-1].strip()
+    assert os.path.realpath(reported) == os.path.realpath(os.getcwd())
