@@ -889,13 +889,12 @@ mod tests {
         let loops_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../loops"));
         let defs = list_loops(loops_dir.to_string_lossy().to_string()).unwrap();
         let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
-        assert!(ids.contains(&"bmad"));
         assert!(ids.contains(&"roman"));
         assert!(ids.contains(&"calc"));
-        // bmad def carries logFile + adapter
-        let bmad = defs.iter().find(|d| d.id == "bmad").unwrap();
-        assert_eq!(bmad.adapter, "bmad");
-        assert_eq!(bmad.log_file.as_deref(), Some("bmad-log.jsonl"));
+        // roman def carries logFile + adapter
+        let roman = defs.iter().find(|d| d.id == "roman").unwrap();
+        assert_eq!(roman.adapter, "generic");
+        assert_eq!(roman.log_file.as_deref(), Some("log.jsonl"));
     }
 
     // ----- A6 live-control tests (no real claude loop is ever spawned) -----
