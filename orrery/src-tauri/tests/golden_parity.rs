@@ -68,6 +68,12 @@ fn parity_series_collision_generic() {
     // two events share `_t` (same ms); both samples must survive in cost.series.
     assert_golden("collision", "generic", "series-collision-log.jsonl", None, "series-collision.generic.json");
 }
+#[test]
+fn parity_metrics_generic() {
+    // engine-v3 `metrics` event: state.metrics must be populated (and null for the
+    // other fixtures); proves TS and Rust agree on the new run-quality field.
+    assert_golden("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json");
+}
 
 /// Guarded regenerator — does NOT run by default. After an intentional reducer change:
 /// `cargo test --test golden_parity -- --ignored regenerate_goldens`, then review the diff.
@@ -76,13 +82,14 @@ fn parity_series_collision_generic() {
 fn regenerate_goldens() {
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     std::fs::create_dir_all(&out).unwrap();
-    let cases: [(&str, &str, &str, Option<&str>, &str); 6] = [
+    let cases: [(&str, &str, &str, Option<&str>, &str); 7] = [
         ("demo", "bmad", "demo-events.jsonl", None, "demo.bmad.json"),
         ("bmad", "bmad", "bmad-log.jsonl", Some("checkpoint.json"), "bmad.bmad.json"),
         ("roman", "generic", "roman-log.jsonl", None, "roman.generic.json"),
         ("calc", "generic", "calc-log.jsonl", None, "calc.generic.json"),
         ("multirun", "generic", "multirun-log.jsonl", None, "multirun.generic.json"),
         ("collision", "generic", "series-collision-log.jsonl", None, "series-collision.generic.json"),
+        ("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json"),
     ];
     for (lid, ad, fx, cp, g) in cases {
         let v = reduce_fixture(lid, ad, fx, cp);

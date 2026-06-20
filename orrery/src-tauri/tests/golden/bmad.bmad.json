@@ -420,6 +420,7 @@
     }
   },
   "loopId": "bmad",
+  "metrics": null,
   "phase": {
     "label": "smoke[1]",
     "model": null,

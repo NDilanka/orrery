@@ -23,6 +23,7 @@
   import Mechanism from '$lib/render/Mechanism.svelte';
   import CostQuotaStrip from '$lib/render/CostQuotaStrip.svelte';
   import Hud from '$lib/panels/Hud.svelte';
+  import MetricsPanel from '$lib/panels/MetricsPanel.svelte';
   import RunControlBar from '$lib/panels/RunControlBar.svelte';
   import VerdictPanel from '$lib/panels/VerdictPanel.svelte';
   import TransportBar from '$lib/panels/TransportBar.svelte';
@@ -195,6 +196,7 @@
           {/if}
           <CostQuotaStrip />
           <Hud />
+          <MetricsPanel />
           <VerdictPanel />
           <QAConsole {answer} {observeOnly} />
           {#if playback}

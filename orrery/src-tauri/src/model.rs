@@ -152,6 +152,8 @@ pub struct RunState {
     pub cost: Cost,
     pub quota: Quota,
     pub cache: Cache,
+    /// run-quality summary (§2 engine-v3 `metrics` event); `null` until seen.
+    pub metrics: Option<Metrics>,
     pub questions: Vec<Qa>,
     /// by item key, latest
     pub verdicts: BTreeMap<String, Verdict>,
@@ -171,6 +173,7 @@ impl RunState {
             cost: Cost::default(),
             quota: Quota::default(),
             cache: Cache::default(),
+            metrics: None,
             questions: Vec::new(),
             verdicts: BTreeMap::new(),
             events: 0,
@@ -411,6 +414,22 @@ impl Default for Cache {
             warm: false,
         }
     }
+}
+
+/// §2 engine-v3 `metrics` event — a run-quality fold of the event stream
+/// (`loop.metrics.compute_metrics`). `None` until a `metrics` event is seen;
+/// first-try-green + iters/cost-to-green replace pass@k for loops.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Metrics {
+    pub first_try_green: bool,
+    pub iters_to_green: Option<i64>,
+    pub cost_to_green: Option<f64>,
+    pub rollbacks: i64,
+    pub regression_rate: f64,
+    pub total_iters: i64,
+    pub total_cost: f64,
+    pub final_green: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -67,6 +67,7 @@ export function initialState(loopId = 'unknown'): RunState {
       waitSec: 0,
     },
     cache: { hitRatio: 0, warm: false },
+    metrics: null,
     questions: [],
     verdicts: {},
     events: 0,
@@ -340,6 +341,24 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
     case 'phase-timeout': {
       // Rust sets only phase.label (not sixPhase).
       if (typeof ev.label === 'string') state.phase.label = ev.label;
+      break;
+    }
+
+    // ─── core v3: run-quality summary ──────────────────────────────────────
+    case 'metrics': {
+      // A run-quality fold of the event stream, emitted once at stop. Idempotent
+      // (last one wins); itersToGreen/costToGreen are null when never green.
+      // Mirrors reducer.rs on_metrics — same field-by-field defaults so goldens agree.
+      state.metrics = {
+        firstTryGreen: ev.firstTryGreen === true,
+        itersToGreen: num(ev.itersToGreen) ?? null,
+        costToGreen: num(ev.costToGreen) ?? null,
+        rollbacks: num(ev.rollbacks) ?? 0,
+        regressionRate: num(ev.regressionRate) ?? 0,
+        totalIters: num(ev.totalIters) ?? 0,
+        totalCost: num(ev.totalCost) ?? 0,
+        finalGreen: ev.finalGreen === true,
+      };
       break;
     }
 

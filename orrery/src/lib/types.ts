@@ -169,6 +169,20 @@ export interface CacheState {
   warm: boolean;
 }
 
+// §2 engine-v3 `metrics` event — a run-quality fold of the event stream
+// (loop.metrics.compute_metrics). camelCase on the wire; null until a metrics
+// event is seen. first-try-green + iters/cost-to-green replace pass@k for loops.
+export interface Metrics {
+  firstTryGreen: boolean;
+  itersToGreen: number | null;
+  costToGreen: number | null;
+  rollbacks: number;
+  regressionRate: number;
+  totalIters: number;
+  totalCost: number;
+  finalGreen: boolean;
+}
+
 export interface RunState {
   loopId: string;
   run: RunMeta;
@@ -179,6 +193,7 @@ export interface RunState {
   cost: CostState;
   quota: QuotaState;
   cache: CacheState;
+  metrics: Metrics | null; // run-quality summary (§2 engine-v3 `metrics` event); null until seen
   questions: Qa[];
   verdicts: Record<string, Verdict>; // by item key, latest
   events: number; // count
@@ -205,6 +220,8 @@ export type EventName =
   | 'rollback'
   | 'handoff'
   | 'phase-timeout'
+  // core v3
+  | 'metrics'
   // quota
   | 'quota-hit'
   | 'quota-wait'
@@ -267,6 +284,15 @@ export interface RawEvent {
   ceiling?: number;
   hitRatio?: number;
   warm?: boolean;
+  // metrics (engine v3)
+  firstTryGreen?: boolean;
+  itersToGreen?: number | null;
+  costToGreen?: number | null;
+  rollbacks?: number;
+  regressionRate?: number;
+  totalIters?: number;
+  totalCost?: number;
+  finalGreen?: boolean;
   // plateau / rollback / handoff
   k?: number;
   toIter?: number;

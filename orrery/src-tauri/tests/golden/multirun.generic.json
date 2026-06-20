@@ -66,6 +66,7 @@
     }
   },
   "loopId": "multirun",
+  "metrics": null,
   "phase": {
     "label": "stop",
     "model": null,

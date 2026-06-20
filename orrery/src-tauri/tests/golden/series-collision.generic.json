@@ -58,6 +58,7 @@
     }
   },
   "loopId": "collision",
+  "metrics": null,
   "phase": {
     "label": "stop",
     "model": null,

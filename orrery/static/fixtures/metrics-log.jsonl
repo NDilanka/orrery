@@ -1,0 +1,5 @@
+{"event":"iter","iter":1,"cost":0.4,"cum":0.4,"pass":2,"total":3,"best":2,"changed":true,"stale":0,"plateau":0,"regress":0,"action":"continue","reason":"2/3 green"}
+{"event":"rollback","item":"iter","toIter":1,"bestPass":2,"strike":1,"strikeBudget":3}
+{"event":"iter","iter":2,"cost":0.35,"cum":0.75,"pass":3,"total":3,"best":3,"changed":true,"stale":0,"plateau":0,"regress":0,"action":"stop","reason":"all tests green at iter 2"}
+{"event":"stop","reason":"all tests green at iter 2","green":true,"iter":2,"cum":0.75,"bestPass":3}
+{"event":"metrics","firstTryGreen":false,"itersToGreen":2,"costToGreen":0.75,"rollbacks":1,"regressionRate":0.5,"totalIters":2,"totalCost":0.75,"finalGreen":true}

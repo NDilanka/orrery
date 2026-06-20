@@ -64,6 +64,9 @@ impl Reducer {
             "handoff" => self.on_handoff(obj),
             "phase-timeout" => self.on_phase_timeout(obj),
 
+            // ---- Core engine v3 additions -------------------------------------------
+            "metrics" => self.on_metrics(obj),
+
             // ---- Quota --------------------------------------------------------------
             "quota-hit" => self.on_quota_hit(obj, ts),
             "quota-wait" => self.on_quota_wait(obj, ts),
@@ -408,6 +411,26 @@ impl Reducer {
         if let Some(label) = obj.get("label").and_then(Value::as_str) {
             self.state.phase.label = Some(label.to_string());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Core engine v3: run-quality metrics
+    // -----------------------------------------------------------------------
+
+    /// A run-quality fold of the event stream, emitted once at stop. Idempotent
+    /// (last one wins); itersToGreen/costToGreen are null when never green.
+    /// Mirrors reduce.ts `case 'metrics'` — same field-by-field defaults so goldens agree.
+    fn on_metrics(&mut self, obj: &Value) {
+        self.state.metrics = Some(Metrics {
+            first_try_green: obj.get("firstTryGreen").and_then(Value::as_bool).unwrap_or(false),
+            iters_to_green: obj.get("itersToGreen").and_then(Value::as_i64),
+            cost_to_green: obj.get("costToGreen").and_then(Value::as_f64),
+            rollbacks: obj.get("rollbacks").and_then(Value::as_i64).unwrap_or(0),
+            regression_rate: obj.get("regressionRate").and_then(Value::as_f64).unwrap_or(0.0),
+            total_iters: obj.get("totalIters").and_then(Value::as_i64).unwrap_or(0),
+            total_cost: obj.get("totalCost").and_then(Value::as_f64).unwrap_or(0.0),
+            final_green: obj.get("finalGreen").and_then(Value::as_bool).unwrap_or(false),
+        });
     }
 
     // -----------------------------------------------------------------------

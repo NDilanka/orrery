@@ -22,32 +22,50 @@
   }
 </script>
 
-<div class="control">
+<div class="control" role="group" aria-label="Run control">
   {#if !running && !banked}
-    <button class="btn ignite" onclick={() => fire('start')}>✦ Ignite</button>
+    <button class="btn ignite" aria-label="Ignite — start the loop" onclick={() => fire('start')}
+      >✦ Ignite</button
+    >
   {/if}
 
   {#if running}
-    <button class="btn stop" disabled={stopPending === 'phase'} onclick={() => fire('stop:phase')}>
+    <button
+      class="btn stop"
+      aria-label="Brake at next phase boundary"
+      disabled={stopPending === 'phase'}
+      onclick={() => fire('stop:phase')}
+    >
       Brake · phase
     </button>
-    <button class="btn stop" disabled={stopPending === 'story'} onclick={() => fire('stop:story')}>
+    <button
+      class="btn stop"
+      aria-label="Brake at next story boundary"
+      disabled={stopPending === 'story'}
+      onclick={() => fire('stop:story')}
+    >
       Brake · story
     </button>
   {/if}
 
   {#if stopPending}
-    <button class="btn cancel" onclick={() => fire('cancel-stop')}>Cancel brake</button>
+    <button class="btn cancel" aria-label="Cancel the pending brake" onclick={() => fire('cancel-stop')}
+      >Cancel brake</button
+    >
   {/if}
 
   {#if banked || s.run.resumeCmd}
-    <button class="btn resume" onclick={() => fire('resume')}>↻ Reignite</button>
+    <button class="btn resume" aria-label="Reignite — resume the loop" onclick={() => fire('resume')}
+      >↻ Reignite</button
+    >
   {/if}
 
   {#if stopPending}
-    <span class="pending mono braking">⏛ stopping at next {stopPending}</span>
+    <span class="pending mono braking" role="status">⏛ stopping at next {stopPending}</span>
   {:else if banked}
-    <span class="pending mono ember">banked ember · parked at {s.run.stage ?? 'tooth'}</span>
+    <span class="pending mono ember" role="status"
+      >banked ember · parked at {s.run.stage ?? 'tooth'}</span
+    >
   {/if}
 </div>
 

@@ -28,3 +28,8 @@ dist/
 # Example loops produce their own state dir + caches
 examples/**/.loop/
 examples/**/.pytest_cache/
+
+# Playwright (orrery e2e) artifacts
+test-results/
+playwright-report/
+playwright/.cache/
