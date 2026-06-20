@@ -2,7 +2,7 @@
 
 **An autonomous AI coding-loop engine — and a live orbital visualizer to watch it run.**
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/NDilanka/orrery/actions/workflows/ci.yml/badge.svg)](https://github.com/NDilanka/orrery/actions/workflows/ci.yml)
 
 Orrery drives a coding agent (`claude`, `aider`, or `codex`) in a **fix-until-green**
 loop: it picks up a task, lets the agent edit code, then runs a **real external test
@@ -164,4 +164,4 @@ loop*.ps1               the original PowerShell engine (reference implementation
 - **[SECURITY.md](SECURITY.md)** — the threat model for running an agent against your repo.
 - **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** · **[LICENSE](LICENSE)** (MIT).
 
-> Replace `OWNER/REPO` in the CI badge above with the GitHub slug once the repo is published.
+> CI runs on every push and pull request; the badge above tracks the default branch.

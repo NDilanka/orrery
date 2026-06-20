@@ -25,7 +25,7 @@ Only the latest tagged release receives fixes during the alpha period.
 Please report suspected vulnerabilities **privately** — do not open a public issue
 for anything exploitable.
 
-- Contact: `[INSERT CONTACT METHOD — e.g. a project email or GitHub Security Advisory]`
+- Report privately via a **[GitHub Security Advisory](https://github.com/NDilanka/orrery/security/advisories/new)**.
 - Please include: affected component (engine / orrery app / LAN server), a
   reproduction, and the impact.
 - Expected first response: within 7 days during alpha.
