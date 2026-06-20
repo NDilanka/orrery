@@ -70,9 +70,8 @@ loop --loop-json loop.json --cwd . --state-dir .loop --dry-run
 loop --loop-json loop.json --cwd . --state-dir .loop --runner claude
 ```
 
-> The gate command runs in the **current process working directory**, so launch `loop`
-> from inside the project being fixed (here, `examples/hello`). Full walkthrough:
-> [`examples/hello/README.md`](examples/hello/README.md).
+> The gate runs in the directory passed via `--cwd`, so you can launch `loop` from
+> anywhere. Full walkthrough: [`examples/hello/README.md`](examples/hello/README.md).
 
 **Watch it in the visualizer:** point Orrery at the `log.jsonl` the run produced (e.g.
 `examples/hello/.loop/log.jsonl`) — see [The visualizer](#the-visualizer) below.
@@ -111,7 +110,7 @@ config snippets: **[`docs/capabilities.md`](docs/capabilities.md)**.
 | **Anti-false-green verifier** | a second, independent judge tries to *refute* "done" | `--verify` / `verify.enabled` | Krakovna et al. (2020) |
 
 The original PowerShell scripts (`loop.ps1` / `loopcore.ps1`) are the **reference implementation** (Windows / PowerShell); the Python
-package is a faithful port. `engine/tests` holds the golden parity suite (373 tests).
+package is a faithful port. `engine/tests` holds the golden parity suite (375 tests).
 
 ---
 

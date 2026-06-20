@@ -1,103 +1,100 @@
-# Orrery
+# Orrery (the visualizer)
 
-A GPU-accelerated **orrery** (clockwork solar-system) that turns *any* autonomous coding **loop**
-into a living star-system you can watch and steer — from desktop, browser, or phone. Orrery is a
-**general loop platform**: you author loops (fix-until-green, sprints, migrations, …) and it runs +
-visualizes them. The BMAD sprint loop is one seeded built-in, not the whole app.
+A GPU-accelerated **orrery** (clockwork solar-system) that turns *any* autonomous coding
+**loop** into a living star-system you can watch and steer — from desktop, browser, or
+phone. Orrery is engine-agnostic: it **tails** the `log.jsonl` a loop emits and **reduces**
+it (per [`PROTOCOL.md`](PROTOCOL.md)) into a `RunState` — cost horizon, six-phase cadence,
+per-item gate state, quota-night, rest-states, run-quality metrics, and a verifier seal.
 
-> Built as the UI for the self-prompting harness in [`../loop-engineering.md`](../loop-engineering.md).
-> The thesis: a loop is *mechanism, not luck* (control flow lives in your code, not the model's) —
-> so we draw it as an instrument, not a dashboard.
+This is the companion app to the loop **engine** in [`../engine`](../engine) (a Python
+package). The BMAD sprint loop is one supported adapter, not the whole app — you can author
+your own loops in the in-app Tuning Console.
 
-- **Stack:** Tauri v2 (Rust core) + SvelteKit / Svelte 5 (runes) + PixiJS v8 + uPlot. ~8–15 MB, cross-platform.
-- **Design + plan:** the full design system (the "Orrery v2" visual language, the Tuning Console, the
-  19-capability engine, milestones) lives in the approved plan; the wire contract is **[`PROTOCOL.md`](PROTOCOL.md)**.
-
-## Status — plan complete ✅
-
-All app milestones (A0–A8) and engine milestones (E1–E5) are built, integrated, and verified green
-on branch `feat/orrery-ui`.
-
-| App | Engine (`../loop*.ps1`) |
-|---|---|
-| A0/A1 core tail→reduce + Observatory render | E1 generalized multi-stage gate, concurrency guard, cost alerts |
-| A2 living animation (star/particles/gears/cost-horizon/quota-night) | E2 separate verifier subagent + per-file hash-lock + model tiering |
-| A3 Lighthouse auditor + four rest-states + rollback snapback | E3 quota survival (5h/weekly) + cooperative safe-stop + rollback strikes |
-| A4 Cosmos multi-loop library + Cosmos↔System↔Body nav | E4 per-iter timeout + consecutive-fail→handoff + plateau alert |
-| A5 Tuning Console (author your own loop) | E5 prompt caching + cache telemetry + answer inbox |
-| A6 live control (start/stop/resume/guard) | |
-| A7 LAN web + Planetarium/Rewind modes + responsive | |
-| A8 answer-from-UI (`answer.json` inbox) | |
-
-**Verification:** 32 Rust `cargo test` · frontend `npm run check` + `build` (0 errors) · 6 PowerShell
-selftests (377 checks) · zero Claude quota spent in any test. **Validated live:** a real bounded
-`claude` run on the `roman` demo went green in 1 iteration ($0.14) and emitted the full Protocol
-stream — `model` (execute=sonnet, judge=haiku), multi-stage `gate` (6/9→9/9), `cache` (hitRatio 1.0),
-and a `verdict{pass:true}` from the **independent Haiku verifier** with genuine reasoning.
+- **Stack:** Tauri v2 (Rust core) + SvelteKit / Svelte 5 (runes) + PixiJS v8 + uPlot. Cross-platform.
+- **Wire contract:** [`PROTOCOL.md`](PROTOCOL.md) — the single source of truth shared by the
+  Rust reducer (`src-tauri/src/reducer.rs`) and the TS reducer (`src/lib/reduce.ts`).
 
 ## Run it
+
+**Requirements:** Node 18+ and a Rust toolchain (Tauri compiles a small Rust core).
 
 ### Desktop (Windows / macOS / Linux)
 ```bash
 cd orrery
 npm install
 npm run tauri dev      # dev window with HMR
-npm run tauri build    # release bundle/installer
+npm run tauri build    # release bundle / installer
 ```
-Fly through **Cosmos → a System → a Body**; hit **✦ ignite** to author a loop in the Tuning Console;
-toggle **Planetarium** (ambient) or **Rewind** (scrub the run). In dev with no backend, it replays the
-bundled fixtures under `static/fixtures/`.
+Fly through **Cosmos → a System → a Body**; **✦ ignite** authors a loop in the Tuning
+Console; toggle **Planetarium** (ambient) or **Rewind** (scrub the run). With no backend it
+replays the bundled fixtures in `static/fixtures/`.
 
-### Phone / another device (LAN web — works today)
-From a running desktop app, start the LAN server (the in-app "share" affordance → `start_lan_server`),
-then open the printed `http://<lan-ip>:8787` (or scan the QR) in a phone browser. Observe works without
-a token (Tier-1 / Planetarium auto-default on small screens); control requires the token.
-
-### Native mobile (Android) — scaffolded; build is heavy
-The Android project is scaffolded and the toolchain is wired, but a full native build cross-compiles the
-entire Rust tree for `aarch64-android` + runs Gradle — minutes-long. It builds cleanly; it's just slow,
-so the packaged APK is **not committed**. To produce it (Android Studio's JDK + SDK + NDK required):
-```powershell
-$env:JAVA_HOME  = "C:\Program Files\Android\Android Studio\jbr"
-$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-$env:NDK_HOME   = "$env:ANDROID_HOME\ndk\28.2.13676358"   # match your installed NDK
-$env:PATH       = "$env:JAVA_HOME\bin;$env:PATH"
-rustup target add aarch64-linux-android
+### Browser only (no Rust, fastest to look at)
+```bash
 cd orrery
-npm run tauri android init                                  # scaffolds src-tauri/gen/android (gitignored)
-npm run tauri -- android build --apk --debug --target aarch64
-# → APK under src-tauri/gen/android/app/build/outputs/apk/
+npm install
+npm run dev            # http://localhost:1420 — replays fixtures in the browser
 ```
-`gen/android` is gitignored and regenerated by `android init`. iOS is analogous (`tauri ios …`, macOS only).
 
-## The engine (the loops Orrery runs)
+### Phone / another device (LAN web)
+From a running desktop app, start the LAN server (the in-app share affordance →
+`start_lan_server`) and open the printed `http://<lan-ip>:<port>` (or scan the QR) on a
+phone. Observe works without a token (Tier-1 / Planetarium auto-default on small screens);
+control requires the token.
 
-The generic engine is `../loop.ps1` + `../loopcore.ps1` (pwsh; cross-platform via PowerShell 7). A loop
-emits the **Loop Protocol** (`<stateDir>/log.jsonl` + `checkpoint.json` + `STOP` flag) that Orrery tails
-and reduces. Run one directly:
-```powershell
-pwsh -File ..\loop.ps1 -TaskFile ..\TASK.md -Verify   # fix-until-green + the independent verifier
-pwsh -File ..\loop.ps1 -DryRun                          # validate wiring, no quota
+### Native mobile (Android) — scaffolded, build is heavy
+The Android project + toolchain are wired but a native build cross-compiles the whole Rust
+tree for `aarch64-android` + runs Gradle (minutes), so the APK is **not committed**.
+`gen/android` is gitignored and regenerated by `npm run tauri android init`. iOS is
+analogous (`tauri ios …`, macOS only).
+
+## The loops it visualizes
+
+Loop definitions live in `loops/<id>/loop.json` (seeded: **`roman`**, **`calc`** — generic
+fix-until-green demos). The visualizer is engine-agnostic; it renders the `log.jsonl` any
+loop emits. The primary engine is the Python package in [`../engine`](../engine) (run
+`loop` / `loop-bmad` directly); the seeded loops' live **start** command currently launches
+the original PowerShell reference engine (`../loop.ps1`) — repointing them to the Python
+engine is on the roadmap. The **BMAD** adapter is supported and exercised by the demo
+fixture `static/fixtures/bmad-log.jsonl`.
+
+## Verification
+
+- **39** Rust `cargo test` — including a **cross-language reducer-parity** suite
+  (`src-tauri/tests/golden_parity.rs`) that asserts the Rust reducer matches committed
+  `RunState` goldens.
+- **7** Vitest tests (`src/lib/reduce.golden.test.ts`) — the TS reducer asserts the **same**
+  goldens, so any drift between the Rust and TS reducers fails a test.
+- **3** Playwright E2E (`e2e/`) over browser replay; `npm run check` (svelte-check) is clean.
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run test:unit      # vitest reducer-parity
+npm run test:e2e       # playwright (installs chromium on first run)
+npm run check          # svelte-check
 ```
-Loop definitions live in `loops/<id>/loop.json` (seeded: `bmad`, `roman`, `calc`). The Tuning Console
-writes new ones. Engine self-tests: `pwsh -File ..\selftest*.ps1` (decision core, gate, verify, resume,
-resilience, final).
 
 ## Layout
 ```
 orrery/
-  PROTOCOL.md            # the canonical wire contract (events, RunState, commands) — source of truth
-  src-tauri/src/         # Rust core: model, reducer, tailer, watcher, control, lan, sprint
-  src/lib/               # transport (tauri|ws|replay), stores, adapters, render (Pixi), panels
-  loops/<id>/loop.json   # loop definitions (bmad/roman/calc + user-authored)
-  fixtures/ static/fixtures/   # real-log fixtures for replay-driven dev + tests
+  PROTOCOL.md              the canonical wire contract (events, RunState, commands)
+  src-tauri/src/          Rust core: model, reducer, tailer, watcher, control, lan, sprint
+  src-tauri/tests/        golden_parity.rs + committed RunState goldens
+  src/lib/                transport (tauri|ws|replay), stores, adapters, render (Pixi), panels
+  src/lib/reduce.ts       the TS reducer (mirrors reducer.rs; parity-tested)
+  loops/<id>/loop.json    seeded loop definitions (roman, calc) + user-authored
+  static/fixtures/        real-log fixtures the app replays in dev / browser mode
+  fixtures/               fixtures used by the Rust unit tests
+  e2e/                    Playwright smoke tests
 ```
 
 ## Known limitations
-- Live control (start/stop/resume/answer) is wired + unit-tested; the desktop app spawns the engine and
-  tails it live. The **end-to-end live path was validated by a real `roman` run** (engine→protocol→reducer);
-  driving a full loop *from a UI button* isn't covered by automated tests.
-- For a **generic** loop log reused across runs (no `start` boundary event), `cumUsd` is the whole-file
-  running-max, so a fresh System view can show a prior run's high-water until a new run resets it. BMAD
-  logs reset on `start`. (Per-run scoping for generic logs is a small follow-up.)
-- Not merged to `main`/`develop`; no PR opened. Native mobile is scaffolded but the APK isn't built/committed (see above).
+- Live control (start/stop/resume/answer) is wired + unit-tested and the desktop app spawns
+  the engine and tails it live, but driving a full loop *from a UI button* isn't yet covered
+  by automated E2E (Playwright covers browser-replay).
+- Cross-run **lessons memory** (a Phase-4 engine capability) isn't surfaced in the viz yet —
+  it lives in a side `memory.jsonl`, so surfacing it needs a new protocol event (a `TODO` is
+  marked in `MetricsPanel.svelte`).
+- The seeded `loops/*.json` still launch the PowerShell reference engine for live control;
+  repointing them to the Python engine (with portable relative paths) is on the roadmap.
+- Native mobile is scaffolded but the APK isn't built/committed (see above).
