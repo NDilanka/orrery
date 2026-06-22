@@ -86,23 +86,28 @@ DEFAULT_GATE_STAGES: list[dict[str, Any]] = [
     {"name": "lint", "command": "bun run lint"},
     {
         "name": "test",
+        # brain2's `bun run test` is vitest; its summary line is "Tests  N passed / N failed".
+        # Anchor on the "Tests" label so we read the test count, NOT the "Test Files" count
+        # (bmad-loop.ps1 ~287-289 used the same `Tests\s+(\d+)\s+passed` anchor).
         "command": "bun run test",
-        "pass_pattern": r"(\d+)\s+pass",
-        "fail_pattern": r"(\d+)\s+fail",
+        "pass_pattern": r"Tests\s+(\d+)\s+passed",
+        "fail_pattern": r"Tests\s+(\d+)\s+failed",
     },
 ]
 
 # The dev-server command the real DevServer spawns (bmad-loop.ps1 ~516: `bun run dev`).
 DEFAULT_DEV_SERVER_ARGV: tuple[str, ...] = ("bun", "run", "dev")
 
-# Default model tiers (task spec: dev=sonnet, decider=haiku, etc.).
+# Model tiers per phase. Empty string = INHERIT the user's Claude Code default model — the
+# runner omits `--model` entirely (ClaudeRunner.run), matching bmad-loop.ps1 which never passed
+# `--model`. Override per-phase via the loop.json `bmad.models` block if you want pinned tiers.
 DEFAULT_MODELS: dict[str, str] = {
-    "create": "sonnet",
-    "dev": "sonnet",
-    "review": "sonnet",
-    "smoke": "sonnet",
-    "retro": "sonnet",
-    "decider": "haiku",
+    "create": "",
+    "dev": "",
+    "review": "",
+    "smoke": "",
+    "retro": "",
+    "decider": "",
 }
 
 
@@ -135,6 +140,7 @@ class BmadConfig:
     no_retro: bool = False
     no_smoke: bool = False
     dry_run: bool = False
+    auto_rollback: bool = False  # on a test regression, git reset --hard <baseline_commit>
 
     def model_for(self, phase: str) -> str:
         """Model tier for a phase (``create``/``dev``/``review``/``smoke``/``retro``/``decider``)."""
@@ -161,6 +167,7 @@ class BmadConfig:
             no_retro=bool(getattr(args, "no_retro", False)),
             no_smoke=bool(getattr(args, "no_smoke", False)),
             dry_run=bool(getattr(args, "dry_run", False)),
+            auto_rollback=bool(getattr(args, "auto_rollback", False)),
         )
 
     @classmethod
@@ -193,6 +200,7 @@ class BmadConfig:
             ("no_retro", "noRetro"),
             ("no_smoke", "noSmoke"),
             ("dry_run", "dryRun"),
+            ("auto_rollback", "autoRollback"),
         ):
             if snake in b:
                 kwargs[snake] = b[snake]
@@ -392,6 +400,53 @@ def _commit_if_dirty(repo, message: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _resume_command(config: BmadConfig, state_dir: Any) -> str:
+    """Reconstruct the ``loop-bmad`` command that resumes THIS run (checkpoint ``resume``, §7).
+
+    The desktop / LAN control surface PREFERS this string when Reignite-ing a banked loop, so it
+    must carry the REAL project root + state dir (not a ``<root>`` placeholder) and the flags that
+    materially change the run. Paths with whitespace are quoted; the Rust resume parser
+    (``parse_command_string``) understands the quoting.
+    """
+
+    def q(value: Any) -> str:
+        s = str(value)
+        return f'"{s}"' if (" " in s or "\t" in s) else s
+
+    parts = [
+        "loop-bmad",
+        "--project-root", q(config.project_root),
+        "--state-dir", q(state_dir),
+        "--merge-base", q(config.merge_base),
+    ]
+    if config.epic_only:
+        parts += ["--epic-only", q(config.epic_only)]
+    if config.story:
+        parts += ["--story", q(config.story)]
+    if config.no_merge:
+        parts.append("--no-merge")
+    if config.no_retro:
+        parts.append("--no-retro")
+    if config.no_smoke:
+        parts.append("--no-smoke")
+    if config.auto_rollback:
+        parts.append("--auto-rollback")
+    # Round-trip the tuning knobs so a Reignite preserves them instead of silently reverting to
+    # defaults (only emit the ones the user actually changed, to keep the command readable).
+    for flag, value, default in (
+        ("--max-stories", config.max_stories, 100),
+        ("--max-review-turns", config.max_review_turns, 8),
+        ("--max-smoke-iters", config.max_smoke_iters, 3),
+        ("--smoke-timeout-min", config.smoke_timeout_min, 12),
+        ("--max-retro-turns", config.max_retro_turns, 10),
+        ("--default-quota-wait-min", config.default_quota_wait_min, 30),
+        ("--max-quota-waits", config.max_quota_waits, 30),
+    ):
+        if value != default:
+            parts += [flag, str(value)]
+    return " ".join(parts)
+
+
 def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
     """Run the BMAD multi-story pipeline. Returns a process exit code.
 
@@ -519,7 +574,7 @@ def _run_inner(
             branch=branch,
             merge_base=config.merge_base,
             cum_usd=cum,
-            resume="loop-bmad --project-root <root>",
+            resume=_resume_command(config, state),
         )
         write_checkpoint(checkpoint_path, cp)
 
@@ -723,10 +778,39 @@ def _process_story(
         )
         cum += res.cost
         resilient.set_cum(cum)
+        dev_gate = res.gate or {}
+        # codegen failure is a distinct P1 blocker (bmad-loop.ps1 ~780) — report it before the
+        # generic "not green" so the handoff is actionable.
+        if not res.ok and not phases._stage_ok(dev_gate, "codegen"):
+            emit(bmad_stop_event(False, f"codegen failed (P1 blocker) for {target.key}", cum))
+            return 1, cum
+        # regression guard (bmad-loop.ps1 ~781-788): a drop in passing tests vs the branch
+        # baseline halts — auto-rollback to baseline_commit when enabled, else report the exact
+        # revert command. Fires even on an otherwise-green gate (e.g. tests were deleted).
+        dev_pass = int(dev_gate.get("pass", baseline_pass))
+        if dev_pass < baseline_pass:
+            base_commit = story_meta(_story_text(project_root, target.key)).get("baseline")
+            if config.auto_rollback and base_commit:
+                gitutil._git(["reset", "--hard", base_commit], repo)
+                emit(bmad_stop_event(
+                    False,
+                    f"regression on {target.key}: tests {baseline_pass}->{dev_pass}; "
+                    f"auto-rolled back to baseline_commit {base_commit}",
+                    cum,
+                ))
+                return 1, cum
+            revert = f'git -C "{project_root}" reset --hard {base_commit}' if base_commit else "(no baseline_commit recorded)"
+            emit(bmad_stop_event(
+                False,
+                f"regression on {target.key}: passing tests dropped {baseline_pass}->{dev_pass}. "
+                f"Work on {branch}. Revert: {revert}",
+                cum,
+            ))
+            return 1, cum
         if not res.ok:
             emit(bmad_stop_event(False, res.reason or f"dev-story not green for {target.key}", cum))
             return 1, cum
-        floor_pass = int((res.gate or {}).get("pass", floor_pass))
+        floor_pass = int(dev_gate.get("pass", floor_pass))
         _commit_if_dirty(repo, f"feat({target.key}): dev-story complete — {floor_pass} tests green")
         write_cp(f"dev-story done ({target.key})", target.key, branch)
         if honor_stop("phase", stage=f"dev-story done ({target.key})", story=target.key, branch=branch):
@@ -751,7 +835,16 @@ def _process_story(
         if not res.ok:
             emit(bmad_stop_event(False, res.reason or f"code-review halted for {target.key}", cum))
             return 1, cum
-        floor_pass = max(floor_pass, int((res.gate or {}).get("pass", floor_pass)))
+        # regression guard (bmad-loop.ps1 ~808): review must not drop the passing-test floor.
+        review_pass = int((res.gate or {}).get("pass", floor_pass))
+        if review_pass < floor_pass:
+            emit(bmad_stop_event(
+                False,
+                f"regression on {target.key}: post-review tests {floor_pass}->{review_pass}. Work on {branch}.",
+                cum,
+            ))
+            return 1, cum
+        floor_pass = max(floor_pass, review_pass)
         _commit_if_dirty(repo, f"review({target.key}): apply code-review outcomes — {floor_pass} green")
         write_cp(f"code-review done ({target.key})", target.key, branch)
         if honor_stop("phase", stage=f"code-review done ({target.key})", story=target.key, branch=branch):
@@ -776,6 +869,15 @@ def _process_story(
         if not res.ok:
             emit(bmad_stop_event(False, res.reason or f"browser-smoke halted for {target.key}", cum))
             return 1, cum
+        # regression guard (bmad-loop.ps1 ~615): post-smoke gate must not drop the floor.
+        smoke_pass = int((res.gate or {}).get("pass", floor_pass))
+        if smoke_pass < floor_pass:
+            emit(bmad_stop_event(
+                False,
+                f"regression on {target.key}: post-smoke tests {floor_pass}->{smoke_pass}. Work on {branch}.",
+                cum,
+            ))
+            return 1, cum
         _commit_if_dirty(repo, f"smoke({target.key}): browser smoke fixes")
 
     # --- PHASE: PR (always) -----------------------------------------------------
@@ -797,7 +899,23 @@ def _process_story(
 
     # --- PHASE: merge -----------------------------------------------------------
     _checkout(repo, config.merge_base)
-    pr.merge_pr(branch=branch, base=config.merge_base, cwd=str(repo))
+    try:
+        pr.merge_pr(branch=branch, base=config.merge_base, cwd=str(repo))
+    except pr.PrError as e:
+        emit(bmad_stop_event(False, f"auto-merge for {target.key} failed: {e}", cum))
+        return 1, cum
+    gitutil._git(["pull", "origin", config.merge_base], repo)
+    # Verify the merge actually landed (bmad-loop.ps1 ~857): `gh pr merge` can exit 0 while the
+    # PR is only QUEUED behind branch protection. Branching the next story off an un-merged base
+    # would stack/lose work, so we confirm state == MERGED before continuing.
+    state = pr.pr_state(branch=branch, cwd=str(repo))
+    if state != "MERGED":
+        emit(bmad_stop_event(
+            False,
+            f"auto-merge for {target.key} did not complete (PR state: {state!r}); merge it manually.",
+            cum,
+        ))
+        return 1, cum
     emit(pr_merged_event(story=target.key, base=config.merge_base, pr=pr_url))
     print(f"  merged {target.key} -> {config.merge_base}.")
     return None, cum

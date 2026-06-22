@@ -43,6 +43,10 @@ class ClaudeRunner(AgentRunner):
     ) -> AgentResult:
         # Build argv EXACTLY like loop.ps1 (~635): a single --allowedTools flag followed by
         # the tool list spread as separate positional args (PS: '--allowedTools' + $toolArgs).
+        #
+        # An empty/None/"default"/"inherit" model OMITS --model entirely so the agent inherits
+        # the user's Claude Code default model. This is faithful to bmad-loop.ps1, which never
+        # passed --model. A real tier (e.g. "sonnet"/"opus"/"haiku") is passed through as-is.
         argv = [
             "claude",
             "-p",
@@ -51,8 +55,11 @@ class ClaudeRunner(AgentRunner):
             output_format,
             "--max-turns",
             str(max_turns),
-            "--model",
-            model,
+        ]
+        normalized = str(model).strip() if model is not None else ""
+        if normalized and normalized.lower() not in {"default", "inherit"}:
+            argv += ["--model", model]
+        argv += [
             "--permission-mode",
             permission_mode,
             "--allowedTools",

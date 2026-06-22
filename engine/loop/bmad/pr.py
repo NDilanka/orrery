@@ -4,6 +4,7 @@ Ports of the PR-create + auto-merge calls in ``bmad-loop.ps1`` (~828-861):
 
 - :func:`create_pr`  <- ``gh pr create --base <base> --head <branch> --title .. --body ..``
 - :func:`merge_pr`   <- ``gh pr merge <url> --squash --delete-branch``
+- :func:`pr_state`   <- ``gh pr view <ref> --json state -q .state``
 
 The driver calls BOTH through a tiny indirection (it imports this module and references
 ``pr.create_pr`` / ``pr.merge_pr`` at call time) so a test can ``monkeypatch`` them with a
@@ -70,3 +71,14 @@ def merge_pr(*, branch: str, base: str, cwd) -> str:
         ["pr", "merge", branch, "--squash", "--delete-branch", "--base", base],
         cwd=cwd,
     )
+
+
+def pr_state(*, branch: str, cwd) -> str:
+    """Return the GitHub state of ``branch``'s PR (``gh pr view --json state``).
+
+    Faithful to ``bmad-loop.ps1`` ~857: ``gh pr view <ref> --json state -q .state``.
+    The ref is the head ``branch`` (``gh`` resolves its open/most-recent PR), matching
+    :func:`merge_pr`. Returns the trimmed state string, e.g. ``"MERGED"`` / ``"OPEN"`` /
+    ``"CLOSED"``. Raises :class:`PrError` on a non-zero ``gh`` exit.
+    """
+    return _run_gh(["pr", "view", branch, "--json", "state", "-q", ".state"], cwd=cwd)

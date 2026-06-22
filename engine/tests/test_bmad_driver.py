@@ -121,15 +121,21 @@ def _patch_externals(monkeypatch, *, pr_calls: dict):
         pr_calls.setdefault("merge", []).append({"branch": branch, "base": base})
         return "merged"
 
+    def fake_state(*, branch, cwd):
+        pr_calls.setdefault("state", []).append({"branch": branch})
+        return "MERGED"
+
     monkeypatch.setattr(pr, "create_pr", fake_create)
     monkeypatch.setattr(pr, "merge_pr", fake_merge)
+    monkeypatch.setattr(pr, "pr_state", fake_state)
     # Neutralize the real `git push` so the temp repo (no remote) doesn't error/stall.
     from loop.bmad import driver as drv
 
     real_git = drv.gitutil._git
 
     def guard_git(args, cwd):
-        if args and args[0] == "push":
+        # Neutralize network git (push/pull) so the temp repo (no remote) doesn't error/stall.
+        if args and args[0] in ("push", "pull"):
             class _R:
                 returncode = 0
                 stdout = ""
@@ -541,9 +547,148 @@ def test_bmadconfig_from_loop_json_camel_and_snake(tmp_path):
     assert cfg.max_stories == 7
     assert cfg.no_merge is True
     assert cfg.model_for("dev") == "opus"
-    assert cfg.model_for("decider") == "haiku"  # default preserved
+    assert cfg.model_for("decider") == ""  # default = inherit the CC default model
 
 
 def test_bmadconfig_requires_project_root():
     with pytest.raises(TypeError):
         driver.BmadConfig()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# fidelity restorations (PS parity): merge-verify, dev regression, resume flags
+# ---------------------------------------------------------------------------
+
+
+def test_auto_merge_not_completed_halts(tmp_path, monkeypatch):
+    """gh reports the PR still OPEN after merge (queued behind branch protection) -> halt."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(pr, "pr_state", lambda *, branch, cwd: "OPEN")
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "did not complete" in stop["reason"]
+
+
+def test_dev_story_regression_halts(tmp_path, monkeypatch):
+    """A drop in passing tests vs the branch baseline halts (report-only by default)."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    counter = {"n": 0}
+
+    def shrinking_test():
+        counter["n"] += 1
+        return ("10 pass 0 fail", 0) if counter["n"] == 1 else ("8 pass 0 fail", 0)
+
+    stages = [
+        {"name": "codegen", "command": lambda: ("", 0)},
+        {"name": "lint", "command": lambda: ("", 0)},
+        {"name": "test", "command": shrinking_test, "pass_pattern": r"(\d+)\s+pass", "fail_pattern": r"(\d+)\s+fail"},
+    ]
+    runner = MockRunner([AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0)])
+    rc = driver.run(_config(root, no_merge=False, gate_stages=stages), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "regression" in stop["reason"].lower()
+    assert "10->8" in stop["reason"]
+
+
+def test_resume_command_roundtrips_tuning_flags():
+    """The checkpoint resume string carries the real paths + the knobs the user changed (#5)."""
+    cfg = driver.BmadConfig(
+        project_root="D:/p",
+        merge_base="develop",
+        max_stories=5,
+        max_review_turns=3,
+        auto_rollback=True,
+        no_merge=True,
+    )
+    cmd = driver._resume_command(cfg, "D:/state")
+    assert cmd.startswith("loop-bmad --project-root D:/p --state-dir D:/state --merge-base develop")
+    assert "--no-merge" in cmd
+    assert "--auto-rollback" in cmd
+    assert "--max-stories 5" in cmd
+    assert "--max-review-turns 3" in cmd
+    # unchanged knobs stay out of the command
+    assert "--max-smoke-iters" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# mid-pipeline resume: a paused story re-enters at the PHASE its Status implies
+# (in-progress -> dev, review -> review, done-but-unmerged -> smoke+merge). The
+# last is already pinned by test_done_but_unmerged_resumes_at_smoke_and_merge.
+# ---------------------------------------------------------------------------
+
+
+def _set_story_status(root: Path, story_key: str, status: str) -> None:
+    """Rewrite a story file's `Status:` line on `develop` (the durable resume signal the
+    driver reads after checking out the merge base)."""
+    _git(root, "checkout", "develop")
+    f = root / "_bmad-output" / "implementation-artifacts" / f"{story_key}.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("Status: ready-for-dev", f"Status: {status}"), encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", f"set {story_key} -> {status}")
+
+
+def test_in_progress_story_reenters_dev_not_create(tmp_path, monkeypatch):
+    """A paused 'in-progress' story resumes at dev-story — create-story is NOT re-run."""
+    sprint = "development_status:\n  epic-2: in-progress\n  2-1-capture: in-progress\n"
+    root = _init_project(tmp_path, sprint)
+    _set_story_status(root, "2-1-capture", "in-progress")
+    state = tmp_path / "state"
+    _patch_externals(monkeypatch, pr_calls={})
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),  # dev-story
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),  # smoke
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=True), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "dev-gate" in kinds  # dev-story ran -> re-entered at dev
+    # the FIRST agent call is dev-story, not create-story (no create on resume)
+    first_prompt = runner.calls[0].get("prompt", "")
+    assert "bmad-dev-story" in first_prompt
+    assert "bmad-create-story" not in first_prompt
+
+
+def test_review_story_reenters_review_skips_dev(tmp_path, monkeypatch):
+    """A paused 'review' story resumes at code-review — dev-story is SKIPPED."""
+    sprint = "development_status:\n  epic-2: in-progress\n  2-1-capture: review\n"
+    root = _init_project(tmp_path, sprint)
+    _set_story_status(root, "2-1-capture", "review")
+    state = tmp_path / "state"
+    _patch_externals(monkeypatch, pr_calls={})
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),  # smoke
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=True), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "review-complete" in kinds
+    assert "dev-gate" not in kinds  # dev-story skipped -> re-entered at review
+    first_prompt = runner.calls[0].get("prompt", "")
+    assert "bmad-code-review" in first_prompt

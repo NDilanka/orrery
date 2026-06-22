@@ -186,6 +186,11 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-merge", action="store_true", help="open PRs but do NOT auto-merge")
     parser.add_argument("--no-retro", action="store_true", help="skip epic retrospectives")
     parser.add_argument("--no-smoke", action="store_true", help="skip the browser-smoke phase")
+    parser.add_argument(
+        "--auto-rollback",
+        action="store_true",
+        help="on a test regression, git reset --hard the story's baseline_commit (else report only)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="sprint scan + gate only; no runner")
     parser.add_argument("--max-stories", type=int, default=None, help="stories-per-launch backstop")
     parser.add_argument("--max-review-turns", type=int, default=None, help="code-review Q&A cap")
