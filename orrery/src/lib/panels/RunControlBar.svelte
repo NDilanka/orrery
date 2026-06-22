@@ -17,8 +17,18 @@
   // banked ember (you stopped it) or there is a resume command → can reignite
   const banked = $derived(rest === 'stopped-ember' || s.run.status === 'stopped');
 
+  // Surface control failures instead of swallowing them: a failed start/resume (e.g. a
+  // missing loop.json, an engine that isn't on PATH, or an AlreadyRunning guard) would
+  // otherwise reject silently and read as "nothing happened".
+  let error = $state<string | null>(null);
+
   async function fire(action: string) {
-    await control(action);
+    error = null;
+    try {
+      await control(action);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
 </script>
 
@@ -66,6 +76,10 @@
     <span class="pending mono ember" role="status"
       >banked ember · parked at {s.run.stage ?? 'tooth'}</span
     >
+  {/if}
+
+  {#if error}
+    <span class="pending mono failed" role="alert" title={error}>⚠ {error}</span>
   {/if}
 </div>
 
@@ -126,6 +140,13 @@
     animation: brakePulse 1.4s ease-in-out infinite;
   }
   .pending.ember { color: var(--ember); opacity: 0.8; }
+  .pending.failed {
+    color: var(--ember);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   @keyframes brakePulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }

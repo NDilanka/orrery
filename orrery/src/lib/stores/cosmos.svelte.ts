@@ -24,7 +24,10 @@ import { browser } from '$app/environment';
 
 // Path to the loops/ registry (mirrors tauri-transport's default). Tauri's
 // `list_loops` reads loop.json from here; dev replay ignores it.
-export const DEFAULT_LOOPS_DIR = 'orrery/loops';
+// Absolute so list_loops/load_run find loops regardless of the app's working directory
+// (relative 'orrery/loops' resolves against neither the launcher's orrery/ cwd nor cargo's
+// orrery/src-tauri). LOCAL override; mirror of transport/tauri.ts DEFAULT_LOOPS_DIR.
+export const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
 /** The Tier-1 summary the Cosmos renders for one star-system (one loop). */
 export interface LoopSummary {
