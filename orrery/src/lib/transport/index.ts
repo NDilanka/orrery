@@ -58,6 +58,7 @@ export interface LoopChoice {
   theme: string;
   adapter: 'generic' | 'bmad';
   stateDir: string; // for Tauri watch_run
+  logFile?: string; // log filename within stateDir (defaults per adapter when omitted)
   fixtureUrl: string; // for dev replay
   checkpointUrl?: string;
   rateMs?: number;
@@ -74,6 +75,7 @@ export function createTransport(choice: LoopChoice, opts: CreateTransportOpts): 
       stateDir: choice.stateDir,
       adapter: choice.adapter,
       loopId: choice.id,
+      logFile: choice.logFile,
     };
     return new TauriTransport(cfg, opts);
   }
@@ -112,10 +114,14 @@ export const LOOPS: LoopChoice[] = [
   },
   {
     id: 'bmad',
-    name: 'BMAD — demo-project sprint',
+    name: 'BMAD — brain2 (xynapsis) sprint',
     theme: 'plasma',
     adapter: 'bmad',
-    stateDir: '.loop',
+    // Live (Tauri/LAN): watch the real loop's state dir + log written by `loop-bmad`
+    // (orrery/loops/bmad/loop.json). Absolute so the watcher + the spawn agree regardless
+    // of the app's cwd. The fixtureUrl below is ONLY used by the pure `vite dev` replay.
+    stateDir: 'D:/dev/loop/orrery/loops/bmad/.loop',
+    logFile: 'log.jsonl',
     fixtureUrl: 'fixtures/bmad-log.jsonl',
     checkpointUrl: 'fixtures/checkpoint.json',
     rateMs: 90,

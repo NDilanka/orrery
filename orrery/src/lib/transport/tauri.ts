@@ -10,13 +10,18 @@ import type { Transport, TransportOpts } from './index';
 
 // Absolute path to the loops/ registry. A5 (loop library) will source this from
 // config / list_loops; until then the control commands resolve it from here.
-const DEFAULT_LOOPS_DIR = 'orrery/loops';
+// Absolute so control commands find loops regardless of the app's working directory
+// (the launcher runs from orrery/, cargo from orrery/src-tauri — a relative 'orrery/loops'
+// resolves against neither). LOCAL override; a packaged build should resolve this via a
+// Tauri path API instead. Matches cosmos.svelte.ts DEFAULT_LOOPS_DIR.
+const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
 export interface TauriConfig {
   stateDir: string;
   adapter: string;
   loopId: string;
   loopsDir?: string;
+  logFile?: string;
 }
 
 export class TauriTransport implements Transport {
@@ -39,6 +44,7 @@ export class TauriTransport implements Transport {
     await invoke('watch_run', {
       stateDir: this.cfg.stateDir,
       adapter: this.cfg.adapter,
+      logFile: this.cfg.logFile,
       channel,
     });
     // Channel has no explicit close in the surface; track for symmetry.

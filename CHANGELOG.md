@@ -4,6 +4,33 @@ All notable changes to Orrery are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/). While pre-1.0, expect breaking
 changes between minor versions.
 
+## [Unreleased]
+
+### Changed — BMAD driver parity with the original `bmad-loop.ps1`
+- Agent phases **inherit the user's Claude Code default model** (the runner omits `--model`
+  when a phase tier is empty), matching the PowerShell loop, which never pinned a model. Pin
+  per-phase tiers via the loop.json `bmad.models` block if you want them fixed.
+- The gate's test-count parser is **vitest-anchored** (`Tests\s+(\d+)\s+passed`), so the
+  passing-test floor reads the test count — not the "Test Files" count.
+- Restored the dev-story **regression guard** (halt when passing tests drop vs the branch
+  baseline, with `--auto-rollback` to the story's `baseline_commit` as an opt-in), the distinct
+  **codegen P1** halt, and the post-review / post-smoke count-floor checks.
+- Auto-merge is now **verified** (`gh pr view --json state` must be `MERGED`) and `develop` is
+  pulled before the next story, so a merge queued behind branch protection can't strand the next
+  branch on a stale base.
+
+### Fixed
+- The BMAD checkpoint `resume` string carried a literal `loop-bmad --project-root <root>`
+  placeholder that broke Reignite; it now reconstructs the real project-root / state-dir command
+  plus the tuning flags the run actually changed.
+
+### Orrery — run a BMAD sprint live from the app
+- A loop can drive an external project end-to-end from the desktop / LAN app: Ignite / Brake /
+  Reignite spawn and resume the real `loop-bmad` engine, and the Observatory tails its `log.jsonl`.
+- `watch_run` threads an explicit `logFile`; run-control failures **surface in the control bar**
+  instead of failing silently; the loops directory resolves absolutely so control commands find
+  loops regardless of the app's working directory.
+
 ## [0.1.0] — 2026-06-20
 
 First public release: a cross-platform Python loop engine plus the Orrery visualizer.
