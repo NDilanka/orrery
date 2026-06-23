@@ -645,6 +645,26 @@ def test_after_story_stop_honored_right_after_merge(tmp_path, monkeypatch):
     assert coop and coop[-1]["stage"].startswith("story-merged")
 
 
+def test_spin_guard_halts_on_no_progress_reselection(tmp_path, monkeypatch):
+    """A story re-selected at the same status (a phase didn't advance it) halts, never spins."""
+    root = _init_project(tmp_path, ONE_READY)  # 2-1-capture stays ready-for-dev (mock never writes)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    # story 1 "merges" (mock), returns None -> iteration 2 re-selects the SAME ready story -> halt.
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "WITHOUT advancing" in stop["reason"]
+    assert "2-1-capture" in stop["reason"]
+
+
 def test_effort_config_from_loop_json_and_defaults():
     cfg = driver.BmadConfig.from_loop_json(
         {"bmad": {"projectRoot": "/p", "effort": {"dev": "xhigh", "review": "xhigh", "decider": "low"}}}

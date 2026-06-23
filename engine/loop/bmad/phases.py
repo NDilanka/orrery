@@ -208,7 +208,12 @@ _DEV_STORY_PROMPT = (
     "satisfying EVERY one of the story's Acceptance Criteria. "
     "Run continuously to completion; do not stop for milestones. Commit your progress with "
     "descriptive messages as you go. NEVER weaken, skip, or delete a test to make the suite "
-    "pass. Honor all BMAD HALT conditions. On completion set the story to 'review'."
+    "pass. Honor all BMAD HALT conditions.\n"
+    "When the implementation is complete and the gate is green — INCLUDING when you RESUMED an "
+    "already-implemented 'in-progress' story and found nothing left to do — you MUST advance this "
+    "story's status to 'review' in sprint-status.yaml before you stop. Do not leave it "
+    "'in-progress': the loop keeps re-selecting and re-running an 'in-progress' story until its "
+    "status changes, so failing to advance it wastes a full re-run."
 )
 
 
@@ -462,9 +467,11 @@ _CODE_REVIEW_SINGLE_PASS_PROMPT = (
     "- DEFER non-blocking improvements (record them as deferred-work; do not implement now).\n"
     "- DISMISS false positives and out-of-scope items.\n"
     "- NEVER weaken, skip, or delete a test; stay within this story's scope.\n"
-    "Apply all PATCH decisions, re-run the tests to confirm no regression, then update the story "
-    "status. When the review is fully complete, output one line beginning 'REVIEW_COMPLETE:' with "
-    "a one-line summary, then stop."
+    "Apply all PATCH decisions and re-run the tests to confirm no regression. Then — this review IS "
+    "the approval gate, and the loop will PR + merge the story next — set THIS story's status to "
+    "'done' in sprint-status.yaml (without it the loop re-selects the same story and re-runs it). "
+    "When the review is fully complete AND the story's status is 'done', output one line beginning "
+    "'REVIEW_COMPLETE:' with a one-line summary, then stop."
 )
 
 
