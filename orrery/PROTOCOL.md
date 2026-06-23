@@ -72,8 +72,9 @@ fully backward-compatible.
 { "event": "quota-resume", "label": string, "probe": int }
 ```
 
-### BMAD adapter (see `.loop/bmad-log.jsonl`)
+### BMAD adapter (the engine writes `.loop/log.jsonl`; `bmad-log.jsonl` is a recorded fixture)
 ```
+{ "event":"engine-start",     "mergeBase"?: string }   // heartbeat: FIRST line, before preflight → reducer sets status 'running' within ~1s of spawn
 { "event":"start",            "target": string, "branch": string, "baselinePass": int }
 { "event":"story-start",      "story": string, "status": string, "epic"?: string, "index"?: int }
 { "event":"dev-gate",         "story": string, "cum": float, "green": bool, "pass": int, "fail": int,
@@ -190,10 +191,14 @@ Phase-name → `sixPhase`: create-story→discover · dev-story→execute · dev
 ## 6. Tauri command surface (Rust `control.rs`)
 
 ```
-// A0/A1 — observe
-load_run(stateDir: string, adapter: string) -> RunState        // one-shot reduce of existing files
-watch_run(stateDir: string, adapter: string, channel: Channel<Delta>) -> ()  // emit snapshot then deltas
-// Delta = { kind: 'snapshot', state: RunState } | { kind: 'event', event: RawEvent } | { kind: 'state', state: RunState }
+// A0/A1 — observe. `logFile` overrides the in-stateDir log name (both adapters default to log.jsonl,
+// what the engine writes); a relative stateDir is resolved to absolute so watcher + engine agree.
+load_run(stateDir: string, adapter: string, logFile?: string) -> RunState      // one-shot reduce of existing files
+watch_run(stateDir, adapter, logFile?, channel: Channel<Delta>) -> ()
+// Emits a `snapshot`, then per drain: an `event` delta per NEW raw line (feeds the live LOG panel)
+// followed by ONE reduced `state` delta. The historical log is replayed once on mount, batched and
+// capped at 300 events so a long-running loop doesn't flood the channel.
+// Delta = { kind: 'snapshot', state } | { kind: 'event', event: RawEvent } | { kind: 'state', state }
 list_loops() -> LoopDef[]                                       // from loops/<id>/loop.json
 // A6 — control. All take `loopsDir` (path to loops/) so the Rust side can locate loop.json.
 start_loop(loopId, loopsDir, overrides?) -> { pid } | Err('AlreadyRunning'|...)
@@ -230,4 +235,4 @@ For dev/replay without Tauri, the frontend also accepts a plain array of events 
 }
 ```
 
-Seeded loops: `roman` & `calc` (generic → loop.ps1). The `bmad` adapter is exercised by the demo fixture (`static/fixtures/bmad-log.jsonl`).
+Seeded loop dirs (`loops/<id>/`): `hello` (generic, self-contained Python engine) and `bmad` (runs the live `loop-bmad` engine against an external project). `roman` & `calc` ship as replay-only fixtures; `static/fixtures/bmad-log.jsonl` is a recorded BMAD run for dev/replay.

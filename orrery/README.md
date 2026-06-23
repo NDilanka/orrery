@@ -25,12 +25,15 @@ start/stop loops. Or manually:
 ```bash
 cd orrery
 npm install
-npm run tauri dev      # dev window with HMR
+npm run tauri dev      # dev window with HMR — drives loops LIVE (spawns + tails the engine)
 npm run tauri build    # release bundle / installer
 ```
-Fly through **Cosmos → a System → a Body**; **✦ ignite** authors a loop in the Tuning
-Console; toggle **Planetarium** (ambient) or **Rewind** (scrub the run). With no backend it
-replays the bundled fixtures in `static/fixtures/`.
+Fly through **Cosmos → a System → a Body**. **✦ Ignite** starts a run (with an "igniting…"
+indicator), and **Brake** / **Reignite** stop and resume it; a **LIVE/REPLAY** badge plus a
+**live event log** show exactly what the loop is doing, and a quota limit **pauses-and-resumes**
+the run (POLAR NIGHT). **✦ ignite new loop** authors one in the Tuning Console; toggle
+**Planetarium** (ambient) or **Rewind** (scrub a replay). The desktop window runs live; the
+browser path (`npm run dev`) replays the bundled fixtures in `static/fixtures/`.
 
 ### Browser only (no Rust, fastest to look at)
 ```bash
@@ -67,7 +70,7 @@ is supported and exercised by the demo fixture `static/fixtures/bmad-log.jsonl`.
 
 ## Verification
 
-- **39** Rust `cargo test` — including a **cross-language reducer-parity** suite
+- **41** Rust `cargo test` — including a **cross-language reducer-parity** suite
   (`src-tauri/tests/golden_parity.rs`) that asserts the Rust reducer matches committed
   `RunState` goldens.
 - **7** Vitest tests (`src/lib/reduce.golden.test.ts`) — the TS reducer asserts the **same**
@@ -96,9 +99,10 @@ orrery/
 ```
 
 ## Known limitations
-- Live control (start/stop/resume/answer) is wired + unit-tested and the desktop app spawns
-  the engine and tails it live, but driving a full loop *from a UI button* isn't yet covered
-  by automated E2E (Playwright covers browser-replay).
+- Live control (Ignite/Brake/Reignite/answer) drives a real loop end-to-end from the desktop /
+  LAN app — with a live event log, a LIVE/REPLAY badge, in-flight feedback, and quota
+  pause-and-resume — but driving a full loop *from a UI button* isn't yet covered by automated
+  E2E (Playwright covers browser-replay).
 - Cross-run **lessons memory** (a Phase-4 engine capability) isn't surfaced in the viz yet —
   it lives in a side `memory.jsonl`, so surfacing it needs a new protocol event (a `TODO` is
   marked in `MetricsPanel.svelte`).
