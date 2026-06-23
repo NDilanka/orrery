@@ -11,6 +11,8 @@ import { TauriTransport, type TauriConfig } from './tauri';
 import { WsTransport, type WsConfig } from './ws';
 
 export interface Transport {
+  /** Which transport actually mounted — the single source of truth for the LIVE/REPLAY badge. */
+  readonly kind: 'tauri' | 'ws' | 'replay';
   start(): Promise<void>;
   stop(): void;
   control(action: string): Promise<void>;
@@ -23,7 +25,13 @@ export interface TransportOpts {
 }
 
 export function hasTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI__' in window;
+  // Tauri v2 only injects `window.__TAURI__` when `withGlobalTauri` is enabled
+  // (it isn't, by default). But `__TAURI_INTERNALS__` — the IPC bridge that
+  // `invoke` rides — is ALWAYS present inside a Tauri webview. Detect on that so
+  // the desktop app picks the live transport; otherwise it silently falls back
+  // to dev replay, where every control verb (start/stop/reignite) is a no-op.
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
 }
 
 /**

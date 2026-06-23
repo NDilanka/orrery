@@ -11,6 +11,7 @@
 import type { Checkpoint, RawEvent, RunState } from '../types';
 import { reduce } from '../reduce';
 import { normalizeAll } from '../adapters';
+import { logStore } from '../stores/log.svelte';
 import type { Transport, TransportOpts } from './index';
 
 function parseJsonl(text: string): RawEvent[] {
@@ -71,6 +72,7 @@ export function isPlayback(t: Transport | null): t is PlaybackTransport {
 }
 
 export class ReplayTransport implements PlaybackTransport {
+  readonly kind = 'replay' as const;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private events: RawEvent[] = [];
   private checkpoint: Checkpoint | undefined;
@@ -218,6 +220,8 @@ export class ReplayTransport implements PlaybackTransport {
 
   private emit() {
     const slice = this.events.slice(0, this.cursor);
+    // mirror the revealed prefix into the live LOG feed (scrub-safe: always matches the cursor)
+    logStore.setAll(slice);
     // checkpoint is only authoritative once the whole log has played
     const cp = this.cursor >= this.events.length ? this.checkpoint : undefined;
     const state = reduce(slice, { checkpoint: cp, loopId: this.cfg.loopId });

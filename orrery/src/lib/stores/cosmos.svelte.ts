@@ -184,15 +184,20 @@ class CosmosStore {
       theme?: string;
       adapter: string;
       stateDir: string;
+      logFile?: string;
     }>;
     const summaries: LoopSummary[] = [];
     for (const def of defs) {
       const adapter = def.adapter === 'bmad' ? 'bmad' : 'generic';
       try {
-        // load_run(stateDir, adapter) → an already-reduced RunState (Rust side)
+        // load_run(stateDir, adapter, logFile) → an already-reduced RunState (Rust side).
+        // Pass logFile so the Tier-1 summary reads the SAME log the loop writes (the engine
+        // writes log.jsonl); without it a real bmad run would read a non-existent file and
+        // always look idle in the Cosmos.
         const state = (await invoke('load_run', {
           stateDir: def.stateDir,
           adapter: def.adapter,
+          logFile: def.logFile,
         })) as RunState;
         summaries.push(
           summarize(

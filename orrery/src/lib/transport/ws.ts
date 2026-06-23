@@ -17,8 +17,8 @@
 // reflect "observe-only" without a round-trip).
 
 import type { Delta, RawEvent, RunState } from '../types';
-import { apply, finalize, initialState } from '../reduce';
-import { normalizeAll } from '../adapters';
+import { initialState } from '../reduce';
+import { logStore } from '../stores/log.svelte';
 import type { Transport, TransportOpts } from './index';
 
 /** Connection lifecycle the UI surfaces as a freshness badge. */
@@ -63,6 +63,7 @@ function wsOrigin(origin: string): string {
 }
 
 export class WsTransport implements Transport {
+  readonly kind = 'ws' as const;
   private cfg: WsConfig;
   private onState: (s: RunState) => void;
   private state: RunState;
@@ -174,21 +175,13 @@ export class WsTransport implements Transport {
   }
 
   private onDelta(delta: Delta): void {
-    switch (delta.kind) {
-      case 'snapshot':
-      case 'state':
-        // server already reduced; adopt it wholesale (also the reconnect resync)
-        this.state = delta.state;
-        break;
-      case 'event': {
-        const [ev] = normalizeAll(this.cfg.adapter, [delta.event as RawEvent]);
-        if (ev) {
-          apply(this.state, ev, Date.now());
-          finalize(this.state);
-        }
-        break;
-      }
+    if (delta.kind === 'event') {
+      // raw event → live LOG feed only; the server sends an authoritative `state` delta per batch.
+      logStore.push(delta.event as RawEvent);
+      return;
     }
+    // snapshot | state: server already reduced; adopt wholesale (also the reconnect resync).
+    this.state = delta.state;
     // fresh reference so the runes store registers the change
     this.onState({ ...this.state });
   }
