@@ -370,6 +370,50 @@ operation, wrap the launch in a supervisor that re-runs on a non-zero/quota exit
 
 ---
 
+## 9. Continuous runs, stopping cleanly, and smoke targeting
+
+**Continuous operation.** The loop runs story-after-story until the backlog is empty — *if* each
+story **merges**. The post-smoke flow is: smoke → push → open PR → **merge → next story**. Only a
+*confirmed* merge continues; two things stop it:
+
+- **`--no-merge`** deliberately stops after the PR (rc 0). It **cannot** continue — the next story
+  branches off the merge-base, so it can't inherit an un-merged PR. For continuous multi-story runs,
+  **drop `--no-merge`.**
+- **A merge that didn't land** — on a branch-protected base, `gh pr merge` exits 0 but the PR sits
+  **QUEUED** behind required checks, so `pr_state != "MERGED"` and the driver halts. New opt-in
+  **`mergeWaitSec`** (loop.json) / `--merge-wait-sec N` polls the PR up to N seconds for the merge to
+  land before halting — set it (e.g. `120`) on a protected base so the loop rolls into the next story
+  instead of stopping. Default `0` = strict immediate halt (parity).
+
+Every halt now prints an actionable **`[HALT] <why>`** + the exact **`resume:`** command (the
+checkpoint's `_resume_command`, which round-trips your models/effort/modes/flags), so a stop is never
+a mystery.
+
+**Choosing whether & where to stop.** The loop never gets killed mid-step — request a *cooperative*
+stop and it finishes the in-flight work, commits, checkpoints, and exits 0:
+```bash
+loop-stop --state-dir .loop --after-story   # stop once the CURRENT story is merged
+loop-stop --state-dir .loop --now           # stop at the next safe phase (after dev / review / smoke)
+loop-stop --state-dir .loop --status        # is a stop pending? where's the last checkpoint?
+loop-stop --state-dir .loop --cancel        # changed your mind — keep going
+```
+Honored at these safe boundaries: **between stories, after dev-story, after code-review, after
+browser-smoke, and right after a story's merge** (the last two are new — so `--after-story` halts the
+instant the story completes, not a whole story later). `loop-bmad` now prints this hint at startup so
+it's discoverable, and the `[STOPPED]` message echoes the resume command.
+
+**Smoke verifies *this* story's implementation.** Browser-smoke was AC-aware but only got the ACs +
+URL — never the story's diff — so it could pass as a generic health check. It now also receives the
+story's **changed files** (computed from `baseline_commit`) and their likely **routes**, so it drives
+the surfaces *this* story actually changed; and it records a structured **`SMOKE_ACS:`** line parsed
+into `verifiedAcs` / `deferredAcs` on the `smoke-iter` event (which ACs were driven in-browser with
+evidence vs deferred to the test suite). Inspect it:
+```bash
+grep '"event":"smoke-iter"' .loop/log.jsonl | jq '{passed, verifiedAcs, deferredAcs, verdict}'
+```
+(All additive: no `baseline_commit` → untargeted-but-AC-aware prompt as before; no `SMOKE_ACS:` line →
+the fields are omitted. The Orrery visualizer can surface `verifiedAcs`/`deferredAcs` as a follow-up.)
+
 ## Appendix: confidence & sources
 
 - **Official / high-confidence:** the 5-h + two-weekly limit structure; current "all-models +

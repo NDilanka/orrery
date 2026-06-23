@@ -162,6 +162,11 @@ class BmadConfig:
     max_retro_turns: int = 10
     default_quota_wait_min: int = 30
     max_quota_waits: int = 30
+    # On a branch-protected merge-base, `gh pr merge` exits 0 but the PR sits QUEUED behind
+    # required checks, so pr_state != "MERGED" and the driver would halt. >0 polls pr_state up to
+    # this many seconds for the merge to land before halting, so the loop rolls into the next story
+    # instead of stopping. 0 = the strict (parity) behavior: halt immediately if not yet MERGED.
+    merge_wait_sec: int = 0
     gate_stages: list[dict[str, Any]] = field(
         default_factory=lambda: [dict(s) for s in DEFAULT_GATE_STAGES]
     )
@@ -211,6 +216,7 @@ class BmadConfig:
             max_retro_turns=getattr(args, "max_retro_turns", None) or 10,
             default_quota_wait_min=getattr(args, "default_quota_wait_min", None) or 30,
             max_quota_waits=getattr(args, "max_quota_waits", None) or 30,
+            merge_wait_sec=getattr(args, "merge_wait_sec", None) or 0,
             models=models,
             effort=dict(DEFAULT_EFFORTS),
             epic_only=getattr(args, "epic_only", None) or None,
@@ -249,6 +255,7 @@ class BmadConfig:
             ("max_retro_turns", "maxRetroTurns"),
             ("default_quota_wait_min", "defaultQuotaWaitMin"),
             ("max_quota_waits", "maxQuotaWaits"),
+            ("merge_wait_sec", "mergeWaitSec"),
             ("epic_only", "epicOnly"),
             ("story", "story"),
             ("no_merge", "noMerge"),
@@ -605,6 +612,7 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         ("--max-retro-turns", config.max_retro_turns, 10),
         ("--default-quota-wait-min", config.default_quota_wait_min, 30),
         ("--max-quota-waits", config.max_quota_waits, 30),
+        ("--merge-wait-sec", config.merge_wait_sec, 0),
     ):
         if value != default:
             parts += [flag, str(value)]
@@ -650,6 +658,13 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
         # instead of seeing an empty log for the whole cold start. Inside the try so a failure here
         # still reaches the lock-cleanup finally.
         emit(engine_start_event(merge_base=config.merge_base))
+        # Self-advertise the cooperative-stop control (the loop never gets killed mid-step; a
+        # request is honored at the next safe boundary — between stories, after dev / review /
+        # smoke, and right after a story's merge).
+        print(
+            f"[loop running] continuous until backlog empty. To stop cleanly: "
+            f"loop-stop --state-dir {state} --after-story   (or --now / --status / --cancel)"
+        )
         return _run_inner(
             config,
             base_runner=runner,
@@ -765,6 +780,7 @@ def _run_inner(
         )
         clear_stop_flag(stop_path)
         print(f"[STOPPED] graceful stop honored ({req['mode']}) at {stage}")
+        print(f"          resume: {_resume_command(config, state)}")
         return True
 
     # --- preflight: parse sprint, ensure merge_base checked out (PS ~666-675) ---
@@ -856,6 +872,7 @@ def _run_inner(
             honor_stop=honor_stop,
             write_cp=write_cp,
             cum_box=[cum],
+            resume_cmd=_resume_command(config, state),
         )
         # _process_story returns (exit_or_None, new_cum). When exit is not None, stop now.
         exit_code, cum = rc
@@ -886,6 +903,7 @@ def _process_story(
     honor_stop: Callable[..., bool],
     write_cp: Callable[..., None],
     cum_box: list[float],
+    resume_cmd: str = "",
 ) -> tuple[int | None, float]:
     """Run one story through the pipeline. Returns ``(exit_or_None, cum)``.
 
@@ -1073,6 +1091,11 @@ def _process_story(
         # single-pass => ONE process; the agent does all open/test/fix/re-test internally
         # (bounded by the per-iter wall-clock timeout) instead of the harness cold-re-spawning.
         smoke_iters = 1 if config.smoke_mode == "single-pass" else config.max_smoke_iters
+        # Tell smoke WHICH files this story changed (vs its baseline_commit) so it drives the
+        # story's ACTUAL surfaces, not a generic health check. None when no baseline is recorded
+        # (then the prompt is the untargeted-but-AC-aware form, as before).
+        base_commit = story_meta(_story_text(project_root, target.key)).get("baseline")
+        changed = gitutil.diff_name_only(repo, base_commit) if base_commit else None
         res = phases.browser_smoke(
             resilient,
             target.key,
@@ -1085,6 +1108,7 @@ def _process_story(
             timeout_sec=config.smoke_timeout_min * 60,
             model=smoke_model,
             effort=smoke_effort,
+            changed_files=changed,
         )
         cum += res.cost
         resilient.set_cum(cum)
@@ -1101,6 +1125,11 @@ def _process_story(
             ))
             return 1, cum
         _commit_if_dirty(repo, f"smoke({target.key}): browser smoke fixes")
+        # Safe stop boundary: gate green + work committed, before the push/PR. A `--now`/`--after`
+        # request placed during/after smoke is honored here instead of waiting a whole next story.
+        write_cp(f"browser-smoke done ({target.key})", target.key, branch)
+        if honor_stop("phase", stage=f"browser-smoke done ({target.key})", story=target.key, branch=branch):
+            return 0, cum
 
     # --- PHASE: PR (always) -----------------------------------------------------
     gitutil._git(["push", "-u", "origin", branch], repo)
@@ -1128,8 +1157,16 @@ def _process_story(
     print(f"  PR (base {config.merge_base}): {pr_url}")
 
     if config.no_merge:
-        emit(bmad_stop_event(True, f"story {target.key} PR opened (not merged, --no-merge): {pr_url}", cum))
-        print(f"[OK] PR opened for {target.key}; --no-merge -> stopping.")
+        emit(bmad_stop_event(
+            True,
+            f"story {target.key} PR opened (not merged, --no-merge): {pr_url}. CONTINUOUS "
+            f"multi-story runs require merging — the next story branches off {config.merge_base}, "
+            f"so it can't inherit an un-merged PR. Drop --no-merge (optionally add --merge-wait-sec "
+            f"for branch-protected bases) to chain stories.",
+            cum,
+        ))
+        print(f"\n[OK] PR opened for {target.key}: {pr_url}")
+        print("     --no-merge -> stopping. Drop --no-merge for continuous multi-story runs.")
         return 0, cum
 
     # --- PHASE: merge -----------------------------------------------------------
@@ -1137,22 +1174,54 @@ def _process_story(
     try:
         pr.merge_pr(branch=branch, base=config.merge_base, cwd=str(repo))
     except pr.PrError as e:
-        emit(bmad_stop_event(False, f"auto-merge for {target.key} failed: {e}", cum))
+        emit(bmad_stop_event(
+            False,
+            f"auto-merge for {target.key} failed: {e}. Resolve it (conflicts / required review / "
+            f"mergeability), then resume: {resume_cmd}",
+            cum,
+        ))
+        print(f"\n[HALT] auto-merge for {target.key} failed: {e}")
+        if resume_cmd:
+            print(f"       resume: {resume_cmd}")
         return 1, cum
     gitutil._git(["pull", "origin", config.merge_base], repo)
     # Verify the merge actually landed (bmad-loop.ps1 ~857): `gh pr merge` can exit 0 while the
     # PR is only QUEUED behind branch protection. Branching the next story off an un-merged base
-    # would stack/lose work, so we confirm state == MERGED before continuing.
+    # would stack/lose work, so we confirm state == MERGED before continuing. On a branch-protected
+    # base the merge lands a few seconds later — poll up to merge_wait_sec for it before halting so
+    # the loop rolls into the next story (config; 0 = strict immediate halt = parity).
     state = pr.pr_state(branch=branch, cwd=str(repo))
+    if state != "MERGED" and config.merge_wait_sec > 0:
+        deadline = time.monotonic() + config.merge_wait_sec
+        while state in ("QUEUED", "OPEN", "BLOCKED", "") and time.monotonic() < deadline:
+            time.sleep(5)
+            gitutil._git(["pull", "origin", config.merge_base], repo)
+            state = pr.pr_state(branch=branch, cwd=str(repo))
     if state != "MERGED":
+        waited = (
+            f" Waited {config.merge_wait_sec}s for it to land."
+            if config.merge_wait_sec > 0
+            else " Set --merge-wait-sec=N (e.g. 120) to wait for a QUEUED merge before halting."
+        )
         emit(bmad_stop_event(
             False,
-            f"auto-merge for {target.key} did not complete (PR state: {state!r}); merge it manually.",
+            f"auto-merge for {target.key} did not complete (PR state: {state!r}) — likely QUEUED "
+            f"behind branch protection / required checks.{waited} Merge it manually: "
+            f"gh pr merge {branch} --squash --delete-branch. Then resume: {resume_cmd}",
             cum,
         ))
+        print(f"\n[HALT] merge of {target.key} did not complete (PR state {state!r}).{waited}")
+        if resume_cmd:
+            print(f"       resume: {resume_cmd}")
         return 1, cum
     emit(pr_merged_event(story=target.key, base=config.merge_base, pr=pr_url))
     print(f"  merged {target.key} -> {config.merge_base}.")
+    # The story is COMPLETE (merged, repo clean on merge_base) — the literal "stop after THIS
+    # story" boundary. A `--after-story` request is honored here, not only on the next iteration's
+    # between-stories scan.
+    write_cp(f"story-merged ({target.key})", None, config.merge_base)
+    if honor_stop("story", stage=f"story-merged ({target.key})", story=None, branch=config.merge_base):
+        return 0, cum
     return None, cum
 
 

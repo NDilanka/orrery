@@ -513,6 +513,8 @@ def smoke_iter_event(
     passed: bool,
     verdict: str,
     timed_out: bool | None = None,
+    verified: list[str] | None = None,
+    deferred: list[str] | None = None,
 ) -> dict[str, Any]:
     """BMAD ``smoke-iter`` event. Wire keys: ``iter`` (from ``iter_``), ``timedOut``.
 
@@ -520,6 +522,11 @@ def smoke_iter_event(
     (``@{ event='smoke-iter'; iter=..; timedOut=$true }``, no ``passed``/``verdict``) OR
     a result line (``@{ ...; passed=..; verdict=.. }``, no ``timedOut``). This builder
     keeps ``passed``/``verdict`` always present and only adds ``timedOut`` when supplied.
+
+    ``verifiedAcs`` / ``deferredAcs`` (the ACs the agent drove in-browser vs deferred to the test
+    suite, parsed from the optional ``SMOKE_ACS:`` evidence line) are likewise OMITTED when
+    ``None`` — additive observability, so the golden corpus / gen_golden.ps1 are untouched (same
+    omit-when-absent contract as ``timedOut``).
     """
     o: dict[str, Any] = {
         "event": "smoke-iter",
@@ -529,6 +536,10 @@ def smoke_iter_event(
     }
     if timed_out is not None:
         o["timedOut"] = timed_out
+    if verified is not None:
+        o["verifiedAcs"] = list(verified)
+    if deferred is not None:
+        o["deferredAcs"] = list(deferred)
     return o
 
 

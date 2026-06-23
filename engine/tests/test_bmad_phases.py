@@ -563,6 +563,66 @@ def test_browser_smoke_red_gate_reason_names_failing_stage():
     assert server.stopped == 1
 
 
+# --- smoke targets THIS story's changes + records per-AC evidence -----------
+
+
+def test_routes_from_files_maps_next_pages():
+    routes = phases._routes_from_files([
+        "app/page.tsx", "app/settings/page.tsx", "app/(main)/dash/page.tsx",
+        "app/blog/[slug]/page.tsx", "pages/about.tsx", "pages/index.tsx",
+        "convex/search.ts", "lib/util.ts",
+    ])
+    assert "/" in routes
+    assert "/settings" in routes
+    assert "/dash" in routes          # route-group (main) dropped
+    assert "/blog/:slug" in routes    # dynamic segment
+    assert "/about" in routes
+    # non-routed files contribute no route
+    assert all("convex" not in r and "util" not in r for r in routes)
+
+
+def test_browser_smoke_targets_changed_files_and_records_acs():
+    runner = MockRunner([
+        AgentResult(raw="", text=(
+            "SMOKE_PASS: AC1 verified in browser; AC2 deferred to tests.\n"
+            'SMOKE_ACS: {"verified":[{"ac":"AC1","how":"opened /search, typed query, results rendered",'
+            '"evidence":"snapshot+console"}],"deferred":[{"ac":"AC2","why":"backend-only"}]}'
+        ), cost_usd=0.3)
+    ])
+    server = FakeServer(url="http://localhost:4137")
+    log, emit = _events("smoke")
+    res = browser_smoke(
+        runner, "3-4", STORY_TEXT, emit=emit, cwd="/repo", server_ctl=server,
+        gate_fn=lambda: gate(green=True, pass_=42), max_iters=1, timeout_sec=720,
+        model="sonnet", changed_files=["app/search/page.tsx", "convex/search.ts"],
+    )
+    assert res.ok is True
+    # the changed files (+ derived route) steer the prompt at THIS story's actual surfaces
+    p = runner.calls[0]["prompt"]
+    assert "THIS STORY'S CHANGED FILES" in p
+    assert "app/search/page.tsx" in p
+    assert "/search" in p  # route derived from app/search/page.tsx
+    # per-AC evidence parsed out of the SMOKE_ACS line into the smoke-iter event
+    si = [e for e in log if e["event"] == "smoke-iter"][0]
+    assert si["verifiedAcs"] == ["AC1"]
+    assert si["deferredAcs"] == ["AC2"]
+
+
+def test_browser_smoke_without_changed_or_acs_is_parity():
+    # No changed_files -> no targeting block; no SMOKE_ACS line -> verified/deferred OMITTED.
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: healthy", cost_usd=0.1)])
+    server = FakeServer()
+    log, emit = _events("smoke")
+    browser_smoke(
+        runner, "3-4", STORY_TEXT, emit=emit, cwd="/repo", server_ctl=server,
+        gate_fn=lambda: gate(green=True), max_iters=1, timeout_sec=720, model="sonnet",
+    )
+    assert "THIS STORY'S CHANGED FILES" not in runner.calls[0]["prompt"]
+    si = [e for e in log if e["event"] == "smoke-iter"][0]
+    assert "verifiedAcs" not in si
+    assert "deferredAcs" not in si
+
+
 # --- DevServer port parsing (pure helper; no process spawned) ---------------
 
 
