@@ -787,6 +787,14 @@ def _run_inner(
     _checkout(repo, config.merge_base)
 
     processed = 0
+    # Spin guard: remember the last story we processed. If select_actionable hands back the SAME
+    # story at the SAME status on the next pass, the previous pass RAN but did NOT advance it (e.g.
+    # review/smoke/merge ran yet sprint-status still says 'review'), so the loop would re-run it
+    # forever and burn quota. Halt with an actionable reason instead (same spirit as the retro
+    # flag-check above). A story that legitimately advances changes status between passes, so this
+    # only fires on a genuine no-progress re-selection.
+    last_key: str | None = None
+    last_status: str | None = None
     for si in range(1, config.max_stories + 1):
         resilient.set_cum(cum)
         sprint = _load_sprint(project_root)
@@ -858,6 +866,26 @@ def _run_inner(
             )
             print(f"[OK] backlog complete — processed {processed} stories.")
             return 0
+
+        # Spin guard (see above): the same story re-selected at the same status = no progress.
+        if target.key == last_key and target.status == last_status:
+            emit(bmad_stop_event(
+                False,
+                f"story {target.key} was re-selected at status '{target.raw_status}' WITHOUT "
+                f"advancing — the previous pass ran (e.g. review/smoke/merge) but did not move it "
+                f"forward, so the loop would re-run it indefinitely (burning quota). Its "
+                f"sprint-status is most likely stuck at '{target.raw_status}' — a reviewed+merged "
+                f"story must reach 'done'. Set {target.key} to 'done' in sprint-status.yaml if it "
+                f"merged (or fix the phase that should advance it), then resume: "
+                f"{_resume_command(config, state)}",
+                cum,
+            ))
+            print(
+                f"\n[HALT] story {target.key} stuck at '{target.raw_status}' — re-selected without "
+                "progress (would loop + burn quota). See the stop reason / resume command above."
+            )
+            return 1
+        last_key, last_status = target.key, target.status
 
         rc = _process_story(
             config,
