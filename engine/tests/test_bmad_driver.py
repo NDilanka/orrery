@@ -589,6 +589,62 @@ def test_run_retro_single_pass_one_process():
     assert "DECIDE every point yourself" in runner.calls[0]["prompt"]
 
 
+def test_merge_wait_config_roundtrip():
+    cfg = driver.BmadConfig.from_loop_json({"bmad": {"projectRoot": "/p", "mergeWaitSec": 120}})
+    assert cfg.merge_wait_sec == 120
+    assert "--merge-wait-sec 120" in driver._resume_command(cfg, "/state")
+    # default 0 stays off the resume command (parity)
+    assert driver.BmadConfig(project_root="/p").merge_wait_sec == 0
+    assert "--merge-wait-sec" not in driver._resume_command(driver.BmadConfig(project_root="/p"), "/state")
+
+
+def test_merge_wait_sec_polls_queued_merge_then_continues(tmp_path, monkeypatch):
+    """A QUEUED merge (branch protection) is polled until MERGED instead of halting immediately."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(driver.time, "sleep", lambda s: None)  # no real sleep
+    seq = iter(["QUEUED", "QUEUED", "MERGED"])  # lands on the 3rd poll
+    monkeypatch.setattr(pr, "pr_state", lambda *, branch, cwd: next(seq, "MERGED"))
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    driver.run(_config(root, no_merge=False, merge_wait_sec=120), runner=runner, state_dir=str(state))
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-merged" in kinds  # polled to MERGED rather than the immediate "did not complete" halt
+
+
+def test_after_story_stop_honored_right_after_merge(tmp_path, monkeypatch):
+    """A stop requested mid-story is honored at the new post-merge boundary (story completed)."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    # Request a stop DURING the merge (so the top-of-loop between-stories check hadn't seen it yet).
+    def merge_then_request_stop(*, branch, base, cwd):
+        (state / "STOP").write_text("story", encoding="utf-8")
+        pr_calls.setdefault("merge", []).append({"branch": branch})
+        return "merged"
+
+    monkeypatch.setattr(pr, "merge_pr", merge_then_request_stop)
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-merged" in kinds  # the story DID complete + merge first
+    coop = [e for e in _events(state) if e["event"] == "cooperative-stop"]
+    assert coop and coop[-1]["stage"].startswith("story-merged")
+
+
 def test_effort_config_from_loop_json_and_defaults():
     cfg = driver.BmadConfig.from_loop_json(
         {"bmad": {"projectRoot": "/p", "effort": {"dev": "xhigh", "review": "xhigh", "decider": "low"}}}

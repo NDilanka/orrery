@@ -207,6 +207,10 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
     parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
     parser.add_argument(
+        "--merge-wait-sec", type=int, default=None,
+        help="poll a QUEUED PR merge up to N s before halting (0=halt immediately if not MERGED)",
+    )
+    parser.add_argument(
         "--review-mode",
         choices=("qa", "single-pass"),
         default=None,

@@ -29,6 +29,7 @@ Ported faithfully from:
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -75,6 +76,9 @@ _REVIEW_COMPLETE_RX = re.compile(r"^.*?REVIEW_COMPLETE:?\s*(.*)$", re.MULTILINE)
 # SMOKE_PASS:/SMOKE_FAIL: verdict line (PS '(SMOKE_(?:PASS|FAIL):[^\r\n]*)').
 _SMOKE_VERDICT_RX = re.compile(r"(SMOKE_(?:PASS|FAIL):[^\r\n]*)")
 _SMOKE_PASS_RX = re.compile(r"SMOKE_PASS")
+# Optional structured per-AC evidence line: 'SMOKE_ACS: {"verified":[...],"deferred":[...]}'.
+# Best-effort — when absent or unparseable the phase falls back to the free-text verdict (parity).
+_SMOKE_ACS_RX = re.compile(r"SMOKE_ACS:\s*(\{.*\})", re.DOTALL)
 
 # Dev-server bound-port patterns: Next-style 'Local: http://localhost:PORT' AND a generic
 # 'http(s)://...:PORT' / 'localhost:PORT' fallback (port is NOT assumed to be 3000).
@@ -520,8 +524,64 @@ def code_review_single_pass(
 # ---------------------------------------------------------------------------
 
 
-def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
-    """Build the AC-aware smoke prompt (``bmad-loop.ps1`` ~549-579)."""
+def _routes_from_files(files) -> list[str]:
+    """Best-effort URL routes backed by changed Next.js files (app/ or pages/ pages).
+
+    ``app[/(group)]/<segs>/page.tsx`` -> ``/<segs>`` (route-groups dropped, ``[id]`` -> ``:id``);
+    ``pages/<segs>.tsx`` / ``pages/<segs>/index.tsx`` -> ``/<segs>``. Pure, de-duped, order-stable;
+    files that aren't routed pages contribute no route. Imperfect by design — the changed-FILE list
+    is the primary signal; routes are a hint to steer the agent at this story's actual surfaces.
+    """
+    routes: list[str] = []
+    for f in files or []:
+        p = str(f).replace("\\", "/")
+        m = re.match(r"(?:src/)?(?:app|pages)/(.+)", p)
+        if not m:
+            continue
+        rest = re.sub(r"\.[jt]sx?$", "", m.group(1))          # drop extension
+        rest = re.sub(r"/?(page|layout|route)$", "", rest)    # app-router route files
+        rest = re.sub(r"/?index$", "", rest)                  # index -> directory route
+        segs = []
+        for seg in rest.split("/"):
+            if not seg or (seg.startswith("(") and seg.endswith(")")):
+                continue  # empty or a route-group segment -> no URL part
+            segs.append(re.sub(r"^\[\.{0,3}(.+?)\]$", r":\1", seg))  # [id]/[...slug] -> :id/:slug
+        route = "/" + "/".join(segs)
+        if route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _smoke_ac_names(report: Any, key: str) -> list[str] | None:
+    """AC labels from a parsed ``SMOKE_ACS`` report's ``verified``/``deferred`` list.
+
+    Each entry may be a dict (``{"ac": "AC1", ...}``) or a bare string. Returns the labels, or
+    ``None`` when the report isn't a usable dict/list (so the event OMITS the field — parity).
+    """
+    if not isinstance(report, dict):
+        return None
+    items = report.get(key)
+    if not isinstance(items, list):
+        return None
+    names: list[str] = []
+    for it in items:
+        if isinstance(it, dict):
+            label = it.get("ac") or it.get("name") or it.get("id")
+            if label:
+                names.append(str(label))
+        elif it:
+            names.append(str(it))
+    return names
+
+
+def _build_smoke_prompt(url: str, story: str, cwd, acs: str, changed=None) -> str:
+    """Build the AC-aware smoke prompt (``bmad-loop.ps1`` ~549-579).
+
+    When ``changed`` (this story's files changed vs its ``baseline_commit``) is given, a block is
+    injected naming those files + their likely routes so the agent drives THIS story's ACTUAL code
+    instead of a generic health check. ``changed=None`` -> the prompt is identical to before plus
+    the always-on ``SMOKE_ACS:`` evidence ask (which records per-AC verification for observability).
+    """
     if acs:
         ac_block = (
             "This story's ACCEPTANCE CRITERIA (verify each in the browser where it has a UI "
@@ -532,6 +592,16 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
             "(No Acceptance Criteria section found in the story file — fall back to a general "
             "health check.)"
         )
+    if changed:
+        changed_block = (
+            "\n\nTHIS STORY'S CHANGED FILES (the smoke MUST exercise the surfaces these back — do "
+            "NOT settle for a generic health check):\n- " + "\n- ".join(str(f) for f in changed[:40])
+        )
+        routes = _routes_from_files(changed)
+        if routes:
+            changed_block += "\nLikely changed ROUTES to open and drive: " + ", ".join(routes)
+    else:
+        changed_block = ""
     return (
         f"THIS app (Next.js + Convex, repo at {cwd}) is ALREADY RUNNING at exactly {url}.\n"
         f"Use ONLY {url}. Do NOT start, restart, or hunt for the dev server on any other port, "
@@ -539,7 +609,7 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
         "'bun run dev' yourself (it is already running and would block).\n\n"
         f"You are doing STORY-AC-AWARE browser verification of story {story}, not just a health "
         "check.\n\n"
-        f"{ac_block}\n\n"
+        f"{ac_block}{changed_block}\n\n"
         "Auth note: the app uses Clerk. The browser may carry a persisted session (then you "
         "can drive the\n"
         "authenticated flows directly) or be unauthenticated (then '/' and gated routes "
@@ -569,7 +639,14 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
         "Output exactly one line:\n"
         "'SMOKE_PASS:' + which ACs you verified in the browser (and which were deferred to "
         "tests as backend-only), if all UI-verifiable ACs hold and the app is healthy; OR\n"
-        "'SMOKE_FAIL:' + the specific AC or behavior that failed and could not be fixed."
+        "'SMOKE_FAIL:' + the specific AC or behavior that failed and could not be fixed.\n"
+        "Then output ONE more line beginning 'SMOKE_ACS:' followed by compact JSON recording your "
+        "per-AC evidence, e.g.:\n"
+        '  SMOKE_ACS: {"verified":[{"ac":"AC1","how":"clicked Submit on /settings; toast shown",'
+        '"evidence":"snapshot+console"}],"deferred":[{"ac":"AC3","why":"backend-only; covered by '
+        'the test suite"}]}\n'
+        "Cite concrete in-browser evidence (snapshot / DOM node / console / network status) for "
+        "each verified AC; never mark an AC verified without driving it in the browser."
     )
 
 
@@ -586,6 +663,7 @@ def browser_smoke(
     timeout_sec: int,
     model: str,
     effort: str = "",
+    changed_files=None,
     allowed_tools=SMOKE_TOOLS,
     permission_mode: str = "acceptEdits",
     root_code: int = 200,
@@ -626,7 +704,7 @@ def browser_smoke(
         emit(smoke_server_event(url=url, root_code=root_code))
 
         acs = story_acs(story_text)
-        prompt = _build_smoke_prompt(url, story, cwd, acs)
+        prompt = _build_smoke_prompt(url, story, cwd, acs, changed=changed_files)
 
         for s in range(1, max_iters + 1):
             iters_done = s
@@ -659,7 +737,20 @@ def browser_smoke(
             if len(verdict) > 280:
                 verdict = verdict[:280]
             passed = bool(_SMOKE_PASS_RX.search(text))
-            emit(smoke_iter_event(iter_=s, passed=passed, verdict=verdict))
+            am = _SMOKE_ACS_RX.search(text)
+            report = None
+            if am:
+                try:
+                    report = json.loads(am.group(1))
+                except (ValueError, TypeError):
+                    report = None
+            emit(smoke_iter_event(
+                iter_=s,
+                passed=passed,
+                verdict=verdict,
+                verified=_smoke_ac_names(report, "verified"),
+                deferred=_smoke_ac_names(report, "deferred"),
+            ))
 
             if passed:
                 smoke_ok = True
