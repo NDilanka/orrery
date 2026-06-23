@@ -340,14 +340,20 @@ async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String,
     let lf = log_file.clone();
 
     let handle = std::thread::spawn(move || {
-        let on_event = move |_ev: &Value| {
-            // Re-reduce the whole file (idempotent + trivially consistent), like watch_run.
-            let st = control::reduce_all_pub(&sd, &ad, lf.as_deref());
+        let on_events = move |evs: &[Value]| {
+            // Forward the raw events for the LAN/web client's live LOG feed, capped to the last 300
+            // of a batch (the first drain replays the whole log; the client logStore caps at 300).
+            let start = evs.len().saturating_sub(300);
+            for ev in &evs[start..] {
+                let _ = tx.send(Delta::Event { event: ev.clone() });
+            }
+            // …then ONE authoritative full re-reduction per batch (idempotent), like watch_run.
             // If the receiver is gone (socket closed) this errors; we stop on the next check.
+            let st = control::reduce_all_pub(&sd, &ad, lf.as_deref());
             let _ = tx.send(Delta::State { state: st });
         };
         let should_stop = move || stop_thread.load(Ordering::Relaxed);
-        let _ = crate::watcher::watch_loop(&watch_dir, &lp, on_event, should_stop);
+        let _ = crate::watcher::watch_loop(&watch_dir, &lp, on_events, should_stop);
     });
 
     // 3) pump deltas to the socket until either side closes.
