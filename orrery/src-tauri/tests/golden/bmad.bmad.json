@@ -443,17 +443,8 @@
       "id": "review-2-",
       "kind": "review",
       "q": "How should I handle the 1 `patch` finding — \"Deferred-delete timers are never cleared on provider unmount\" [components/providers/NoteDeletionProvider.tsx:62-102] (fix: add `useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current.clear(); }, [])`, clearing rather than firing on unmount to match the documented non-destructive bias)? [1] Apply the patch now (then re-run tsc + eslint + vitest gates); [2] Leave as an action item — it's already written in the story's Review Findings; [3] Walk through the patch with full detail before deciding.",
-      "summary": "Story 3-4-semantic-search reviewed (3 layers); 3 patches applied & verified (400 tests green), 6 deferred, 10 dismissed; status → done and sprint synced.",
+      "summary": null,
       "turn": 2
-    },
-    {
-      "a": null,
-      "answeredBy": null,
-      "id": "review-3-",
-      "kind": "review",
-      "q": "",
-      "summary": "Story 3-2 reviewed (3 layers); 1 patch applied (timer-cleanup leak), 1 decision deferred (concurrent-delete lost-undo), 2 defers logged, 7 dismissed; gates green (366 tests); status → done.",
-      "turn": 3
     },
     {
       "a": "I have enough to answer decisively without the deployment check (permission wasn't granted, and the documentary evidence is conclusive).  ## Answer: **(B) — Classification verified live; Gemini embeddings (2.6) never run live yet**  **Why I'm confident, from reviewing the work:**  - **Story 2.6 is the smoking gun.** It's explicitly *backend-only* — \"invisible to the user today (no UI).\" Every gate that closed it was mocked: `vi.stubGlobal(\"fetch\", ...)`, `process.env.GEMINI_API_KEY = \"test-key\"`, and the verification record is purely `tsc` + `eslint` + `vitest run` (284 passed). The provider (`gemini-embedding-001`) was *finalized in this very story*, and `GEMINI_API_KEY` is documented as a `npx convex env set` step — with **no record it was ever set or that a single real `embedContent` call happened.** No browser smoke could have touched it because there's no UI path to it until Epic 3. - **Classification (2.2–2.4), by contrast, has UI and went through AC-aware browser smoke** — a real capture rendering a real classification implies a live OpenRouter call against `qwen3-next-80b:free`. So that half is credibly live. - One honesty caveat: I tried to read the live deployment's env vars to confirm both keys this session and the permission wasn't granted — so even classification's \"live\" status rests on the story-time browser smoke, not a fresh re-check.  **What went well:** TDD + 3-layer adversarial review (Blind Hunter / Edge Case / Acceptance Auditor) per story, disciplined deferred-work tracking, and genuinely tight seam reuse (2.2 pre-provisioned the embedding rate-limit, audit action, and chaining placeholders — 2.6 wrote almost no new infra). The decoupling discipline (\"classification is sacred, embedding is best-effort\") is sound architecture.  **What to improve:** \"All green + merged\" conflated *mocked-green* with *live-verified* for the one path that has no UI to smoke. Mocked vitest is necessary but not sufficient for a brand-new external provider.  **Action items (concrete, few):** 1. **Before any Epic 3 story starts:** set `GEMINI_API_KEY` on the dev deployment, run one real capture, and confirm a 1536-dim vector lands on `notes.embedding` + one `action:\"embedding\"` audit row. Epic 3 (search, related-notes) reads this field — shipping it on Epic 3 would mean debugging two unverified layers at once. *This is the single highest-priority gap.* 2. Re-confirm `OPENROUTER_API_KEY` is set on the deployment and do one fresh capture→classify in the browser to formally close the classification \"live\" claim. 3. Add a one-line **\"live smoke against the real provider\"** step to the Definition of Done for any story introducing a new external API — so a no-UI backend story can't reach `done` on mocks alone.",
@@ -464,16 +455,6 @@
       "q": "Has the Epic 2 AI pipeline been verified LIVE end-to-end (real API calls, env vars set on the Convex deployment), or only via mocked unit tests? Options: (A) Both OpenRouter classification AND Gemini embeddings verified live end-to-end; (B) Classification verified live, but Gemini embeddings (GEMINI_API_KEY / 2.6) never run live yet; (C) Neither — only mocked `vitest` runs so far, no real API calls; (D) Already deployed and in real personal use.",
       "summary": null,
       "turn": 1
-    },
-    {
-      "a": null,
-      "answeredBy": null,
-      "epic": "2",
-      "id": "retro-2-2",
-      "kind": "retro",
-      "q": "",
-      "summary": "Epic 2 retro saved (epic-2-retro-2026-06-18.md) and sprint-status marked done; 6/6 stories shipped with strong lib-reuse and idempotency discipline, key finding = embeddings (2.6) are mocked-green but never live-verified — top Epic 3 prep gate is set GEMINI_API_KEY + live smoke + backfill pre-2.6 notes before search/related-notes; doc debt (project-context.md / architecture.md drift) carried from Epic 1 still open.",
-      "turn": 2
     }
   ],
   "quota": {
