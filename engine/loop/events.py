@@ -556,3 +556,55 @@ def bmad_stop_event(ok: bool, reason: str, cum: float) -> dict[str, Any]:
     adapter's ``stop`` carries ``ok`` and NO ``green``/``iter``/``bestPass``.
     """
     return {"event": "stop", "ok": ok, "reason": reason, "cum": cum}
+
+
+def token_usage_event(
+    phase: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int,
+    cache_creation: int,
+    hit_ratio: float,
+    warm: bool,
+    cost_usd: float,
+    cum_input: int,
+    cum_output: int,
+    cum_cache_read: int,
+    cum_cache_creation: int,
+    story: str | None = None,
+) -> dict[str, Any]:
+    """Additive ``token-usage`` event — per-call token + cache telemetry for one agent run.
+
+    NEW (no PowerShell equivalent): NOT part of the golden corpus and NOT added to
+    ``gen_golden.ps1``; the reducer logs-but-ignores unknown events, so this is
+    backward-compatible (same contract as :func:`metrics_event`).
+
+    Rationale: on a Max **subscription** the binding constraint is TOKENS against the 5-hour /
+    weekly windows, NOT dollars — and cache *reads* are far cheaper against that budget than
+    fresh input. ``cum*`` is the USD ``cum`` field's missing counterpart: the running token draw
+    so a watcher can see WHICH phase + WHICH model ate the window (the data is already in
+    claude's ``--output-format json`` ``usage`` block; emitting it costs zero extra tokens).
+
+    ``model`` is the resolved tier the run used (``""``/inherit is surfaced as ``"(inherit)"``).
+    ``story`` is OMITTED when falsy (deciders / non-story calls).
+    """
+    o: dict[str, Any] = {
+        "event": "token-usage",
+        "phase": phase,
+        "model": model or "(inherit)",
+        "input": int(input_tokens),
+        "output": int(output_tokens),
+        "cacheRead": int(cache_read),
+        "cacheCreation": int(cache_creation),
+        "hitRatio": round(float(hit_ratio), 4),
+        "warm": bool(warm),
+        "costUsd": round(float(cost_usd), 6),
+        "cumInput": int(cum_input),
+        "cumOutput": int(cum_output),
+        "cumCacheRead": int(cum_cache_read),
+        "cumCacheCreation": int(cum_cache_creation),
+    }
+    if story:
+        o["story"] = story
+    return o

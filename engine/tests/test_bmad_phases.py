@@ -161,6 +161,17 @@ def test_dev_story_emits_dev_gate_with_codegen_lint_test_booleans():
     assert g["cum"] == 3.0
 
 
+def test_dev_story_threads_effort_to_runner():
+    runner = MockRunner([AgentResult(raw="", text="done", cost_usd=0.0)])
+    log, emit = _events("dev")
+    dev_story(
+        runner, "1-1", emit=emit, cwd="/repo",
+        gate_fn=lambda: gate(green=True), model="opus", effort="xhigh",
+    )
+    assert runner.calls[0]["model"] == "opus"
+    assert runner.calls[0]["effort"] == "xhigh"
+
+
 def test_dev_story_reports_failed_stages_in_dev_gate():
     runner = MockRunner([AgentResult(raw="", text="x", cost_usd=0.0)])
     log, emit = _events("dev")
@@ -188,7 +199,7 @@ def test_dev_story_reports_failed_stages_in_dev_gate():
 # --- code_review (Q&A loop) ------------------------------------------------
 
 
-def stub_decider(runner, *, question, story_scope, model="haiku"):
+def stub_decider(runner, *, question, story_scope, model="haiku", effort=""):
     """A deterministic decider stub for the code-review Q&A loop."""
     return f"ANSWER[{story_scope}]: {question[:20]}"
 
@@ -306,6 +317,49 @@ def test_code_review_post_complete_gate_red_is_not_ok():
         cwd="/repo",
         gate_fn=lambda: gate(green=False, pass_=3, fail=4),
         max_turns=8,
+        model="sonnet",
+    )
+    assert res.ok is False
+    assert "review-complete" in [e["event"] for e in log]
+
+
+# --- code_review_single_pass (one warm process, no Q&A) --------------------
+
+
+def test_code_review_single_pass_one_process_no_qa():
+    runner = MockRunner(
+        [AgentResult(raw="", text="REVIEW_COMPLETE: decided + applied 2 findings; all green.", cost_usd=0.4)]
+    )
+    log, emit = _events("review")
+    res = phases.code_review_single_pass(
+        runner,
+        "3-4",
+        emit=emit,
+        cwd="/repo",
+        gate_fn=lambda: gate(green=True, pass_=50),
+        model="opus",
+    )
+    assert res.ok is True
+    assert res.gate["pass"] == 50
+    assert res.extra["mode"] == "single-pass"
+    # ONE process, no Q&A round-trips, no separate decider
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["max_turns"] == 0
+    assert [e["event"] for e in log] == ["review-complete"]
+    # the decider principles are folded into the single prompt (no QUESTION protocol)
+    assert "DECIDE every finding yourself" in runner.calls[0]["prompt"]
+    assert "PATCH" in runner.calls[0]["prompt"] and "NEVER weaken" in runner.calls[0]["prompt"]
+
+
+def test_code_review_single_pass_post_gate_red_is_not_ok():
+    runner = MockRunner([AgentResult(raw="", text="REVIEW_COMPLETE: done.", cost_usd=0.1)])
+    log, emit = _events("review")
+    res = phases.code_review_single_pass(
+        runner,
+        "1-1",
+        emit=emit,
+        cwd="/repo",
+        gate_fn=lambda: gate(green=False, pass_=3, fail=4),
         model="sonnet",
     )
     assert res.ok is False
@@ -480,6 +534,33 @@ def test_browser_smoke_fail_then_no_progress_stops():
     smoke_iters = [e for e in log if e["event"] == "smoke-iter"]
     assert len(smoke_iters) == 2
     assert all(e["passed"] is False for e in smoke_iters)
+
+
+def test_browser_smoke_red_gate_reason_names_failing_stage():
+    # Smoke PASSES but the post-smoke gate is RED. The stop reason must surface the gate
+    # SUMMARY (per-stage exit codes), matching the committed bmad-log fixtures — not a
+    # raw[:120] slice that truncated inside the passing codegen stage and hid the failure.
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: looks good", cost_usd=0.1)])
+    server = FakeServer()
+    log, emit = _events("smoke")
+    red = gate(green=False, pass_=25, fail=1)  # test stage exit=1; codegen/lint exit=0
+    res = browser_smoke(
+        runner,
+        "3-4",
+        STORY_TEXT,
+        emit=emit,
+        cwd="/repo",
+        server_ctl=server,
+        gate_fn=lambda: red,
+        max_iters=3,
+        timeout_sec=720,
+        model="sonnet",
+    )
+    assert res.ok is False
+    assert res.reason == "post-smoke gate red: codegen=0 lint=0 test=1  (25 pass / 1 fail)"
+    # the FAILING stage is visible in the reason (the old raw[:120] hid it)
+    assert "test=1" in res.reason
+    assert server.stopped == 1
 
 
 # --- DevServer port parsing (pure helper; no process spawned) ---------------

@@ -138,6 +138,7 @@ def create_story(
     emit: Callable[[dict[str, Any]], None],
     cwd,
     model: str,
+    effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
     max_turns: int = 0,
@@ -160,6 +161,7 @@ def create_story(
         res = runner.run(
             prompt=_CREATE_STORY_PROMPT,
             model=model,
+            effort=effort,
             allowed_tools=list(allowed_tools),
             permission_mode=permission_mode,
             max_turns=max_turns,
@@ -198,9 +200,11 @@ def create_story(
 _DEV_STORY_PROMPT = (
     "You are running HEADLESSLY via 'claude -p' — NON-INTERACTIVE. Do NOT greet or ask what to "
     "work on; IMMEDIATELY invoke the bmad-dev-story skill. Implement the 'ready-for-dev' (or "
-    "resume the 'in-progress') story in sprint-status.yaml using its Tasks/Subtasks with TDD. "
-    "Run continuously to completion; do not stop for milestones. Honor all BMAD HALT "
-    "conditions. On completion set the story to 'review'."
+    "resume the 'in-progress') story in sprint-status.yaml using its Tasks/Subtasks with TDD, "
+    "satisfying EVERY one of the story's Acceptance Criteria. "
+    "Run continuously to completion; do not stop for milestones. Commit your progress with "
+    "descriptive messages as you go. NEVER weaken, skip, or delete a test to make the suite "
+    "pass. Honor all BMAD HALT conditions. On completion set the story to 'review'."
 )
 
 
@@ -217,6 +221,20 @@ def _stage_ok(gate: dict[str, Any], name: str) -> bool:
     return False
 
 
+def _gate_summary(gate: dict[str, Any]) -> str:
+    """Legacy ``$g.Summary`` line: ``codegen=0 lint=0 test=1  (N pass / N fail)``.
+
+    Shows each stage's EXIT CODE (so the failing stage is obvious) plus pass/fail counts,
+    matching the committed ``bmad-log`` fixtures. Replaces a ``raw[:120]`` slice that
+    truncated inside the first (usually passing) stage and hid the real failing stage.
+    """
+    stages = gate.get("stages") or []
+    parts = " ".join(f"{s.get('name')}={s.get('exit')}" for s in stages)
+    passed = int(gate.get("pass", 0))
+    failed = int(gate.get("fail", 0))
+    return f"{parts}  ({passed} pass / {failed} fail)"
+
+
 def dev_story(
     runner: AgentRunner,
     story: str,
@@ -225,6 +243,7 @@ def dev_story(
     cwd,
     gate_fn: Callable[[], dict[str, Any]],
     model: str,
+    effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
     max_turns: int = 0,
@@ -244,6 +263,7 @@ def dev_story(
     res = runner.run(
         prompt=_DEV_STORY_PROMPT,
         model=model,
+        effort=effort,
         allowed_tools=list(allowed_tools),
         permission_mode=permission_mode,
         max_turns=max_turns,
@@ -289,12 +309,15 @@ def dev_story(
 _CODE_REVIEW_PROMPT_TEMPLATE = (
     "Use the bmad-code-review skill to review story {story} — the changes since its "
     "baseline_commit.\n"
+    "Be RECALL-BIASED: surface EVERY plausible correctness, security, or acceptance-criteria "
+    "violation, including ones you are uncertain about — do NOT pre-filter for importance or "
+    "confidence; a cheap downstream decider will PATCH / DEFER / DISMISS each finding. Verify the "
+    "diff actually SATISFIES each Acceptance Criterion; do not rubber-stamp.\n"
     "You are running NON-INTERACTIVELY. Follow this protocol exactly:\n"
-    "- When you reach a decision point where you would normally ask the user how to handle a "
-    "finding,\n"
-    "  output EXACTLY one line beginning 'QUESTION:' containing the finding and the options, "
-    "then STOP and\n"
-    "  end your turn. Exactly one question per turn. Never ask the same question twice.\n"
+    "- For each finding, output EXACTLY one line beginning 'QUESTION:' that tags the finding's "
+    "severity '[P1]' (blocking bug/security), '[P2]' (should-fix), or '[P3]' (nit), then states "
+    "the finding and the options; then STOP and end your turn. ONE finding per turn, MOST SEVERE "
+    "first. Never ask the same question twice.\n"
     "- When you receive the answer, apply it and continue the review.\n"
     "- When the review is fully complete and the story status is updated, output one line "
     "beginning\n"
@@ -312,7 +335,9 @@ def code_review(
     gate_fn: Callable[[], dict[str, Any]],
     max_turns: int,
     model: str,
+    effort: str = "",
     decider_model: str = "haiku",
+    decider_effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
 ) -> PhaseResult:
@@ -340,6 +365,7 @@ def code_review(
             res = runner.run(
                 prompt=prompt,
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -349,6 +375,7 @@ def code_review(
             res = runner.run(
                 prompt=answer or "",
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -380,7 +407,7 @@ def code_review(
         if q is not None:
             emit(review_question_event(turn=turn, q=q, story=story))
             answer = decider(
-                runner, question=q, story_scope=story, model=decider_model
+                runner, question=q, story_scope=story, model=decider_model, effort=decider_effort
             )
             emit(review_answer_event(turn=turn, a=answer))
             continue
@@ -407,11 +434,85 @@ def _review_finish(
     ok = bool(gate.get("green"))
     return PhaseResult(
         ok=ok,
-        reason=None if ok else f"post-code-review gate red: {gate.get('raw', '')[:120]}",
+        reason=None if ok else f"post-code-review gate red: {_gate_summary(gate)}",
         cost=cost,
         gate=gate,
         extra={"turns": turn, "summary": summary},
     )
+
+
+# ---------------------------------------------------------------------------
+# code-review (single-pass: one warm process, reviewer decides for itself)
+# ---------------------------------------------------------------------------
+
+_CODE_REVIEW_SINGLE_PASS_PROMPT = (
+    "Use the bmad-code-review skill to review story {story} — the changes since its "
+    "baseline_commit.\n"
+    "You are running NON-INTERACTIVELY and AUTONOMOUSLY: there is NO human to answer questions, "
+    "so do NOT emit 'QUESTION:' lines or wait for input — DECIDE every finding yourself and apply "
+    "it, all in this one pass.\n"
+    "Be RECALL-BIASED: find every plausible correctness, security, or acceptance-criteria "
+    "violation, and verify the diff actually SATISFIES each Acceptance Criterion (do not "
+    "rubber-stamp). Decide each finding by these principles:\n"
+    "- PATCH real, in-scope correctness/security bugs with the smallest safe fix.\n"
+    "- DEFER non-blocking improvements (record them as deferred-work; do not implement now).\n"
+    "- DISMISS false positives and out-of-scope items.\n"
+    "- NEVER weaken, skip, or delete a test; stay within this story's scope.\n"
+    "Apply all PATCH decisions, re-run the tests to confirm no regression, then update the story "
+    "status. When the review is fully complete, output one line beginning 'REVIEW_COMPLETE:' with "
+    "a one-line summary, then stop."
+)
+
+
+def code_review_single_pass(
+    runner: AgentRunner,
+    story: str,
+    *,
+    emit: Callable[[dict[str, Any]], None],
+    cwd,
+    gate_fn: Callable[[], dict[str, Any]],
+    model: str,
+    effort: str = "",
+    allowed_tools=BMAD_TOOLS,
+    permission_mode: str = "acceptEdits",
+) -> PhaseResult:
+    """Single-pass autonomous code review — ONE warm process, no QUESTION/decider Q&A loop.
+
+    The Q&A protocol (:func:`code_review`) spawns a fresh COLD ``claude -p`` per finding (the
+    reviewer stops on ``QUESTION:`` -> a separate decider process answers -> the reviewer
+    ``--resume``s as yet another process), each re-loading the whole harness (CLAUDE.md + system +
+    MCP + skills). This mode folds the decider's PATCH/DEFER/DISMISS principles into the reviewer's
+    OWN prompt so it decides AND applies every finding in a single run — the way a human
+    reviews-and-fixes in one interactive session — collapsing ~(2N+1) cold processes to 1 and
+    keeping that one process cache-warm throughout.
+
+    Returns the SAME gate-checked :class:`PhaseResult` shape as :func:`code_review` (the driver's
+    regression-floor + commit handling is identical), so it is a drop-in for the review phase.
+    """
+    res = runner.run(
+        prompt=_CODE_REVIEW_SINGLE_PASS_PROMPT.format(story=story),
+        model=model,
+        effort=effort,
+        allowed_tools=list(allowed_tools),
+        permission_mode=permission_mode,
+        max_turns=0,
+        cwd=cwd,
+    )
+    cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
+        return PhaseResult(
+            ok=False,
+            reason="unparseable code-review output",
+            cost=cost,
+            extra={"turns": 1, "mode": "single-pass"},
+        )
+    text = getattr(res, "text", "") or ""
+    cm = _REVIEW_COMPLETE_RX.search(text)
+    summary = cm.group(1).strip() if cm else "no-marker"
+    emit(review_complete_event(turn=1, summary=summary))
+    result = _review_finish(gate_fn, cost, 1, summary)
+    result.extra["mode"] = "single-pass"
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +585,7 @@ def browser_smoke(
     max_iters: int,
     timeout_sec: int,
     model: str,
+    effort: str = "",
     allowed_tools=SMOKE_TOOLS,
     permission_mode: str = "acceptEdits",
     root_code: int = 200,
@@ -531,6 +633,7 @@ def browser_smoke(
             res = runner.run(
                 prompt=prompt,
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -589,7 +692,7 @@ def browser_smoke(
     ok = bool(gate.get("green"))
     return PhaseResult(
         ok=ok,
-        reason=None if ok else f"post-smoke gate red: {gate.get('raw', '')[:120]}",
+        reason=None if ok else f"post-smoke gate red: {_gate_summary(gate)}",
         cost=total_cost,
         gate=gate,
         extra={"url": url, "iters": iters_done, "timeouts": smoke_timeouts},
@@ -613,8 +716,9 @@ class DevServer:
     URL (or ``None`` if no port appeared in time).
 
     ``stop()`` tree-kills the spawned process (``loop.proc.kill_tree``) and reaps stray
-    dev-server / chrome processes by name (``loop.proc.kill_by_name``) — the cross-platform
-    replacement for the PS ``taskkill /T /F`` + ``Get-NetTCPConnection`` cleanup.
+    dev-server / chrome processes by name (``loop.proc.kill_by_name``), SCOPED to ``cwd`` so
+    it never kills an unrelated same-named process — the cross-platform replacement for the
+    PS ``taskkill /T /F`` + ``Get-NetTCPConnection`` cleanup.
 
     Kept OUT of the unit tests (tests inject a fake ``server_ctl``); only the driver uses it.
     """
@@ -706,7 +810,13 @@ class DevServer:
         return None
 
     def stop(self) -> None:
-        """Tree-kill the dev server and reap stray dev-server/browser processes by name."""
+        """Tree-kill the dev server and reap stray dev-server/browser processes by name.
+
+        The by-name reap is SCOPED to ``self.cwd`` (the project under test) so it can't
+        collateral-kill an unrelated same-named process — notably the Orrery app's own Vite
+        dev server (a ``node`` process) when the loop runs inside Orrery. See
+        ``loop.proc.kill_by_name(within_dir=...)``.
+        """
         if self._proc is not None:
             try:
                 proc.kill_tree(self._proc.pid, include_parent=True)
@@ -714,6 +824,6 @@ class DevServer:
                 pass
         for name in self.stray_names:
             try:
-                proc.kill_by_name(name)
+                proc.kill_by_name(name, within_dir=self.cwd)
             except Exception:
                 pass

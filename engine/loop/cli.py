@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -177,6 +178,12 @@ def main_bmad(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="loop-bmad", description="Run the BMAD epic pipeline.")
     parser.add_argument("--project-root", required=True, help="the BMAD project repo (REQUIRED)")
+    parser.add_argument(
+        "--loop-json",
+        default=None,
+        help="optional loop.json with a `bmad` block (per-phase models/effort, gateStages, "
+        "review/smoke modes); CLI flags stay authoritative for run-location + toggles",
+    )
     parser.add_argument("--merge-base", default="develop", help="base branch for PRs + merge")
     parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP/lock)")
     parser.add_argument("--cwd", default=None, help="override dev-server/gate dir (default project-root)")
@@ -199,9 +206,46 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-retro-turns", type=int, default=None, help="retrospective Q&A cap")
     parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
     parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
+    parser.add_argument(
+        "--review-mode",
+        choices=("qa", "single-pass"),
+        default=None,
+        help="code-review: 'qa' (default, decider Q&A loop) or 'single-pass' (one warm process)",
+    )
+    parser.add_argument(
+        "--smoke-mode",
+        choices=("iterative", "single-pass"),
+        default=None,
+        help="browser-smoke: 'iterative' (default, re-spawn on FAIL) or 'single-pass' (one process)",
+    )
+    parser.add_argument(
+        "--retro-mode",
+        choices=("qa", "single-pass"),
+        default=None,
+        help="epic-retro: 'qa' (default, decider Q&A loop) or 'single-pass' (one warm process)",
+    )
     args = parser.parse_args(argv)
 
+    # CLI flags are authoritative for run-location + operational toggles (from_args). An optional
+    # --loop-json `bmad` block supplies the tuning that has NO CLI surface — per-phase `models` /
+    # `effort` / `gate_stages` — plus the phase `review_mode` / `smoke_mode` (a CLI mode flag, if
+    # passed, overrides the file).
     config = driver.BmadConfig.from_args(args)
+    if args.loop_json:
+        data = json.loads(Path(args.loop_json).read_text(encoding="utf-8"))
+        b = data.get("bmad", data) if isinstance(data, dict) else {}
+        b = dict(b) if isinstance(b, dict) else {}
+        b.setdefault("project_root", args.project_root)  # from_loop_json needs a project_root
+        file_config = driver.BmadConfig.from_loop_json({"bmad": b})
+        config.models = file_config.models
+        config.effort = file_config.effort
+        config.gate_stages = file_config.gate_stages
+        if getattr(args, "review_mode", None) is None:
+            config.review_mode = file_config.review_mode
+        if getattr(args, "smoke_mode", None) is None:
+            config.smoke_mode = file_config.smoke_mode
+        if getattr(args, "retro_mode", None) is None:
+            config.retro_mode = file_config.retro_mode
     runner = get_runner(args.runner)
     return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)
 

@@ -221,6 +221,26 @@ def test_run_argv_includes_model_when_real_tier(monkeypatch):
     assert argv[argv.index("--model") + 1] == "opus"
 
 
+def test_run_argv_omits_effort_when_empty(monkeypatch):
+    # Empty effort -> inherit the user's Claude Code effort default -> no --effort (byte-parity).
+    fake = _patch_proc(monkeypatch, FakeProcResult(stdout=json.dumps({"is_error": False})))
+    get_runner("claude").run(
+        prompt="P", model="opus", allowed_tools=["Read"], permission_mode="plan",
+        max_turns=1, cwd=".",
+    )
+    assert "--effort" not in fake.calls[0]["argv"]
+
+
+def test_run_argv_includes_effort_when_set(monkeypatch):
+    fake = _patch_proc(monkeypatch, FakeProcResult(stdout=json.dumps({"is_error": False})))
+    get_runner("claude").run(
+        prompt="P", model="opus", allowed_tools=["Read"], permission_mode="plan",
+        max_turns=1, cwd=".", effort="xhigh",
+    )
+    argv = fake.calls[0]["argv"]
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+
+
 def test_run_output_format_override_flows_to_argv(monkeypatch):
     fake = _patch_proc(monkeypatch, FakeProcResult(stdout=json.dumps({"is_error": False})))
     get_runner("claude").run(

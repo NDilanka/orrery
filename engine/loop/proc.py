@@ -161,19 +161,27 @@ def run_with_timeout(
     )
 
 
-def kill_by_name(name: str) -> int:
+def kill_by_name(name: str, *, within_dir: str | None = None) -> int:
     """Tree-kill every process whose name matches ``name`` (case-insensitive).
 
     Returns the number of matching root processes killed. Guards against killing the
     current process or any of its ancestors (so reaping "python"/"node" can't suicide the
     harness). Matches on the executable name with and without a trailing ``.exe`` so a
     caller can pass ``"node"`` on Windows where the image is ``node.exe``.
+
+    When ``within_dir`` is given, ONLY processes whose working directory resolves under
+    ``within_dir`` are killed. This scopes a dev-server teardown's "node"/"chrome" reap to
+    the project under test, so it can NOT collateral-kill an unrelated same-named process —
+    e.g. the Orrery app's own Vite dev server (a ``node`` process whose cwd is the orrery
+    dir) when the loop runs INSIDE Orrery. A process whose cwd cannot be read is SKIPPED
+    (conservative: never kill what we can't confirm is in scope).
     """
     if not name:
         return 0
     wanted = name.strip().lower()
     wanted_exe = wanted if wanted.endswith(".exe") else wanted + ".exe"
     protected = _self_and_ancestor_pids()
+    scope = os.path.normcase(os.path.abspath(within_dir)) if within_dir else None
 
     killed = 0
     for proc in psutil.process_iter(["name", "pid"]):
@@ -185,6 +193,14 @@ def kill_by_name(name: str) -> int:
             continue
         if proc.pid in protected:
             continue  # never kill ourselves / an ancestor
+        if scope is not None:
+            try:
+                pcwd = proc.cwd()
+            except (psutil.Error, OSError):
+                continue  # cwd unreadable -> can't confirm scope -> leave it alone
+            norm = os.path.normcase(os.path.abspath(pcwd))
+            if norm != scope and not norm.startswith(scope + os.sep):
+                continue
         kill_tree(proc.pid, include_parent=True)
         killed += 1
     return killed

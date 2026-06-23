@@ -90,6 +90,51 @@ def test_timeout_kills_whole_tree():
                 kill_tree(pid, include_parent=True)
 
 
+def test_kill_by_name_scoped_to_within_dir(monkeypatch):
+    """``within_dir`` scopes the by-name reap to one project tree (hermetic, no real procs).
+
+    A ``node`` process whose cwd is OUTSIDE ``within_dir`` (e.g. Orrery's own Vite dev
+    server) is SPARED; one INSIDE is killed; one with an unreadable cwd is left alone; a
+    differently-named process is ignored. Guards the fix that stopped a smoke teardown from
+    collateral-killing Orrery's dev server.
+    """
+    import os
+
+    from loop import proc as procmod
+
+    proj = os.path.abspath(os.path.join("X", "brain2"))
+    inside = os.path.join(proj, "sub")
+    outside = os.path.abspath(os.path.join("X", "orrery"))
+
+    class FakeProc:
+        def __init__(self, pid, name, cwd, *, cwd_raises=False):
+            self.pid = pid
+            self.info = {"name": name, "pid": pid}
+            self._cwd = cwd
+            self._cwd_raises = cwd_raises
+
+        def cwd(self):
+            if self._cwd_raises:
+                raise OSError("access denied")
+            return self._cwd
+
+    procs = [
+        FakeProc(101, "node.exe", inside),                  # in scope  -> killed
+        FakeProc(202, "node.exe", outside),                 # out scope -> spared (Orrery)
+        FakeProc(303, "node.exe", None, cwd_raises=True),   # unreadable -> spared
+        FakeProc(404, "python.exe", inside),                # wrong name -> ignored
+    ]
+    killed_pids: list[int] = []
+    monkeypatch.setattr(procmod.psutil, "process_iter", lambda attrs=None: list(procs))
+    monkeypatch.setattr(procmod, "_self_and_ancestor_pids", lambda: set())
+    monkeypatch.setattr(procmod, "kill_tree", lambda pid, **kw: killed_pids.append(pid))
+
+    n = procmod.kill_by_name("node", within_dir=proj)
+
+    assert killed_pids == [101]
+    assert n == 1
+
+
 def test_timeout_zero_runs_to_completion():
     """(3) ``timeout_sec=0`` (UNBOUNDED) runs a quick command to completion, no timeout."""
     res = run_with_timeout(
