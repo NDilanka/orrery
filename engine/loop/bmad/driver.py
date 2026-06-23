@@ -193,6 +193,10 @@ class BmadConfig:
     review_mode: str = "qa"
     smoke_mode: str = "iterative"
     retro_mode: str = "qa"
+    # The --loop-json config path, if one was used. Per-phase models/effort have NO CLI flag — they
+    # live ONLY in this file — so a Reignite from the checkpoint `resume` string must re-point at it
+    # to restore the full tuning (else it silently reverts models/effort to defaults). "" = none.
+    loop_json: str = ""
 
     def model_for(self, phase: str) -> str:
         """Model tier for a phase (``create``/``dev``/``review``/``smoke``/``retro``/``decider``)."""
@@ -229,6 +233,7 @@ class BmadConfig:
             review_mode=getattr(args, "review_mode", None) or "qa",
             smoke_mode=getattr(args, "smoke_mode", None) or "iterative",
             retro_mode=getattr(args, "retro_mode", None) or "qa",
+            loop_json=getattr(args, "loop_json", None) or "",
         )
 
     @classmethod
@@ -584,6 +589,11 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         "--state-dir", q(state_dir),
         "--merge-base", q(config.merge_base),
     ]
+    # Re-point at the --loop-json file FIRST: it carries the per-phase models/effort (which have no
+    # CLI flag) plus the phase modes, so a Reignite restores the FULL tuning, not just the modes
+    # round-tripped below. (The mode flags below stay for runs that set modes WITHOUT a file.)
+    if config.loop_json:
+        parts += ["--loop-json", q(config.loop_json)]
     if config.epic_only:
         parts += ["--epic-only", q(config.epic_only)]
     if config.story:
