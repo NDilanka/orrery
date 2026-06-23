@@ -73,6 +73,7 @@ impl Reducer {
             "quota-resume" => self.on_quota_resume(obj),
 
             // ---- BMAD adapter superset ---------------------------------------------
+            "engine-start" => self.on_engine_start(),
             "start" => self.on_start(obj),
             "story-start" => self.on_story_start(obj, ts),
             "dev-gate" => self.on_dev_gate(obj, ts),
@@ -474,6 +475,13 @@ impl Reducer {
     // BMAD adapter
     // -----------------------------------------------------------------------
 
+    fn on_engine_start(&mut self) {
+        // Heartbeat emitted before the slow preflight so the UI shows life immediately. Just mark
+        // running; the per-run cost reset + target wiring happen on the subsequent `start`.
+        // Mirrors reduce.ts 'engine-start'.
+        self.state.run.status = RunStatus::Running;
+    }
+
     fn on_start(&mut self, obj: &Value) {
         // A new run begins. Per-run running-max → reset the high-water mark so the final
         // cumUsd reflects the *current* run (matches checkpoint.cumUsd & test expectation).
@@ -600,12 +608,12 @@ impl Reducer {
         });
     }
 
-    fn on_review_complete(&mut self, obj: &Value) {
-        let turn = obj.get("turn").and_then(Value::as_i64).unwrap_or(0);
-        let summary = obj.get("summary").and_then(Value::as_str).map(String::from);
-        self.upsert_qa(QaKind::Review, turn, None, |qa| {
-            qa.summary = summary.clone();
-        });
+    fn on_review_complete(&mut self, _obj: &Value) {
+        // A concluded review is NOT an open decision. The completion `turn` is one past
+        // the last Q&A turn, so upserting here minted a phantom unanswered question
+        // (empty `q`, `a == None`) that the Decision Chamber rendered forever as
+        // "(awaiting question text…)". The carried summary is not rendered anywhere, so
+        // we drop it. (mirrors reduce.ts 'review-complete')
     }
 
     fn on_retro_start(&mut self, obj: &Value) {
@@ -637,17 +645,14 @@ impl Reducer {
     }
 
     fn on_retro_complete(&mut self, obj: &Value) {
-        let turn = obj.get("turn").and_then(Value::as_i64).unwrap_or(0);
-        let epic = obj.get("epic").and_then(Value::as_str).map(String::from);
-        let summary = obj.get("summary").and_then(Value::as_str).map(String::from);
-        if let Some(e) = &epic {
+        // Mark the epic's retro done. Do NOT upsert a QA: the completion `turn` is past
+        // the last retro question, so it would mint a phantom unanswered card (same bug
+        // as on_review_complete). The carried summary is unused. (mirrors reduce.ts)
+        if let Some(e) = obj.get("epic").and_then(Value::as_str) {
             if let Some(g) = self.state.groups.get_mut(e) {
                 g.retro_status = Some(RetroStatus::Done);
             }
         }
-        self.upsert_qa(QaKind::Retro, turn, epic, |qa| {
-            qa.summary = summary.clone();
-        });
     }
 
     /// Upsert a QA keyed by kind+turn+(epic||""). Latest write wins per field.
