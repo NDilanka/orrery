@@ -63,9 +63,10 @@ class AiderRunner(AgentRunner):
         timeout_sec: int = 0,
         resume_session: str | None = None,
         output_format: str = "json",
+        effort: str = "",
     ) -> AgentResult:
-        # allowed_tools / permission_mode / resume_session / max_turns / output_format have no
-        # aider equivalent — accepted and ignored on purpose (see module docstring).
+        # allowed_tools / permission_mode / resume_session / max_turns / output_format / effort
+        # have no aider equivalent — accepted and ignored on purpose (see module docstring).
         argv = [
             "aider",
             "--message",

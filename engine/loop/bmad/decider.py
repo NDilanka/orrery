@@ -55,6 +55,7 @@ def review_decider(
     question: str,
     story_scope: str,
     model: str = "haiku",
+    effort: str = "",
 ) -> str:
     """Port of ``Invoke-ReviewDecider``.
 
@@ -80,6 +81,7 @@ def review_decider(
     res = runner.run(
         prompt=prompt,
         model=model,
+        effort=effort,
         allowed_tools=list(_DECIDER_TOOLS),
         permission_mode=_DECIDER_PERMISSION_MODE,
         max_turns=_DECIDER_MAX_TURNS,
@@ -94,6 +96,7 @@ def retro_decider(
     question: str,
     epic_scope: str,
     model: str = "haiku",
+    effort: str = "",
 ) -> str:
     """Port of ``Invoke-RetroDecider``.
 
@@ -122,6 +125,7 @@ def retro_decider(
     res = runner.run(
         prompt=prompt,
         model=model,
+        effort=effort,
         allowed_tools=list(_DECIDER_TOOLS),
         permission_mode=_DECIDER_PERMISSION_MODE,
         max_turns=_DECIDER_MAX_TURNS,

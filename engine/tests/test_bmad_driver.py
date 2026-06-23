@@ -136,6 +136,8 @@ def _patch_externals(monkeypatch, *, pr_calls: dict):
     def guard_git(args, cwd):
         # Neutralize network git (push/pull) so the temp repo (no remote) doesn't error/stall.
         if args and args[0] in ("push", "pull"):
+            pr_calls.setdefault("git", []).append(list(args))
+
             class _R:
                 returncode = 0
                 stdout = ""
@@ -256,6 +258,51 @@ def test_done_but_unmerged_resumes_at_smoke_and_merge(tmp_path, monkeypatch):
     assert "review-complete" not in kinds
     # exactly one runner call (smoke) — create/dev/review were skipped
     assert len(runner.calls) == 1
+    assert pr_calls.get("merge")
+
+
+def test_resume_reuses_existing_pr_when_create_says_already_exists(tmp_path, monkeypatch):
+    # A prior run opened the PR then died before merge landed. On the resume tail, `gh pr
+    # create` errors ("a pull request already exists"); the driver must reuse the open PR
+    # (pr.pr_url) and proceed to merge instead of stalling at PR-create.
+    root = _init_project(tmp_path, ONE_DONE)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    def boom_create(*, branch, base, title, body, cwd):
+        pr_calls.setdefault("create", []).append({"branch": branch})
+        raise pr.PrError(
+            "gh pr create failed (exit 1): a pull request for branch already exists"
+        )
+
+    def existing_url(*, branch, cwd):
+        pr_calls.setdefault("url", []).append({"branch": branch})
+        return f"https://example.test/pr/{branch}/11"
+
+    monkeypatch.setattr(pr, "create_pr", boom_create)
+    monkeypatch.setattr(pr, "pr_url", existing_url)
+
+    seen = {"n": 0}
+
+    def predicate_factory(**kw):
+        def predicate(story):
+            seen["n"] += 1
+            return seen["n"] == 1
+
+        return predicate
+
+    monkeypatch.setattr(recovery, "unmerged_done_predicate", predicate_factory)
+
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: verified.", cost_usd=0.5)])
+    cfg = _config(root)  # merge ON
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-created" in kinds  # emitted with the REUSED PR url
+    assert "pr-merged" in kinds  # proceeded to merge instead of stalling at create
+    assert pr_calls.get("url")  # the existing-PR fallback was exercised
     assert pr_calls.get("merge")
 
 
@@ -387,6 +434,200 @@ def test_resilient_runner_survives_quota_then_completes(tmp_path):
     assert "quota-resume" in kinds
 
 
+# ---------------------------------------------------------------------------
+# cost-aware model tiers + per-phase token/cache telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_default_models_are_cost_aware_tiers():
+    """The BMAD defaults route cheap phases off the (expensive, inherited) Opus tier.
+
+    Only ``dev`` inherits the user's default (``""`` -> the runner omits ``--model``); the
+    deciders run on ``haiku`` and the mechanical phases on ``sonnet`` — the fix for the
+    'one story per 5-hour window' burn.
+    """
+    cfg = driver.BmadConfig(project_root="/p")
+    assert cfg.model_for("decider") == "haiku"
+    assert cfg.model_for("create") == "sonnet"
+    assert cfg.model_for("review") == "sonnet"
+    assert cfg.model_for("smoke") == "sonnet"
+    assert cfg.model_for("retro") == "sonnet"
+    assert cfg.model_for("dev") == ""  # inherit (the one phase to spend Opus on)
+
+
+def test_resilient_runner_emits_token_usage_tagged_by_phase():
+    """Every productive run emits a ``token-usage`` event from the result's ``usage`` block.
+
+    Tokens are the Max-plan meter (USD is not), and the data is already in claude's JSON — so
+    this surfaces WHICH phase + model ate the window with zero extra token cost.
+    """
+    events: list[dict] = []
+    base = MockRunner(
+        [
+            AgentResult(
+                raw="",
+                text="ok",
+                cost_usd=0.5,
+                usage={
+                    "input_tokens": 1000,
+                    "output_tokens": 200,
+                    "cache_read_input_tokens": 9000,
+                    "cache_creation_input_tokens": 500,
+                },
+            )
+        ]
+    )
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    resilient.set_context("dev-story", "3-4")
+    resilient.run(
+        prompt="x", model="opus", allowed_tools=[], permission_mode="acceptEdits",
+        max_turns=0, cwd=None,
+    )
+    tu = [e for e in events if e["event"] == "token-usage"]
+    assert len(tu) == 1
+    e = tu[0]
+    assert e["phase"] == "dev-story"
+    assert e["story"] == "3-4"
+    assert e["model"] == "opus"
+    assert e["input"] == 1000
+    assert e["output"] == 200
+    assert e["cacheRead"] == 9000
+    assert e["cacheCreation"] == 500
+    assert e["hitRatio"] == 0.9  # 9000 / (9000 + 1000)
+    assert e["warm"] is True
+    # cumulative counters carry the running token draw (the real meter)
+    assert e["cumInput"] == 1000
+    assert e["cumOutput"] == 200
+    assert e["cumCacheRead"] == 9000
+
+
+def test_resilient_runner_accumulates_tokens_and_inherit_label():
+    """Cumulative token counters sum across calls; an empty model tier shows as '(inherit)'."""
+    events: list[dict] = []
+    base = MockRunner(
+        [
+            AgentResult(raw="", text="a", usage={"input_tokens": 100, "cache_read_input_tokens": 0}),
+            AgentResult(raw="", text="b", usage={"input_tokens": 50, "cache_read_input_tokens": 900}),
+        ]
+    )
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    for _ in range(2):
+        resilient.run(
+            prompt="x", model="", allowed_tools=[], permission_mode="acceptEdits",
+            max_turns=0, cwd=None,
+        )
+    tu = [e for e in events if e["event"] == "token-usage"]
+    assert len(tu) == 2
+    assert tu[0]["model"] == "(inherit)"  # "" -> surfaced as inherit
+    assert tu[0]["warm"] is False  # no cache reads on the first call
+    assert tu[1]["warm"] is True
+    assert tu[1]["cumInput"] == 150  # 100 + 50
+    assert tu[1]["cumCacheRead"] == 900
+    # a decider/non-story call omits the story key
+    assert "story" not in tu[0]
+
+
+def test_resilient_runner_no_usage_emits_no_token_event():
+    """A result with no usage telemetry (mock/text-format) emits nothing — keeps logs clean."""
+    events: list[dict] = []
+    base = MockRunner([AgentResult(raw="", text="done", cost_usd=1.0)])  # usage=None
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    resilient.run(
+        prompt="x", model="sonnet", allowed_tools=[], permission_mode="acceptEdits",
+        max_turns=0, cwd=None,
+    )
+    assert [e for e in events if e["event"] == "token-usage"] == []
+
+
+# ---------------------------------------------------------------------------
+# single-pass review / smoke modes (collapse the cold-start fan-out)
+# ---------------------------------------------------------------------------
+
+
+def test_phase_modes_roundtrip_loop_json_and_resume():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {
+            "projectRoot": "/p", "reviewMode": "single-pass",
+            "smokeMode": "single-pass", "retroMode": "single-pass",
+        }}
+    )
+    assert cfg.review_mode == "single-pass"
+    assert cfg.smoke_mode == "single-pass"
+    assert cfg.retro_mode == "single-pass"
+    # non-default modes ride the resume command so a Reignite preserves them
+    cmd = driver._resume_command(cfg, "/state")
+    assert "--review-mode single-pass" in cmd
+    assert "--smoke-mode single-pass" in cmd
+    assert "--retro-mode single-pass" in cmd
+    # defaults stay OFF the resume command (and are the parity defaults)
+    default = driver.BmadConfig(project_root="/p")
+    assert default.review_mode == "qa"
+    assert default.smoke_mode == "iterative"
+    assert default.retro_mode == "qa"
+    cmd2 = driver._resume_command(default, "/state")
+    assert "--review-mode" not in cmd2
+    assert "--smoke-mode" not in cmd2
+    assert "--retro-mode" not in cmd2
+
+
+def test_run_retro_single_pass_one_process():
+    """single-pass retro: ONE warm facilitator process, no QUESTION/decider Q&A round-trips."""
+    events: list[dict] = []
+    runner = MockRunner(
+        [AgentResult(raw="", text="RETRO_COMPLETE: solid epic; carry TDD forward.", cost_usd=0.5)]
+    )
+    cfg = driver.BmadConfig(project_root="/p", retro_mode="single-pass")
+    ok, cost = driver._run_retro(cfg, runner, "2", emit=events.append, cwd="/repo")
+    assert ok is True
+    assert cost == 0.5
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["max_turns"] == 0
+    kinds = [e["event"] for e in events]
+    assert kinds == ["retro-complete"]
+    assert "retro-question" not in kinds
+    # the decider stance is folded into the facilitator's own prompt (no separate decider)
+    assert "DECIDE every point yourself" in runner.calls[0]["prompt"]
+
+
+def test_effort_config_from_loop_json_and_defaults():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"projectRoot": "/p", "effort": {"dev": "xhigh", "review": "xhigh", "decider": "low"}}}
+    )
+    assert cfg.effort_for("dev") == "xhigh"
+    assert cfg.effort_for("review") == "xhigh"
+    assert cfg.effort_for("decider") == "low"
+    assert cfg.effort_for("smoke") == ""  # unset -> inherit
+    # engine default is all-inherit (byte-parity: no --effort emitted)
+    assert driver.BmadConfig(project_root="/p").effort_for("dev") == ""
+
+
+def test_review_and_smoke_single_pass_end_to_end(tmp_path, monkeypatch):
+    """single-pass review + smoke run the story with NO Q&A fan-out and NO smoke re-spawn."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: decided + applied; green.", cost_usd=0.4),
+            AgentResult(raw="", text="SMOKE_PASS: verified ACs.", cost_usd=0.3),
+        ]
+    )
+    cfg = _config(root, no_merge=True, review_mode="single-pass", smoke_mode="single-pass")
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    # single-pass review: completes WITHOUT any QUESTION/answer round-trip
+    assert "review-complete" in kinds
+    assert "review-question" not in kinds
+    assert "review-answer" not in kinds
+    assert "pr-created" in kinds
+    # exactly THREE agent processes for the whole story: dev + review(1) + smoke(1).
+    # The default Q&A + iterative path would spawn extra decider/re-spawn processes.
+    assert len(runner.calls) == 3
+
+
 def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
     """End-to-end: a dev-story run that is quota_limited once still completes the phase."""
     root = _init_project(tmp_path, ONE_READY)
@@ -512,17 +753,63 @@ def test_pending_epic_retro_runs_then_backlog_complete(tmp_path, monkeypatch):
     monkeypatch.setattr(
         recovery, "unmerged_done_predicate", lambda **kw: (lambda story: False)
     )
-    runner = MockRunner(
-        [AgentResult(raw="", text="RETRO_COMPLETE: good epic.", cost_usd=0.4)]
-    )
-    rc = driver.run(_config(root), runner=runner, state_dir=str(state))
+    # Simulate the bmad-retrospective skill: when invoked it flips the flag to 'done' on disk
+    # (its Step 11) and emits RETRO_COMPLETE — the real contract the driver depends on.
+    status_path = root / "_bmad-output" / "implementation-artifacts" / "sprint-status.yaml"
+
+    class RetroRunner(AgentRunner):
+        name = "retro-mock"
+        supports_sessions = True
+
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def run(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            status_path.write_text(
+                status_path.read_text(encoding="utf-8").replace(
+                    "epic-2-retrospective: optional", "epic-2-retrospective: done"
+                ),
+                encoding="utf-8",
+            )
+            return AgentResult(raw="", text="RETRO_COMPLETE: good epic.", cost_usd=0.4)
+
+    rc = driver.run(_config(root), runner=RetroRunner(), state_dir=str(state))
     assert rc == 0
     kinds = [e["event"] for e in _events(state)]
     assert "retro-start" in kinds
     assert "retro-complete" in kinds
+    # fired exactly once — the flipped flag stops it re-triggering on the next scan
+    assert sum(1 for k in kinds if k == "retro-start") == 1
+    # the retro commit is PUSHED to the merge base (bmad-loop.ps1 parity; not left local)
+    assert ["push", "origin", "develop"] in pr_calls.get("git", [])
     # after the retro the loop re-scans; nothing else actionable -> backlog complete (ok)
     stop = [e for e in _events(state) if e["event"] == "stop"][-1]
     assert stop["ok"] is True
+
+
+def test_retro_halts_if_skill_did_not_mark_done(tmp_path, monkeypatch):
+    # The retro reports complete (RETRO_COMPLETE) but the skill failed to flip the flag. The
+    # driver must HALT with an actionable message rather than silently re-running the same retro
+    # every iteration up to --max-stories.
+    root = _init_project(tmp_path, EPIC_DONE_RETRO_PENDING)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(
+        recovery, "unmerged_done_predicate", lambda **kw: (lambda story: False)
+    )
+    runner = MockRunner(
+        [AgentResult(raw="", text="RETRO_COMPLETE: claimed, but flag not written", cost_usd=0.1)]
+    )
+    rc = driver.run(_config(root, max_stories=3), runner=runner, state_dir=str(state))
+    assert rc == 1
+    kinds = [e["event"] for e in _events(state)]
+    # ran the retro exactly once, then halted (did NOT spin to the max-stories backstop)
+    assert sum(1 for k in kinds if k == "retro-start") == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "still 'optional'" in stop["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +834,9 @@ def test_bmadconfig_from_loop_json_camel_and_snake(tmp_path):
     assert cfg.max_stories == 7
     assert cfg.no_merge is True
     assert cfg.model_for("dev") == "opus"
-    assert cfg.model_for("decider") == ""  # default = inherit the CC default model
+    # decider now defaults to the cheap haiku tier (was "" = silently inherit Opus, which
+    # overrode decider.py's own haiku default — the cost bug this fix closes).
+    assert cfg.model_for("decider") == "haiku"
 
 
 def test_bmadconfig_requires_project_root():

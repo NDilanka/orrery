@@ -76,8 +76,14 @@ class AgentRunner(ABC):
         timeout_sec: int = 0,
         resume_session: str | None = None,
         output_format: str = "json",
+        effort: str = "",
     ) -> AgentResult:
-        """Run one agent turn and return a normalized :class:`AgentResult`."""
+        """Run one agent turn and return a normalized :class:`AgentResult`.
+
+        ``effort`` is the reasoning-effort tier (``low``/``medium``/``high``/``xhigh``/``max``);
+        an empty string INHERITS the backend's default (the backend omits any effort flag).
+        Backends that have no effort knob accept-and-ignore it.
+        """
         ...
 
     def probe_quota(self) -> QuotaStatus:

@@ -40,6 +40,7 @@ class ClaudeRunner(AgentRunner):
         timeout_sec: int = 0,
         resume_session: str | None = None,
         output_format: str = "json",
+        effort: str = "",
     ) -> AgentResult:
         # Build argv EXACTLY like loop.ps1 (~635): a single --allowedTools flag followed by
         # the tool list spread as separate positional args (PS: '--allowedTools' + $toolArgs).
@@ -59,6 +60,12 @@ class ClaudeRunner(AgentRunner):
         normalized = str(model).strip() if model is not None else ""
         if normalized and normalized.lower() not in {"default", "inherit"}:
             argv += ["--model", model]
+        # --effort (verified `claude` CLI flag, levels low|medium|high|xhigh|max). Empty / None /
+        # 'default' / 'inherit' OMITS it so the agent inherits the user's Claude Code effort
+        # default — byte-identical to the pre-effort argv when unset.
+        normalized_effort = str(effort).strip() if effort is not None else ""
+        if normalized_effort and normalized_effort.lower() not in {"default", "inherit"}:
+            argv += ["--effort", normalized_effort]
         argv += [
             "--permission-mode",
             permission_mode,
