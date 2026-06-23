@@ -397,6 +397,16 @@ def new_checkpoint(
 # ---------------------------------------------------------------------------
 
 
+def engine_start_event(merge_base: str | None = None) -> dict[str, Any]:
+    """Heartbeat written as the VERY FIRST log line — before the slow preflight (git checkout of
+    the merge-base + the baseline gate) — so a watcher/UI sees the run is alive within ~1s instead
+    of staring at an empty log through the whole cold start. The reducer treats it as 'running'."""
+    o: dict[str, Any] = {"event": "engine-start"}
+    if merge_base is not None:
+        o["mergeBase"] = merge_base
+    return o
+
+
 def start_event(target: str, branch: str, baseline_pass: int) -> dict[str, Any]:
     """BMAD ``start`` event — ``Write-BLog @{ event="start"; target=...; branch=...;
     baselinePass=... }``."""

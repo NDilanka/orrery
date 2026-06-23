@@ -53,6 +53,7 @@ from loop.checkpoint import get_stop_mode
 from loop.events import (
     bmad_stop_event,
     cooperative_stop_event,
+    engine_start_event,
     new_checkpoint,
     pr_created_event,
     pr_merged_event,
@@ -481,6 +482,11 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
         return 2
 
     try:
+        # Heartbeat (first thing under the lock): emit BEFORE the slow preflight (git checkout of
+        # merge-base + baseline gate) so a watching UI flips to "running" within ~1s of spawn
+        # instead of seeing an empty log for the whole cold start. Inside the try so a failure here
+        # still reaches the lock-cleanup finally.
+        emit(engine_start_event(merge_base=config.merge_base))
         return _run_inner(
             config,
             base_runner=runner,

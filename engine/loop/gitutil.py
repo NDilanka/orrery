@@ -22,6 +22,12 @@ def _git(args: list[str], cwd) -> subprocess.CompletedProcess:
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        # Decode as UTF-8 and tolerate stray bytes. Git output can carry non-cp1252
+        # bytes (branch names, file paths, commit text); the Windows default text
+        # decode (cp1252) raises UnicodeDecodeError in the reader thread and kills
+        # the call. Mirrors proc.run_with_timeout / gate._run_command.
+        encoding="utf-8",
+        errors="replace",
     )
 
 
