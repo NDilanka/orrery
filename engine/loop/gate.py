@@ -97,6 +97,13 @@ def _run_command(command: Command, cwd: str | None = None) -> tuple[str, int]:
         capture_output=True,
         text=True,
         cwd=cwd,
+        # Decode as UTF-8 and tolerate stray bytes. Gate stages (tsc/eslint/vitest via
+        # bun) emit non-cp1252 bytes (✓/✗ glyphs, box-drawing, snippet text); the Windows
+        # default text decode (cp1252) raises UnicodeDecodeError in subprocess's reader
+        # thread, which silently drops ALL gate output → the gate reads 0 pass (baseline
+        # 400→0) and the run can't progress. Mirrors proc.run_with_timeout.
+        encoding="utf-8",
+        errors="replace",
     )
     output = (proc.stdout or "") + (proc.stderr or "")
     return output, proc.returncode if proc.returncode is not None else 0
