@@ -570,6 +570,20 @@ def test_phase_modes_roundtrip_loop_json_and_resume():
     assert "--retro-mode" not in cmd2
 
 
+def test_loop_json_path_roundtrips_into_resume_command():
+    """A Reignite must re-point at --loop-json to restore per-phase models/effort (no CLI flag)."""
+    from types import SimpleNamespace
+
+    cfg = driver.BmadConfig.from_args(
+        SimpleNamespace(project_root="/p", loop_json="D:/cfg/bmad engine.json")
+    )
+    assert cfg.loop_json == "D:/cfg/bmad engine.json"
+    cmd = driver._resume_command(cfg, "/state")
+    assert '--loop-json "D:/cfg/bmad engine.json"' in cmd  # quoted: path contains a space
+    # a run with no --loop-json keeps the flag OFF the resume command (parity default)
+    assert "--loop-json" not in driver._resume_command(driver.BmadConfig(project_root="/p"), "/state")
+
+
 def test_run_retro_single_pass_one_process():
     """single-pass retro: ONE warm facilitator process, no QUESTION/decider Q&A round-trips."""
     events: list[dict] = []
