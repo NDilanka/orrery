@@ -48,7 +48,7 @@
     mode?: 'create' | 'edit';
     editId?: string | null;
     onClose: () => void;
-    onCreated?: (id: string) => void;
+    onCreated?: (id: string, ctx: { mode: 'create' | 'edit'; persisted: boolean }) => void;
   } = $props();
 
   // ── core console state ─────────────────────────────────────────────────────
@@ -164,8 +164,10 @@
         engineOverrides: overrides,
       };
       const def = composeLoopDef(input) as unknown as Record<string, unknown>;
-      const { id } = await cosmosStore.createLoop(def, { mode, editId });
-      onCreated?.(id);
+      const { id, persisted } = await cosmosStore.createLoop(def, { mode, editId });
+      // Pass mode + whether it actually hit disk so the shell only flies into a System for a
+      // NEW, persisted loop — a SAVE (edit) or a dev-mode no-op create stays at the Cosmos.
+      onCreated?.(id, { mode, persisted });
       onClose();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
@@ -706,13 +708,21 @@
         {:else if createError}
           <span class="verr">✕ {createError}</span>
         {:else}
-          <span class="vok">✓ ready to ignite</span>
+          <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
         {/if}
       </div>
       <div class="actions">
         <button class="ghost mono" onclick={onClose}>cancel</button>
+        <!-- This writes/edits the loop's loop.json; it does NOT start a run. The run is
+             started later with ✦ Ignite inside the System view — keep the verbs distinct. -->
         <button class="ignite mono" disabled={!validation.ok || busy} onclick={ignite}>
-          {busy ? 'igniting…' : mode === 'edit' ? '✦ SAVE' : '✦ IGNITE'}
+          {busy
+            ? mode === 'edit'
+              ? 'saving…'
+              : 'creating…'
+            : mode === 'edit'
+              ? '✦ SAVE LOOP'
+              : '✦ CREATE LOOP'}
         </button>
       </div>
     </footer>

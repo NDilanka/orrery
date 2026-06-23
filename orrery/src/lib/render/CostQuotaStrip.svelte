@@ -15,6 +15,15 @@
 
   let host: HTMLDivElement;
 
+  // A run that is clearly active but reports zero dollar cost is almost always a Claude
+  // SUBSCRIPTION run (the agent CLI emits no per-call USD), so the $ curve sits flat at $0 and
+  // reads as "broken". Surface an honest note instead — the real usage is the subscription quota.
+  const s = $derived(runStore.state);
+  const hasCost = $derived(s.run.cumUsd > 0 || s.cost.series.some((p) => p.cum > 0));
+  // Require a few events first so the note doesn't flash on a metered run's cold start (which is
+  // legitimately $0 until the first cost-emitting milestone). A subscription run never crosses it.
+  const noCostYet = $derived(s.events > 3 && !hasCost);
+
   onMount(() => {
     if (!browser) return;
     let u: any = null;
@@ -176,6 +185,12 @@
 <div class="strip">
   <div class="hdr mono">COST · QUOTA</div>
   <div bind:this={host} class="plot"></div>
+  {#if noCostYet}
+    <div class="nocost mono" role="status">
+      no $ metering — this run reports no per-call cost (e.g. a Claude subscription); usage shows in
+      your plan's quota, not here
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -200,6 +215,19 @@
     width: 100%;
     height: 92px;
     pointer-events: auto;
+  }
+  /* honest overlay when a run emits no dollar cost (subscription) — centered over the flat plot */
+  .nocost {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 38px;
+    text-align: center;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--text-faint);
+    padding: 0 16%;
+    pointer-events: none;
   }
   /* uPlot dark theme tweaks */
   .plot :global(.u-legend) {

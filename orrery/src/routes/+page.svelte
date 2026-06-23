@@ -33,8 +33,10 @@
   import StaleBadge from '$lib/panels/StaleBadge.svelte';
   import QAConsole from '$lib/panels/QAConsole.svelte';
   import PlanetariumOverlay from '$lib/panels/PlanetariumOverlay.svelte';
+  import LogPanel from '$lib/panels/LogPanel.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
+  import { logStore } from '$lib/stores/log.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import {
@@ -54,6 +56,22 @@
   let activeLoop = $state<string | null>(null);
   let bodyKey = $state<string | null>(null);
   let mode = $state<'live' | 'replay'>('replay');
+  // The kind of the transport that ACTUALLY mounted for the active System (single source of
+  // truth for the badge) — vs `mode`, which is only the environment's capability at the Cosmos.
+  let transportKind = $state<'tauri' | 'ws' | 'replay' | null>(null);
+  const isLiveTransport = $derived(transportKind === 'tauri' || transportKind === 'ws');
+  // A live loop that has never emitted an event: guide the user to Ignite instead of showing
+  // a silent, pre-populated $0.00/IDLE instrument that reads as "broken".
+  const liveAndEmpty = $derived(isLiveTransport && runStore.state.events === 0);
+  const badgeLabel = $derived(
+    transportKind === 'tauri'
+      ? 'LIVE · desktop'
+      : transportKind === 'ws'
+        ? 'LIVE · LAN'
+        : transportKind === 'replay'
+          ? 'REPLAY · fixture'
+          : mode,
+  );
 
   let transport: Transport | null = null;
   let playback = $state<PlaybackTransport | null>(null);
@@ -86,19 +104,44 @@
     };
   }
 
+  // Build a LIVE loop choice from a loop's loop.json — for loops that exist on disk (and so
+  // are listed by the Cosmos) but are NOT in the static seed LOOPS table (e.g. user-created
+  // ones). fixtureUrl is empty because dynamic loops have no replay fixture; the Tauri/LAN
+  // transports don't use it. Returns null if the def can't be read.
+  async function loopChoiceFromDef(id: string): Promise<LoopChoice | null> {
+    const def = await cosmosStore.loadLoopDef(id);
+    if (!def) return null;
+    const adapter = def.adapter === 'bmad' ? 'bmad' : 'generic';
+    const stateDir = (def.stateDir ?? def.state_dir) as string | undefined;
+    if (!stateDir) return null;
+    return {
+      id: String(def.id ?? id),
+      name: String(def.name ?? id),
+      theme: String(def.theme ?? 'plasma'),
+      adapter,
+      stateDir,
+      logFile: typeof def.logFile === 'string' ? def.logFile : undefined,
+      fixtureUrl: '',
+    };
+  }
+
   // ── mount a loop's System view via the existing transport/replay ───────────
   async function mountLoop(id: string) {
     if (!browser) return;
     transport?.stop();
     runStore.reset();
+    logStore.clear();
     playback = null;
     wsStatus = null;
-    const choice = LOOPS.find((l) => l.id === id);
+    // Seed loops come from the static LOOPS table (they carry replay fixtures); any other
+    // loop on disk is resolved live from its loop.json so created loops are enterable too.
+    const choice = LOOPS.find((l) => l.id === id) ?? (await loopChoiceFromDef(id));
     if (!choice) return;
     transport = createTransport(withBase(choice), {
       onState: (s) => runStore.set(s),
       onWsStatus: (st) => (wsStatus = st),
     });
+    transportKind = transport.kind;
     if (isPlayback(transport)) {
       playback = transport;
       transport.onPlayback((p) => (playbackState = p));
@@ -112,9 +155,11 @@
   function unmountLoop() {
     transport?.stop();
     transport = null;
+    transportKind = null;
     playback = null;
     wsStatus = null;
     runStore.reset();
+    logStore.clear();
   }
 
   async function control(action: string) {
@@ -185,6 +230,21 @@
         <!-- the canvas always renders; it consults uiStore for the tier/mode -->
         <Observatory />
 
+        <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
+             Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
+             hidden until focused (skip-link style), so it never crowds the instrument. -->
+        {#if view === 'system' && runStore.orbits.length}
+          <nav class="items-a11y" aria-label="work items">
+            <ul>
+              {#each runStore.orbits as o (o.key)}
+                <li>
+                  <button onclick={() => enterBody(o.key)}>{o.key} — {o.status}</button>
+                </li>
+              {/each}
+            </ul>
+          </nav>
+        {/if}
+
         {#if uiStore.ambient}
           <!-- PLANETARIUM: ambient Tier-1; only threshold text, recessed exit. -->
           <PlanetariumOverlay />
@@ -195,6 +255,9 @@
             <Mechanism />
           {/if}
           <CostQuotaStrip />
+          {#if !uiStore.tierOne}
+            <LogPanel />
+          {/if}
           <Hud />
           <MetricsPanel />
           <VerdictPanel />
@@ -203,6 +266,14 @@
             <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
           {/if}
           <RunControlBar {control} />
+          {#if view === 'system' && liveAndEmpty}
+            <div class="empty-hint" role="status">
+              <p class="eh-title">This loop hasn't run yet</p>
+              <p class="eh-sub">
+                Press <strong>✦ Ignite</strong> below to start it — events stream in here live.
+              </p>
+            </div>
+          {/if}
         {/if}
 
         <!-- mode toggle + ws freshness badge sit above every mode -->
@@ -253,7 +324,16 @@
             <button class="nbtn body" onclick={() => enterBody(sel)}>fly into body →</button>
           {/if}
         {/if}
-        <span class="mode mono">{mode}</span>
+        <span
+          class="mode mono"
+          class:islive={view !== 'cosmos' && isLiveTransport}
+          class:isreplay={view !== 'cosmos' && transportKind === 'replay'}
+          title={view !== 'cosmos' && transportKind === 'replay'
+            ? 'Watching a recorded fixture — controls (Ignite/Reignite) are inert here.'
+            : isLiveTransport
+              ? 'Driving the real loop — Ignite/Reignite spawn the engine.'
+              : ''}>{badgeLabel}</span
+        >
       </div>
     </nav>
 
@@ -280,9 +360,13 @@
         mode={cosmosStore.console.mode}
         editId={cosmosStore.console.editId}
         onClose={() => cosmosStore.dismissIgnite()}
-        onCreated={(id) => {
+        onCreated={(id, ctx) => {
           void cosmosStore.load();
-          void id;
+          // Follow through ONLY for a NEW loop that was actually persisted: fly into its System,
+          // where the run is started with ✦ Ignite (disambiguating "create a loop" from "start a
+          // run"). A SAVE (edit) or a dev-mode no-op create stays at the Cosmos rather than
+          // dead-mounting a transport-less System.
+          if (id && ctx.mode === 'create' && ctx.persisted) void enterSystem(id);
         }}
       />
     {/if}
@@ -418,6 +502,100 @@
     color: var(--text-dim);
     letter-spacing: 0.1em;
     text-transform: uppercase;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  /* honest live/replay badge: green when driving a real loop, amber when watching a fixture */
+  .mode.islive {
+    color: var(--plasma-green);
+    border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
+    background: color-mix(in srgb, var(--plasma-green) 8%, transparent);
+  }
+  .mode.isreplay {
+    color: var(--amber);
+    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+    background: color-mix(in srgb, var(--amber) 8%, transparent);
+  }
+
+  /* accessible work-item list: visually hidden until a child is focused (skip-link pattern),
+     giving keyboard + screen-reader users a way to reach bodies the aria-hidden canvas can't. */
+  .items-a11y {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    z-index: 30;
+  }
+  .items-a11y:focus-within {
+    width: auto;
+    height: auto;
+    clip: auto;
+    white-space: normal;
+    margin: 14px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius);
+    backdrop-filter: blur(8px);
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .items-a11y ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .items-a11y button {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--void-3);
+    color: var(--starlight);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 4px 9px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+  }
+  .items-a11y button:focus-visible {
+    outline: 2px solid var(--plasma-cyan);
+    outline-offset: 1px;
+  }
+
+  /* empty-state hint for a freshly-entered live loop (sits just above the control bar) */
+  .empty-hint {
+    position: absolute;
+    bottom: 230px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    pointer-events: none;
+    z-index: 13;
+    max-width: 420px;
+  }
+  .eh-title {
+    font-family: var(--font-grotesk);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--starlight);
+    margin: 0 0 4px;
+  }
+  .eh-sub {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin: 0;
+  }
+  .eh-sub strong {
+    color: var(--amber);
+    font-weight: 600;
   }
 
   /* ignite affordance */
