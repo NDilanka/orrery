@@ -88,7 +88,12 @@
     opacity: 0.32;
     cursor: default;
   }
-  @media (max-width: 640px) {
+  /* tablet/narrow: collapse to glyphs AND drop below the top navbar so the
+     centred mode toggle and the right-anchored navbar never overlap. */
+  @media (max-width: 860px) {
+    .modebar {
+      top: 64px;
+    }
     .mbtn .lbl {
       display: none;
     }

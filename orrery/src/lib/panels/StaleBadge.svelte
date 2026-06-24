@@ -41,8 +41,9 @@
 <style>
   .badge {
     position: absolute;
-    bottom: 134px;
-    left: 18px;
+    /* clear the 120px cost/quota strip pinned to the bottom edge */
+    bottom: calc(var(--strip-h) + var(--space-3));
+    left: var(--chrome-inset);
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -64,27 +65,21 @@
     background: var(--plasma-green);
     box-shadow: 0 0 6px color-mix(in srgb, var(--plasma-green) 70%, transparent);
   }
+  /* connecting/stale are STEADY beacons — no opacity blink. Motion is reserved
+     for true urgency; freshness state is carried by hue + the text label
+     (connecting… / stale / closed / live), so it survives grayscale. */
   .badge.connecting .dot {
     background: var(--amber);
-    animation: blink 1.2s ease-in-out infinite;
   }
   .badge.stale .dot {
     background: var(--horizon-rose);
-    animation: blink 1.6s ease-in-out infinite;
   }
   .badge.closed .dot {
     background: var(--text-faint);
   }
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot { animation: none !important; }
-  }
   .txt {
-    font-size: 10.5px;
-    color: var(--text-dim);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     letter-spacing: 0.04em;
   }
   .badge.live .txt {
@@ -94,15 +89,30 @@
     color: var(--horizon-rose);
   }
   .att {
-    font-size: 10px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
   }
   .obs {
-    font-size: 9.5px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     padding-left: 6px;
     border-left: 1px solid var(--hairline);
     text-transform: uppercase;
     letter-spacing: 0.1em;
+  }
+  /* Tier-1 / phone: shrink the badge so it doesn't crowd a 360px viewport */
+  @media (max-width: 640px) {
+    .badge {
+      gap: var(--space-1);
+      padding: 4px var(--space-2);
+    }
+    .txt,
+    .att,
+    .obs {
+      font-size: 9.5px;
+    }
+    .obs {
+      padding-left: var(--space-1);
+    }
   }
 </style>

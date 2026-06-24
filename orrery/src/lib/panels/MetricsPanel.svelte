@@ -70,27 +70,28 @@
 <style>
   .metrics {
     position: absolute;
-    bottom: 18px;
-    right: 18px;
+    /* clear the 120px cost/quota strip pinned to the bottom edge */
+    bottom: calc(var(--strip-h) + var(--space-4));
+    right: var(--chrome-inset);
     width: 248px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 16px;
+    gap: var(--space-3);
+    padding: var(--space-4);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
     z-index: 10;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .mhead {
     margin: 0;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .grid {
     display: grid;
@@ -103,10 +104,10 @@
     gap: 3px;
   }
   .mlabel {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .mval {
     font-size: 15px;
@@ -118,7 +119,8 @@
     font-family: var(--num, var(--font-mono));
   }
   .mval.warn {
-    color: var(--amber);
+    /* warning is ONE hue across System view; --amber is reserved elsewhere */
+    color: var(--horizon-rose);
   }
   .cell.good .mval {
     color: var(--plasma-green);
@@ -127,14 +129,14 @@
     color: var(--crimson);
   }
   .foot {
-    font-size: 10.5px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     border-top: 1px solid var(--hairline);
-    padding-top: 8px;
+    padding-top: var(--space-2);
   }
   .placeholder {
-    font-size: 11px;
-    color: var(--text-faint);
+    font-size: var(--text-xs);
+    color: var(--text-meta);
     line-height: 1.4;
     margin: 0;
   }
@@ -142,6 +144,14 @@
   @media (prefers-reduced-motion: reduce) {
     .metrics {
       backdrop-filter: none;
+    }
+  }
+  /* Tier-1 / phone: become a full-width bottom sheet instead of a fixed card */
+  @media (max-width: 640px) {
+    .metrics {
+      left: var(--space-2);
+      right: var(--space-2);
+      width: auto;
     }
   }
 </style>

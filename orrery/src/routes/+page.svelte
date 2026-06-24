@@ -238,7 +238,9 @@
             <ul>
               {#each runStore.orbits as o (o.key)}
                 <li>
-                  <button onclick={() => enterBody(o.key)}>{o.key} — {o.status}</button>
+                  <button onclick={() => { runStore.selectItem(o.key); enterBody(o.key); }}
+                    >{o.key} — {o.status}</button
+                  >
                 </li>
               {/each}
             </ul>
@@ -262,18 +264,23 @@
           <MetricsPanel />
           <VerdictPanel />
           <QAConsole {answer} {observeOnly} />
-          {#if playback}
-            <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
-          {/if}
-          <RunControlBar {control} />
-          {#if view === 'system' && liveAndEmpty}
-            <div class="empty-hint" role="status">
-              <p class="eh-title">This loop hasn't run yet</p>
-              <p class="eh-sub">
-                Press <strong>✦ Ignite</strong> below to start it — events stream in here live.
-              </p>
-            </div>
-          {/if}
+          <!-- bottom-dock: one flex column above the cost strip — replaces the old
+               per-component magic bottom offsets so the centre stack never collides
+               on short windows (hint on top, controls, then transport nearest the strip). -->
+          <div class="bottom-dock">
+            {#if view === 'system' && liveAndEmpty}
+              <div class="empty-hint" role="status">
+                <p class="eh-title">This loop hasn't run yet</p>
+                <p class="eh-sub">
+                  Press <strong>✦ Ignite</strong> below to start it — events stream in here live.
+                </p>
+              </div>
+            {/if}
+            <RunControlBar {control} />
+            {#if playback}
+              <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+            {/if}
+          </div>
         {/if}
 
         <!-- mode toggle + ws freshness badge sit above every mode -->
@@ -292,17 +299,17 @@
     {/if}
 
     <!-- ── nav shell: brand + breadcrumbs + actions ────────────────────────── -->
-    <nav class="navbar">
+    <nav class="navbar" aria-label="primary">
       <div class="crumbs">
         <button
           class="crumb {view === 'cosmos' ? 'active' : ''}"
           onclick={backToCosmos}
           disabled={view === 'cosmos'}
         >
-          ✦ COSMOS
+          <span aria-hidden="true">✦</span> COSMOS
         </button>
         {#if view !== 'cosmos'}
-          <span class="sep">←</span>
+          <span class="sep" aria-hidden="true">›</span>
           <button
             class="crumb {view === 'system' ? 'active' : ''}"
             onclick={backToSystem}
@@ -312,7 +319,7 @@
           </button>
         {/if}
         {#if view === 'body' && bodyKey}
-          <span class="sep">←</span>
+          <span class="sep" aria-hidden="true">›</span>
           <span class="crumb active body">{bodyKey}</span>
         {/if}
       </div>
@@ -337,21 +344,12 @@
       </div>
     </nav>
 
-    <!-- ✦ ignite-new-loop + ✎ edit affordances (only at the Cosmos altitude) -->
+    <!-- ✦ ignite-new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
+         now lives in the Cosmos roster — the single home for enter + edit. -->
     {#if view === 'cosmos'}
       <button class="ignite-fab" onclick={() => cosmosStore.igniteNew()}>
-        ✦ ignite new loop
+        <span aria-hidden="true">✦</span> ignite new loop
       </button>
-      {#if cosmosStore.loops.length}
-        <div class="edit-rail">
-          <span class="rail-label mono">recalibrate</span>
-          {#each cosmosStore.loops as l (l.id)}
-            <button class="edit-chip mono" onclick={() => cosmosStore.editLoop(l.id)} title="edit {l.name}">
-              ✎ {l.id}
-            </button>
-          {/each}
-        </div>
-      {/if}
     {/if}
 
     <!-- A5: the Tuning Console (create / edit a loop) -->
@@ -569,15 +567,27 @@
     outline-offset: 1px;
   }
 
-  /* empty-state hint for a freshly-entered live loop (sits just above the control bar) */
-  .empty-hint {
+  /* the centred bottom stack — anchored once, above the cost/quota strip */
+  .bottom-dock {
     position: absolute;
-    bottom: 230px;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 0;
+    right: 0;
+    bottom: calc(var(--strip-h) + var(--space-3));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    pointer-events: none;
+    z-index: 14;
+  }
+  .bottom-dock > :global(*) {
+    pointer-events: auto;
+  }
+
+  /* empty-state hint for a freshly-entered live loop (sits atop the control bar) */
+  .empty-hint {
     text-align: center;
     pointer-events: none;
-    z-index: 13;
     max-width: 420px;
   }
   .eh-title {
@@ -622,38 +632,4 @@
     background: color-mix(in srgb, var(--amber) 16%, transparent);
   }
 
-  /* A5: per-loop "recalibrate" (edit) rail along the bottom-left */
-  .edit-rail {
-    position: absolute;
-    bottom: 18px;
-    left: 18px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    flex-wrap: wrap;
-    max-width: 40vw;
-    z-index: 20;
-  }
-  .rail-label {
-    font-size: 9px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-  .edit-chip {
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    padding: 5px 11px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--panel);
-    color: var(--text-dim);
-    cursor: pointer;
-    backdrop-filter: blur(8px);
-    transition: border-color 0.18s, color 0.18s;
-  }
-  .edit-chip:hover {
-    border-color: var(--brass);
-    color: var(--brass);
-  }
 </style>

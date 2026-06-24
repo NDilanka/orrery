@@ -67,6 +67,7 @@
       value={state.cursor}
       step="1"
       aria-label="timeline scrub"
+      aria-valuetext="event {state.cursor} of {state.total}"
       oninput={onScrub}
     />
     {#if rewind}
@@ -101,10 +102,7 @@
 
 <style>
   .transport {
-    position: absolute;
-    bottom: 130px;
-    left: 50%;
-    transform: translateX(-50%);
+    /* positioned by the parent .bottom-dock (sits just above the cost strip) */
     display: flex;
     align-items: center;
     gap: 8px;

@@ -8,22 +8,52 @@
   //     handoff beacon wedge) — never hue alone
   //   - a thin cost-horizon ring whose tightness reads spend (invisible <50%)
   //   - running loops gently animate; idle ones are dim embers
-  // Hover → a label card (name · cumUsd · current item). Click a system → fly
-  // into its System view. An "✦ ignite new loop" affordance opens the A5 stub.
+  //
+  // The DOM roster below the field is the single home for both ENTER and EDIT
+  // (the duplicate edit-rail in +page.svelte is removed). Each row carries a
+  // status dot (shape + label, never hue alone), the loop id, its cost, an
+  // ENTER action, and a brass edit action → cosmosStore.editLoop(id). On a phone
+  // it is a scrollable bottom sheet; on desktop a compact bottom bar.
+  //
+  // Hover → a label card clamped to the host (flips below the glyph near the
+  // top). On touch the first tap reveals the card; a second tap / the explicit
+  // button navigates — we never dive straight in on first touch.
   //
   // CLIENT-ONLY: Pixi is dynamically imported inside onMount and browser-guarded
   // so it never runs at build/SSR/prerender time. A single rAF eases motion;
-  // prefers-reduced-motion freezes all decorative motion (only state cross-fades).
+  // reduced motion (uiStore.reducedMotion) freezes all decorative motion (only
+  // state cross-fades).
 
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { cosmosStore, type LoopSummary } from '../stores/cosmos.svelte';
+  import { uiStore } from '../stores/ui.svelte';
 
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
   let host: HTMLDivElement;
-  // hover label, positioned in screen space over the canvas
-  let hover = $state<{ x: number; y: number; loop: LoopSummary } | null>(null);
+  // hover label, positioned in screen space over the canvas. `below` flips the
+  // card under the glyph when it would otherwise clip the top edge; `pinned`
+  // marks a touch-revealed card (first tap shows, button/second tap enters).
+  let hover = $state<{
+    x: number;
+    y: number;
+    r: number;
+    loop: LoopSummary;
+    below: boolean;
+    pinned: boolean;
+  } | null>(null);
+
+  // measured card size, so we can clamp it inside the host bounds
+  let cardEl = $state<HTMLDivElement | null>(null);
+  let cardW = $state(220);
+  let cardH = $state(96);
+
+  $effect(() => {
+    if (!cardEl) return;
+    cardW = cardEl.offsetWidth || cardW;
+    cardH = cardEl.offsetHeight || cardH;
+  });
 
   const C = {
     void: 0x070912,
@@ -43,6 +73,73 @@
     return '$' + n.toFixed(2);
   }
 
+  // The state key a glyph/row reads from (restState wins, else status). Used for
+  // the dot class, the shape glyph and the human label — never hue alone.
+  function stateKey(l: LoopSummary): string {
+    return l.restState ?? l.status;
+  }
+
+  // A non-hue separator: a small geometric glyph paired with the dot so status
+  // survives greyscale / colour-blindness (design rule: status ≠ hue alone).
+  function stateGlyph(key: string): string {
+    switch (key) {
+      case 'running':
+        return '◆'; // live diamond
+      case 'certified-done':
+        return '✓'; // sealed
+      case 'stopped-ember':
+        return '▬'; // banked
+      case 'quota-frost':
+      case 'quota-wait':
+        return '❄'; // frost
+      case 'handoff-beacon':
+      case 'handoff':
+        return '!'; // needs you
+      case 'error':
+        return '×'; // crashed
+      case 'stopping':
+        return '◇'; // winding down
+      default:
+        return '·'; // idle ember
+    }
+  }
+
+  // Plain-language status for the label + aria (so "does it need me?" reads
+  // without a mouse hover).
+  function stateLabel(key: string): string {
+    switch (key) {
+      case 'running':
+        return 'running';
+      case 'certified-done':
+        return 'certified done';
+      case 'stopped-ember':
+        return 'stopped';
+      case 'quota-frost':
+      case 'quota-wait':
+        return 'quota wait';
+      case 'handoff-beacon':
+      case 'handoff':
+        return 'needs you';
+      case 'error':
+        return 'error';
+      case 'stopping':
+        return 'stopping';
+      default:
+        return 'idle';
+    }
+  }
+
+  // A full glanceable aria-label for a roster row / hover card.
+  function loopAria(l: LoopSummary): string {
+    const parts = [
+      `Loop ${l.id}`,
+      stateLabel(stateKey(l)),
+      `spend ${fmtUsd(l.cumUsd)}`,
+    ];
+    if (l.currentItem) parts.push(`on ${l.currentItem}`);
+    return parts.join(', ');
+  }
+
   // star color by status / rest-state (mirrors the Observatory's starColor)
   function glyphColor(l: LoopSummary): number {
     if (l.restState === 'quota-frost') return C.frost;
@@ -55,6 +152,27 @@
     return 0x6c779e; // idle ember (dim)
   }
 
+  // Position + flip + clamp a card for a glyph hit at (px,py) with radius r.
+  function placeCard(px: number, py: number, r: number, loop: LoopSummary, pinned: boolean) {
+    const w = host?.clientWidth || 800;
+    const h = host?.clientHeight || 600;
+    const pad = 8;
+    // default: card sits ABOVE the glyph; flip BELOW if it would clip the top.
+    const wantBelow = py - r - cardH - pad < 0;
+    let x = px;
+    // clamp horizontally so the (centre-anchored) card stays inside the host
+    const half = cardW / 2;
+    x = Math.max(half + pad, Math.min(w - half - pad, x));
+    const y = wantBelow ? py + r + 14 : py - r - 14;
+    hover = { x, y, r, loop, below: wantBelow, pinned };
+  }
+
+  // Row ENTER from the DOM roster.
+  function enterFromRow(id: string) {
+    hover = null;
+    onEnter(id);
+  }
+
   onMount(() => {
     if (!browser) return;
     let destroyed = false;
@@ -62,10 +180,14 @@
     let raf = 0;
     let cleanup: (() => void) | null = null;
 
-    const rmQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let reduced = rmQuery.matches;
-    const onRm = () => (reduced = rmQuery.matches);
-    rmQuery.addEventListener?.('change', onRm);
+    // reduced motion is read live from the single source of truth (uiStore);
+    // a small reactive bridge keeps the rAF's `reduced` flag in sync.
+    let reduced = uiStore.reducedMotion;
+    const stopReduced = $effect.root(() => {
+      $effect(() => {
+        reduced = uiStore.reducedMotion;
+      });
+    });
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -160,6 +282,8 @@
       }
 
       const onMove = (e: MouseEvent) => {
+        // a touch-pinned card stays put until tapped away / entered
+        if (hover?.pinned) return;
         const rect = app.canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
@@ -167,7 +291,7 @@
         const loop = id ? cosmosStore.get(id) : null;
         const p = id ? hits.get(id) : null;
         if (loop && p) {
-          hover = { x: p.x, y: p.y - p.r - 14, loop };
+          placeCard(p.x, p.y, p.r, loop, false);
           app.canvas.style.cursor = 'pointer';
         } else {
           hover = null;
@@ -175,6 +299,7 @@
         }
       };
       const onLeave = () => {
+        if (hover?.pinned) return;
         hover = null;
       };
       const onClick = (e: MouseEvent) => {
@@ -182,15 +307,44 @@
         const id = pick(e.clientX - rect.left, e.clientY - rect.top);
         if (id) onEnter(id);
       };
+      // Touch: first tap reveals the card (pinned), a second tap on the SAME
+      // glyph enters; tapping empty space / another glyph re-targets. We never
+      // dive straight in on the first touch (plan §7 hover→tap).
+      const onTouchStart = (e: TouchEvent) => {
+        const t = e.touches[0] ?? e.changedTouches[0];
+        if (!t) return;
+        const rect = app.canvas.getBoundingClientRect();
+        const mx = t.clientX - rect.left;
+        const my = t.clientY - rect.top;
+        const id = pick(mx, my);
+        if (!id) {
+          hover = null;
+          return;
+        }
+        const loop = cosmosStore.get(id);
+        const p = hits.get(id);
+        if (!loop || !p) return;
+        if (hover?.pinned && hover.loop.id === id) {
+          // second tap on the already-revealed glyph → enter
+          e.preventDefault();
+          enterFromRow(id);
+          return;
+        }
+        // first tap → reveal a pinned card with explicit enter/edit
+        e.preventDefault();
+        placeCard(p.x, p.y, p.r, loop, true);
+      };
       app.canvas.style.pointerEvents = 'auto';
       app.canvas.addEventListener('mousemove', onMove);
       app.canvas.addEventListener('mouseleave', onLeave);
       app.canvas.addEventListener('click', onClick);
+      app.canvas.addEventListener('touchstart', onTouchStart, { passive: false });
       cleanup = () => {
         ro.disconnect();
         app.canvas.removeEventListener('mousemove', onMove);
         app.canvas.removeEventListener('mouseleave', onLeave);
         app.canvas.removeEventListener('click', onClick);
+        app.canvas.removeEventListener('touchstart', onTouchStart);
       };
 
       // eased per-glyph signals (keyed by loop id)
@@ -314,7 +468,7 @@
           }
 
           // a tiny "system" plinth (three faint base ticks). Names live in the
-          // DOM legend + hover card, not Pixi text (which would re-alloc/frame).
+          // DOM roster + hover card, not Pixi text (which would re-alloc/frame).
           for (let s = 0; s < 3; s++) {
             const ang = Math.PI * 0.5 + (s - 1) * 0.5;
             g.moveTo(cx + Math.cos(ang) * (r + 2), cy + Math.sin(ang) * (r + 2))
@@ -322,6 +476,14 @@
               .stroke({ width: 1, color: col, alpha: 0.25 });
           }
         });
+
+        // keep a pinned/hover card glued to its glyph as the field reflows
+        if (hover) {
+          const p = hits.get(hover.loop.id);
+          const loop = cosmosStore.get(hover.loop.id);
+          if (p && loop) placeCard(p.x, p.y, p.r, loop, hover.pinned);
+          else hover = null;
+        }
 
         raf = requestAnimationFrame(tick);
       };
@@ -332,7 +494,7 @@
       destroyed = true;
       if (raf) cancelAnimationFrame(raf);
       cleanup?.();
-      rmQuery.removeEventListener?.('change', onRm);
+      stopReduced();
       if (app) {
         try {
           app.destroy(true, { children: true });
@@ -348,42 +510,104 @@
 <div class="cosmos">
   <div bind:this={host} class="field" aria-hidden="true"></div>
 
-  <!-- always-visible legend (names are glanceable without hover) -->
-  <ul class="legend" aria-label="loops">
-    {#each cosmosStore.loops as l (l.id)}
-      <li>
-        <button
-          class="chip"
-          onclick={() => onEnter(l.id)}
-          onmouseenter={() => (hover = null)}
-        >
-          <span class="dot {l.restState ?? l.status}"></span>
-          <span class="lid mono">{l.id}</span>
-          <span class="lcost mono">{fmtUsd(l.cumUsd)}</span>
-        </button>
-      </li>
-    {/each}
-  </ul>
-
-  <!-- rich hover card -->
+  <!-- rich hover / touch-detail card, clamped to the host (flips below near the top) -->
   {#if hover}
-    <div class="card" style="left:{hover.x}px; top:{hover.y}px;">
+    {@const key = stateKey(hover.loop)}
+    <div
+      bind:this={cardEl}
+      class="card"
+      class:below={hover.below}
+      class:pinned={hover.pinned}
+      style="left:{hover.x}px; top:{hover.y}px;"
+      role={hover.pinned ? 'dialog' : undefined}
+      aria-label={hover.pinned ? loopAria(hover.loop) : undefined}
+    >
       <div class="cname">{hover.loop.name}</div>
-      <div class="crow mono">
-        <span class="ccost">{fmtUsd(hover.loop.cumUsd)}</span>
-        <span class="cstat {hover.loop.restState ?? hover.loop.status}">
-          {hover.loop.restState ?? hover.loop.status}
+      <div class="crow">
+        <span class="ccost num">{fmtUsd(hover.loop.cumUsd)}</span>
+        <span class="cstat {key}">
+          <span class="cglyph" aria-hidden="true">{stateGlyph(key)}</span>
+          {stateLabel(key)}
         </span>
       </div>
       {#if hover.loop.currentItem}
         <div class="cur mono">→ {hover.loop.currentItem}</div>
       {/if}
-      <div class="hint">click to enter system</div>
+      {#if hover.pinned}
+        <div class="cactions">
+          <button class="cbtn enter" onclick={() => hover && enterFromRow(hover.loop.id)}>
+            enter system →
+          </button>
+          <button
+            class="cbtn edit"
+            onclick={() => hover && cosmosStore.editLoop(hover.loop.id)}
+            aria-label="Edit loop {hover.loop.id}"
+          >
+            ✎ edit
+          </button>
+        </div>
+      {:else}
+        <div class="hint">click to enter system</div>
+      {/if}
     </div>
   {/if}
 
+  <!-- ── the unified loop roster: the single home for ENTER + EDIT ──────────
+       desktop = compact bottom bar · phone = scrollable bottom sheet -->
+  {#if !cosmosStore.loading && cosmosStore.loops.length}
+    <section
+      class="roster"
+      class:sheet={uiStore.isPhone}
+      aria-label="loop roster — enter or edit a loop"
+    >
+      <ul>
+        {#each cosmosStore.loops as l (l.id)}
+          {@const key = stateKey(l)}
+          <li class="row">
+            <button
+              class="enter"
+              onclick={() => enterFromRow(l.id)}
+              onmouseenter={() => (hover = hover?.pinned ? hover : null)}
+              aria-label="Enter {loopAria(l)}"
+            >
+              <span class="dot {key}" aria-hidden="true">
+                <span class="dglyph">{stateGlyph(key)}</span>
+              </span>
+              <span class="meta">
+                <span class="lid mono">{l.id}</span>
+                <span class="lstate">{stateLabel(key)}</span>
+              </span>
+              <span class="lcost num">{fmtUsd(l.cumUsd)}</span>
+            </button>
+            <button
+              class="edit"
+              onclick={() => cosmosStore.editLoop(l.id)}
+              aria-label="Edit loop {l.id}"
+              title="Edit {l.name}"
+            >
+              <span aria-hidden="true">✎</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  <!-- ── overlays (HTML, so they survive any canvas suppression) ──────────── -->
   {#if cosmosStore.loading}
-    <div class="loading mono">igniting the cosmos…</div>
+    <div class="loading mono" role="status">igniting the cosmos…</div>
+  {:else if cosmosStore.loops.length === 0}
+    <div class="empty" role="status">
+      <p class="etitle">No loops yet</p>
+      <p class="esub">Ignite your first loop to populate the cosmos.</p>
+    </div>
+  {/if}
+
+  {#if cosmosStore.error}
+    <div class="errline" role="alert">
+      <span class="emsg mono">couldn't load the cosmos</span>
+      <button class="retry" onclick={() => cosmosStore.load()}>retry</button>
+    </div>
   {/if}
 </div>
 
@@ -400,60 +624,144 @@
   .field :global(canvas) {
     display: block;
   }
-  .legend {
+
+  /* ── unified roster ───────────────────────────────────────────────────── */
+  .roster {
     position: absolute;
-    bottom: 22px;
+    bottom: var(--chrome-inset);
     left: 50%;
     transform: translateX(-50%);
-    margin: 0;
-    padding: 8px 12px;
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 6px;
-    max-width: min(90vw, 880px);
+    max-width: min(92vw, 920px);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
     z-index: 11;
+    padding: var(--space-1) var(--space-2);
   }
-  .legend li {
+  .roster ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-1);
   }
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 5px 11px;
-    border-radius: var(--radius-pill);
+  /* phone: a scrollable bottom SHEET (clears the cost strip) */
+  .roster.sheet {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    max-width: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: none;
+    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+    max-height: 42vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .roster.sheet ul {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+  }
+
+  .row {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-1);
+  }
+  .roster.sheet .row {
+    width: 100%;
+  }
+
+  .row .enter,
+  .row .edit {
     border: 1px solid var(--hairline);
     background: transparent;
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color 0.18s, background 0.18s;
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      background var(--dur-fast) var(--ease-standard),
+      color var(--dur-fast) var(--ease-standard);
   }
-  .chip:hover {
+  .row .enter {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+  }
+  .roster.sheet .row .enter {
+    flex: 1 1 auto;
+    border-radius: var(--radius);
+    justify-content: flex-start;
+  }
+  .row .enter:hover {
     border-color: color-mix(in srgb, var(--brass) 45%, transparent);
     background: color-mix(in srgb, var(--brass) 8%, transparent);
   }
-  .chip .lid {
-    font-size: 11px;
+  .row .edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    border-radius: var(--radius-pill);
+    color: var(--text-meta);
+    font-size: var(--text-sm);
+  }
+  .roster.sheet .row .edit {
+    border-radius: var(--radius);
+    width: 44px;
+  }
+  .row .edit:hover {
+    border-color: var(--brass);
+    color: var(--brass);
+    background: color-mix(in srgb, var(--brass) 8%, transparent);
+  }
+
+  .meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .lid {
+    font-size: var(--text-xs);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--brass);
   }
-  .chip .lcost {
-    font-size: 10.5px;
-    color: var(--text-dim);
+  .lstate {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    color: var(--text-meta);
   }
+  .lcost {
+    font-size: var(--text-xs);
+    color: var(--text-meta);
+    margin-left: auto;
+  }
+
+  /* status dot carries a SHAPE glyph too — never hue alone */
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: var(--text-faint);
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dot .dglyph {
+    font-size: 9px;
+    line-height: 1;
+    color: var(--void);
+    font-weight: 700;
   }
   .dot.running {
     background: var(--amber);
@@ -469,15 +777,18 @@
     background: var(--frost);
   }
   .dot.handoff-beacon,
+  .dot.handoff,
   .dot.error {
     background: var(--crimson);
   }
+
+  /* ── hover / detail card ──────────────────────────────────────────────── */
   .card {
     position: absolute;
     transform: translate(-50%, -100%);
     min-width: 160px;
     max-width: 240px;
-    padding: 9px 12px;
+    padding: var(--space-2) var(--space-3);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
@@ -485,27 +796,41 @@
     pointer-events: none;
     z-index: 12;
   }
+  /* flipped below the glyph (anchor at the card's TOP) */
+  .card.below {
+    transform: translate(-50%, 0);
+  }
+  /* a pinned (touch-revealed) card is interactive */
+  .card.pinned {
+    pointer-events: auto;
+  }
   .cname {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--starlight);
-    margin-bottom: 5px;
+    margin-bottom: var(--space-1);
     line-height: 1.3;
   }
   .crow {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    font-size: 11px;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
   }
   .ccost {
     color: var(--brass);
   }
   .cstat {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 9.5px;
-    color: var(--text-dim);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
+  }
+  .cglyph {
+    font-size: var(--text-xs);
   }
   .cstat.running {
     color: var(--amber);
@@ -521,28 +846,116 @@
     color: var(--frost);
   }
   .cstat.handoff-beacon,
+  .cstat.handoff,
   .cstat.error {
     color: var(--crimson);
   }
   .cur {
-    margin-top: 5px;
-    font-size: 10.5px;
-    color: var(--text-dim);
+    margin-top: var(--space-1);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
   }
   .hint {
-    margin-top: 6px;
-    font-size: 9px;
+    margin-top: var(--space-2);
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     color: var(--text-faint);
   }
+  .cactions {
+    display: flex;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .cbtn {
+    font-family: var(--font-grotesk);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: var(--surface-2);
+    color: var(--starlight);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease-standard);
+  }
+  .cbtn.enter {
+    flex: 1 1 auto;
+    border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+    color: var(--brass);
+  }
+  .cbtn.edit {
+    color: var(--text-meta);
+  }
+  .cbtn:hover {
+    border-color: var(--brass);
+  }
+
+  /* ── overlays ─────────────────────────────────────────────────────────── */
   .loading {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     color: var(--text-dim);
-    font-size: 12px;
+    font-size: var(--text-sm);
     letter-spacing: 0.1em;
+  }
+  .empty {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    max-width: 360px;
+    padding: var(--space-5) var(--space-6);
+  }
+  .etitle {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--starlight);
+  }
+  .esub {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-meta);
+    line-height: 1.5;
+  }
+  .errline {
+    position: absolute;
+    top: var(--chrome-inset);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-1) var(--space-3);
+    background: var(--panel);
+    border: 1px solid color-mix(in srgb, var(--crimson) 40%, var(--panel-edge));
+    border-radius: var(--radius-pill);
+    backdrop-filter: blur(8px);
+    z-index: 13;
+  }
+  .emsg {
+    font-size: var(--text-xs);
+    color: var(--text-meta);
+  }
+  .retry {
+    font-family: var(--font-grotesk);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: var(--surface-2);
+    color: var(--starlight);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease-standard);
+  }
+  .retry:hover {
+    border-color: var(--brass);
   }
 </style>

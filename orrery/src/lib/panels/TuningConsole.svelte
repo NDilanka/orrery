@@ -61,6 +61,13 @@
   let stateDir = $state('.loop');
   let task = $state('TASK.md');
 
+  // ── pristine-form guard: don't scold an untouched form. The "give it an id"
+  // warning stays quiet until the user types/edits or attempts to ignite. ──
+  let touched = $state(false);
+  function markTouched() {
+    touched = true;
+  }
+
   let acceptanceCriteria = $state<string[]>([...BLUEPRINTS.grind.destination.acceptanceCriteria]);
   let gateStages = $state<GateStageDef[]>(
     BLUEPRINTS.grind.destination.gateStages.map((s) => ({ ...s })),
@@ -144,9 +151,48 @@
     gateStages = gateStages.filter((_, idx) => idx !== i);
   }
 
+  // ── modal contract: focus move-in / trap / restore (WCAG 2.4.3 + 2.1.2) ─────
+  let dialogEl = $state<HTMLDivElement | null>(null);
+  let triggerEl: HTMLElement | null = null;
+
+  function focusable(): HTMLElement[] {
+    if (!dialogEl) return [];
+    return Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+  }
+
+  // Escape closes, Tab/Shift+Tab wrap inside the console. Bound on the dialog so
+  // the .console keydown no longer needs to swallow the event.
+  function onDialogKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const items = focusable();
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    if (e.shiftKey && (active === first || !dialogEl?.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   // ── ignite ──────────────────────────────────────────────────────────────────
   async function ignite() {
-    if (!validation.ok || busy) return;
+    if (!validation.ok || busy) {
+      touched = true; // surface any latent validation messages on a blocked submit
+      return;
+    }
     busy = true;
     createError = null;
     try {
@@ -176,29 +222,66 @@
     }
   }
 
+  // a fresh editable id so a new loop opens with a sensible suggestion instead
+  // of an instant "give it an id" error. Stays unique against existing systems.
+  function friendlyDefaultId(): string {
+    const base = 'new-loop';
+    const taken = new Set(cosmosStore.existingIds);
+    if (!taken.has(base)) return base;
+    for (let n = 2; n < 1000; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+    return `${base}-${Date.now().toString(36)}`;
+  }
+
   // ── prefill when editing an existing loop ───────────────────────────────────
-  onMount(async () => {
+  onMount(() => {
+    // capture the trigger so focus can be restored on close (WCAG 2.4.3)
+    triggerEl = document.activeElement as HTMLElement | null;
+
     if (mode === 'edit' && editId) {
       loopId = editId;
-      const def = await cosmosStore.loadLoopDef(editId);
-      if (def) {
-        loopName = String(def.name ?? editId);
-        if (typeof def.stateDir === 'string') stateDir = def.stateDir;
-        const eng = def.engine as Partial<EngineConfig> | undefined;
-        if (eng) {
-          if (typeof eng.task === 'string') task = eng.task;
-          if (Array.isArray(eng.verify?.contract)) acceptanceCriteria = [...eng.verify.contract];
-          if (Array.isArray(eng.gate?.stages)) gateStages = eng.gate.stages.map((s) => ({ ...s }));
-          // editing starts from Custom so nothing is silently re-seeded
-          blueprintId = 'custom';
-          overrides = eng as Partial<EngineConfig>;
+      // load the def async, but keep onMount sync so it can return a teardown
+      void (async () => {
+        const def = await cosmosStore.loadLoopDef(editId);
+        if (def) {
+          loopName = String(def.name ?? editId);
+          if (typeof def.stateDir === 'string') stateDir = def.stateDir;
+          const eng = def.engine as Partial<EngineConfig> | undefined;
+          if (eng) {
+            if (typeof eng.task === 'string') task = eng.task;
+            if (Array.isArray(eng.verify?.contract)) acceptanceCriteria = [...eng.verify.contract];
+            if (Array.isArray(eng.gate?.stages)) gateStages = eng.gate.stages.map((s) => ({ ...s }));
+            // editing starts from Custom so nothing is silently re-seeded
+            blueprintId = 'custom';
+            overrides = eng as Partial<EngineConfig>;
+          }
         }
-      }
+      })();
     } else {
-      // a friendly default id suggestion
-      loopId = '';
+      // the friendly default id the comment promised
+      loopId = friendlyDefaultId();
     }
+
+    // move focus into the dialog: first focusable field, else the container
+    queueMicrotask(() => {
+      const items = focusable();
+      (items[0] ?? dialogEl)?.focus();
+    });
+
+    // restore focus to the element that opened the console on teardown
+    return () => triggerEl?.focus?.();
   });
+
+  // human-readable settings for the dial aria-valuetext (screen readers hear the
+  // actual config the dial currently maps to, not a bare 0–1 number).
+  const ambitionText = $derived(
+    `Ambition: ${finalEngine.models.execute}, ${fmtUsd(finalEngine.cost.ceilingUsd)} ceiling, ${finalEngine.stop.maxIters} iters`,
+  );
+  const patienceText = $derived(
+    `Patience: ${finalEngine.verify.strictness} verifier, ${finalEngine.regression.strikeBudget} strikes, plateau K ${finalEngine.decide.plateauK}`,
+  );
+  const autonomyText = $derived(
+    `Autonomy: ${finalEngine.qa.humanInLoop ? 'human-in-loop' : 'overnight-auto'}, ${finalEngine.permissionMode}`,
+  );
 
   const DRAWERS: { key: keyof EngineConfig | 'models' | 'tools'; label: string }[] = [
     { key: 'models', label: 'Models' },
@@ -225,24 +308,20 @@
 </script>
 
 <!-- scrim + dialog -->
-<div
-  class="scrim"
-  role="presentation"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Escape' && onClose()}
->
+<div class="scrim" role="presentation" onclick={onClose}>
   <div
     class="console"
     role="dialog"
     aria-modal="true"
-    aria-label="Tuning Console"
+    aria-labelledby="tc-title"
     tabindex="-1"
+    bind:this={dialogEl}
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={onDialogKeydown}
   >
     <!-- header -->
     <header class="hdr">
-      <div class="title mono">✦ SET ORBITAL PARAMETERS</div>
+      <div id="tc-title" class="title mono">✦ SET ORBITAL PARAMETERS</div>
       <div class="sub mono">{mode === 'edit' ? `recalibrating ${editId}` : 'new loop'}</div>
       <button class="x" aria-label="close" onclick={onClose}>✕</button>
     </header>
@@ -255,12 +334,18 @@
           class="inp mono"
           placeholder="my-loop"
           bind:value={loopId}
+          oninput={markTouched}
           disabled={mode === 'edit'}
         />
       </label>
       <label class="field grow">
         <span class="flab mono">NAME</span>
-        <input class="inp" placeholder="Describe the mission…" bind:value={loopName} />
+        <input
+          class="inp"
+          placeholder="Describe the mission…"
+          bind:value={loopName}
+          oninput={markTouched}
+        />
       </label>
       <label class="field">
         <span class="flab mono">TASK</span>
@@ -292,49 +377,65 @@
       <section class="panel calib">
         <span class="seclab mono">CALIBRATION</span>
 
+        <!-- All three dials share ONE orientation: the slider value IS the stored
+             0–1 force, left label is the 0-pole, right label the 1-pole, and the
+             colored fill grows from the left to exactly value% — so the filled
+             track visually equals the setting. -->
         <div class="dial">
-          <div class="dlabels mono"><span>AMBITION</span><span>THRIFT</span></div>
+          <div class="dlabels mono"><span>THRIFT</span><span>AMBITION</span></div>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
-            value={1 - dials.ambition}
-            oninput={(e) => (dials = { ...dials, ambition: 1 - +e.currentTarget.value })}
+            value={dials.ambition}
+            style="--fill:{dials.ambition * 100}%"
+            aria-label="Ambition vs Thrift"
+            aria-valuetext={ambitionText}
+            aria-describedby="dhint-ambition"
+            oninput={(e) => (dials = { ...dials, ambition: +e.currentTarget.value })}
           />
-          <div class="dhint mono">
+          <div id="dhint-ambition" class="dhint mono">
             {finalEngine.models.execute} · ceiling {fmtUsd(finalEngine.cost.ceilingUsd)} · {finalEngine
               .stop.maxIters} iters
           </div>
         </div>
 
         <div class="dial">
-          <div class="dlabels mono"><span>PATIENCE</span><span>FUSSY</span></div>
+          <div class="dlabels mono"><span>FUSSY</span><span>PATIENCE</span></div>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
             value={dials.patience}
+            style="--fill:{dials.patience * 100}%"
+            aria-label="Patience vs Fussiness"
+            aria-valuetext={patienceText}
+            aria-describedby="dhint-patience"
             oninput={(e) => (dials = { ...dials, patience: +e.currentTarget.value })}
           />
-          <div class="dhint mono">
+          <div id="dhint-patience" class="dhint mono">
             verifier {finalEngine.verify.strictness} · strikes {finalEngine.regression
               .strikeBudget} · plateau K={finalEngine.decide.plateauK}
           </div>
         </div>
 
         <div class="dial">
-          <div class="dlabels mono"><span>AUTONOMY</span><span>COMPANY</span></div>
+          <div class="dlabels mono"><span>COMPANY</span><span>AUTONOMY</span></div>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
-            value={1 - dials.autonomy}
-            oninput={(e) => (dials = { ...dials, autonomy: 1 - +e.currentTarget.value })}
+            value={dials.autonomy}
+            style="--fill:{dials.autonomy * 100}%"
+            aria-label="Autonomy vs Company"
+            aria-valuetext={autonomyText}
+            aria-describedby="dhint-autonomy"
+            oninput={(e) => (dials = { ...dials, autonomy: +e.currentTarget.value })}
           />
-          <div class="dhint mono">
+          <div id="dhint-autonomy" class="dhint mono">
             {finalEngine.qa.humanInLoop ? 'human-in-loop' : 'overnight-auto'} · {finalEngine.permissionMode}
           </div>
         </div>
@@ -703,12 +804,18 @@
     <!-- footer: validation + actions -->
     <footer class="ftr">
       <div class="valid mono">
-        {#if !validation.ok}
-          <span class="verr">⚠ {validation.errors[0]}</span>
-        {:else if createError}
-          <span class="verr">✕ {createError}</span>
+        {#if createError}
+          <span class="verr" role="alert">✕ {createError}</span>
         {:else}
-          <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
+          <span class="vstatus" role="status">
+            {#if !validation.ok && touched}
+              <span class="verr">⚠ {validation.errors[0]}</span>
+            {:else if validation.ok}
+              <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
+            {:else}
+              <span class="vhint">calibrate the dials, then ignite</span>
+            {/if}
+          </span>
         {/if}
       </div>
       <div class="actions">
@@ -802,9 +909,9 @@
     flex: 1;
   }
   .flab {
-    font-size: 9px;
+    font-size: 10.5px;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .inp {
     background: var(--void-3);
@@ -814,7 +921,6 @@
     font-family: var(--font-grotesk);
     font-size: 12px;
     padding: 7px 9px;
-    outline: none;
     transition: border-color 0.18s;
     min-width: 0;
   }
@@ -830,7 +936,7 @@
   }
 
   .seclab {
-    font-size: 9.5px;
+    font-size: 10.5px;
     letter-spacing: 0.16em;
     color: var(--brass);
     text-transform: uppercase;
@@ -905,9 +1011,9 @@
   .dlabels {
     display: flex;
     justify-content: space-between;
-    font-size: 9.5px;
+    font-size: 10.5px;
     letter-spacing: 0.1em;
-    color: var(--text-dim);
+    color: var(--text-meta);
     margin-bottom: 4px;
   }
   .dial input[type='range'] {
@@ -915,8 +1021,15 @@
     appearance: none;
     height: 3px;
     border-radius: 2px;
-    background: linear-gradient(90deg, var(--brass), var(--plasma-cyan));
-    outline: none;
+    /* the filled portion ends at the actual value (--fill); past it the track is
+       an unlit hairline, so the bright span literally equals the setting. */
+    background: linear-gradient(
+      90deg,
+      var(--brass) 0%,
+      var(--plasma-cyan) var(--fill, 50%),
+      var(--surface-3) var(--fill, 50%),
+      var(--surface-3) 100%
+    );
   }
   .dial input[type='range']::-webkit-slider-thumb {
     appearance: none;
@@ -938,8 +1051,8 @@
   }
   .dhint {
     margin-top: 5px;
-    font-size: 9.5px;
-    color: var(--text-faint);
+    font-size: 10.5px;
+    color: var(--text-meta);
     letter-spacing: 0.02em;
   }
 
@@ -1015,9 +1128,9 @@
     gap: 14px;
   }
   .dlab {
-    font-size: 9.5px;
+    font-size: 10.5px;
     letter-spacing: 0.1em;
-    color: var(--text-dim);
+    color: var(--text-meta);
     margin-bottom: 6px;
   }
   .ac-row,
@@ -1135,8 +1248,8 @@
     gap: 7px;
   }
   .kv span {
-    font-size: 9.5px;
-    color: var(--text-faint);
+    font-size: 10.5px;
+    color: var(--text-meta);
     letter-spacing: 0.08em;
   }
   .kv select {
@@ -1183,6 +1296,9 @@
   }
   .vok {
     color: var(--plasma-green);
+  }
+  .vhint {
+    color: var(--text-meta);
   }
   .actions {
     display: flex;
