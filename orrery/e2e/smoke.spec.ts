@@ -12,7 +12,7 @@ import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
 // file is owned by a parallel agent):
 //   - Cosmos canvas .......... PixiJS <canvas> appended under `.cosmos .field`
 //   - Cosmos→System nav ...... the DOM legend `<button class="chip">` carrying
-//                              each loop id (Cosmos.svelte `.roster .enter .lid`)
+//                              each loop id (Cosmos.svelte `.station .enter .lid`)
 //   - HUD .................... `.hud` block with "cum spend" + a status pill
 //                              (Hud.svelte) and a "<n> events" meta readout
 //   - TransportBar ........... play/pause `[aria-label="play|pause"]`, restart
@@ -55,7 +55,7 @@ test.describe('orrery — browser replay smoke', () => {
     await expectLiveCanvas(page); // Cosmos PixiJS field renders
 
     // the always-visible loop legend confirms the Cosmos store loaded fixtures
-    await expect(page.locator('.roster .enter').first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.station .enter').first()).toBeVisible({ timeout: 20_000 });
 
     expect(pageErrors, `uncaught page errors: ${pageErrors.map((e) => e.message).join(' | ')}`).toEqual(
       [],
@@ -73,7 +73,7 @@ test.describe('orrery — browser replay smoke', () => {
     // glyph hit-areas aren't DOM-locatable, but Cosmos.svelte renders a parallel
     // DOM legend of <button.chip> whose `.lid` is the loop id — that's the
     // accessible affordance we drive.
-    const demoChip = page.locator('.roster .enter', { hasText: 'demo' });
+    const demoChip = page.locator('.station .enter', { hasText: 'demo' });
     await expect(demoChip).toBeVisible({ timeout: 20_000 });
     await demoChip.click();
 
@@ -96,7 +96,7 @@ test.describe('orrery — browser replay smoke', () => {
 
     // enter the "bmad" system: its fixture is large and animates fast (rateMs 90)
     // so the events readout visibly advances within the test window.
-    const bmadChip = page.locator('.roster .enter', { hasText: 'bmad' });
+    const bmadChip = page.locator('.station .enter', { hasText: 'bmad' });
     await expect(bmadChip).toBeVisible({ timeout: 20_000 });
     await bmadChip.click();
 
@@ -147,7 +147,7 @@ test.describe('orrery — browser replay smoke', () => {
     await page.goto('/');
     await expectLiveCanvas(page);
     // enter a System so we're in instrument context (shortcuts are guarded elsewhere)
-    await page.locator('.roster .enter').first().click();
+    await page.locator('.station .enter').first().click();
     await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
 
     const help = page.locator('[role="dialog"]', { hasText: 'KEYBOARD' });
@@ -165,7 +165,7 @@ test.describe('orrery — browser replay smoke', () => {
 
     await page.goto('/');
     await expectLiveCanvas(page);
-    const bmad = page.locator('.roster .enter', { hasText: 'bmad' });
+    const bmad = page.locator('.station .enter', { hasText: 'bmad' });
     await expect(bmad).toBeVisible({ timeout: 20_000 });
     await bmad.click();
     await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });

@@ -599,17 +599,19 @@
           const ey = lerp(lhy, tp.y, prog);
           const beamA = (isRefute ? 0.5 : 0.16 + vis.lhWake * 0.16) *
             (isRefute ? 0.4 + (refuteFx.get(refuteKey!) ?? 0) * 0.6 : 1);
-          // a soft cone: two edges + a bright core line
+          // a soft cone: two edges + a bright core line. Kept a subtle directional
+          // hint, not a swath — narrow spread + low fill alpha so it never reads as
+          // a gray triangle dominating the scene.
           const ang = Math.atan2(ey - lhy, ex - lhx);
-          const spread = 0.05 + (1 - prog) * 0.02;
+          const spread = 0.03 + (1 - prog) * 0.012;
           const len = Math.hypot(ex - lhx, ey - lhy);
           beamG
             .moveTo(lhx, lhy)
             .lineTo(lhx + Math.cos(ang - spread) * len, lhy + Math.sin(ang - spread) * len)
             .lineTo(lhx + Math.cos(ang + spread) * len, lhy + Math.sin(ang + spread) * len)
             .closePath()
-            .fill({ color: beamCol, alpha: beamA * 0.28 });
-          beamG.moveTo(lhx, lhy).lineTo(ex, ey).stroke({ width: isRefute ? 2 : 1.2, color: beamCol, alpha: beamA });
+            .fill({ color: beamCol, alpha: beamA * 0.1 });
+          beamG.moveTo(lhx, lhy).lineTo(ex, ey).stroke({ width: isRefute ? 1.4 : 1, color: beamCol, alpha: beamA * 0.7 });
           if (isRefute) {
             // snap a crimson burst on the failing criterion (the AC star)
             const fx = refuteFx.get(refuteKey!) ?? 0;

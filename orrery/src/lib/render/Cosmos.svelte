@@ -32,28 +32,10 @@
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
   let host: HTMLDivElement;
-  // hover label, positioned in screen space over the canvas. `below` flips the
-  // card under the glyph when it would otherwise clip the top edge; `pinned`
-  // marks a touch-revealed card (first tap shows, button/second tap enters).
-  let hover = $state<{
-    x: number;
-    y: number;
-    r: number;
-    loop: LoopSummary;
-    below: boolean;
-    pinned: boolean;
-  } | null>(null);
-
-  // measured card size, so we can clamp it inside the host bounds
-  let cardEl = $state<HTMLDivElement | null>(null);
-  let cardW = $state(220);
-  let cardH = $state(96);
-
-  $effect(() => {
-    if (!cardEl) return;
-    cardW = cardEl.offsetWidth || cardW;
-    cardH = cardEl.offsetHeight || cardH;
-  });
+  // Each glyph publishes its on-canvas screen position here. Set from layout(), so it
+  // changes only on resize / loop-count change (NOT every frame) — the always-visible
+  // "station" labels read these to sit directly under their glyph.
+  let positions = $state<{ id: string; x: number; y: number; r: number }[]>([]);
 
   const C = {
     void: 0x070912,
@@ -152,49 +134,32 @@
     return 0x6c779e; // idle ember (dim)
   }
 
-  // Position + flip + clamp a card for a glyph hit at (px,py) with radius r.
-  function placeCard(px: number, py: number, r: number, loop: LoopSummary, pinned: boolean) {
-    const w = host?.clientWidth || 800;
-    const h = host?.clientHeight || 600;
-    const pad = 8;
-    // default: card sits ABOVE the glyph; flip BELOW if it would clip the top.
-    const wantBelow = py - r - cardH - pad < 0;
-    let x = px;
-    // clamp horizontally so the (centre-anchored) card stays inside the host
-    const half = cardW / 2;
-    x = Math.max(half + pad, Math.min(w - half - pad, x));
-    const y = wantBelow ? py + r + 14 : py - r - 14;
-    hover = { x, y, r, loop, below: wantBelow, pinned };
-  }
-
-  // Row ENTER from the DOM roster.
+  // Enter a loop's system.
   function enterFromRow(id: string) {
-    hover = null;
     onEnter(id);
   }
 
-  // ── roster-at-scale: filter pills + an urgency-sorted DOM view ───────────
-  // The Pixi star FIELD stays positional (glyphs never reorder) — only this DOM
-  // roster sorts/filters, so a wall of loops still answers "what needs me?".
+  // ── at-scale filter ──────────────────────────────────────────────────────
+  // The labelled station glyphs ARE the roster now; below FILTER_THRESHOLD loops
+  // the field needs no chrome. For a WALL of loops a slim top filter DIMS the
+  // stations that don't match so "what needs me?" still answers at a glance — the
+  // Pixi field stays positional (glyphs never move).
   type RosterFilter = 'all' | 'needs' | 'running';
   let filter = $state<RosterFilter>('all');
+  const FILTER_THRESHOLD = 6;
+  const showFilters = $derived(cosmosStore.loops.length > FILTER_THRESHOLD);
 
   // How many loops are waiting on a human — the one glance-first count.
   const needsYouCount = $derived(cosmosStore.needsYouCount);
-
-  // Urgency-sorted, then filter-narrowed. Stable within a tier (sort by id) so
-  // rows don't jitter as spend/glow change every frame.
-  const rosterView = $derived(
-    [...cosmosStore.loops]
-      .sort((a, b) => a.urgency - b.urgency || a.id.localeCompare(b.id))
-      .filter((l) => {
-        if (filter === 'needs') return l.needsYou;
-        if (filter === 'running') return l.status === 'running';
-        return true;
-      }),
-  );
-
   const runningCount = $derived(cosmosStore.loops.filter((l) => l.status === 'running').length);
+
+  // Does a loop pass the active filter? (drives station dimming; all-pass when no filter UI)
+  function matches(l: LoopSummary): boolean {
+    if (!showFilters || filter === 'all') return true;
+    if (filter === 'needs') return l.needsYou;
+    if (filter === 'running') return l.status === 'running';
+    return true;
+  }
 
   onMount(() => {
     if (!browser) return;
@@ -254,28 +219,44 @@
       }
       drawStarfield(w, h);
 
-      // ── layout: a calm grid of systems, centred, that reflows on resize ──
-      type Cell = { x: number; y: number; cell: number };
+      // ── layout: a balanced, CENTRED constellation that reflows on resize ──
+      // Cell size is CAPPED so a couple of loops cluster together in the middle
+      // (each with its label beneath) instead of being marooned at the far edges;
+      // glyphs scale up when there's room so they never read as lost dots.
+      type Cell = { x: number; y: number; cell: number; baseR: number };
       let cells: Cell[] = [];
+      function baseRadiusFor(cell: number): number {
+        return Math.max(14, Math.min(34, cell * 0.16));
+      }
       function layout() {
         const loops = cosmosStore.loops;
-        const n = Math.max(loops.length, 1);
-        const cols = Math.min(n, Math.max(2, Math.ceil(Math.sqrt(n * (w / Math.max(h, 1))))));
+        const n = loops.length;
+        if (n === 0) {
+          cells = [];
+          positions = [];
+          return;
+        }
+        const cols = Math.max(1, Math.min(n, Math.round(Math.sqrt(n * (w / Math.max(h, 1))))));
         const rows = Math.ceil(n / cols);
-        const padX = w * 0.12;
-        const padY = h * 0.16;
-        const gx = (w - padX * 2) / Math.max(cols, 1);
-        const gy = (h - padY * 2) / Math.max(rows, 1);
-        const cell = Math.min(gx, gy);
+        const cellW = Math.min(300, (w * 0.82) / cols);
+        const cellH = Math.min(260, (h * 0.66) / rows);
+        const cell = Math.min(cellW, cellH);
+        const baseR = baseRadiusFor(cell);
+        const gridW = cols * cellW;
+        const gridH = rows * cellH;
+        const x0 = (w - gridW) / 2 + cellW / 2;
+        // bias the cluster slightly ABOVE centre so each glyph's label has room below
+        const y0 = (h - gridH) / 2 + cellH / 2 - h * 0.04;
         cells = loops.map((_, i) => {
           const r = Math.floor(i / cols);
           const c = i % cols;
-          // centre partial last row
           const rowCount = r === rows - 1 ? n - r * cols : cols;
-          const rowW = rowCount * gx;
-          const x0 = (w - rowW) / 2 + gx / 2;
-          return { x: x0 + c * gx, y: padY + gy / 2 + r * gy, cell };
+          const rowW = rowCount * cellW;
+          const rx0 = (w - rowW) / 2 + cellW / 2; // centre a partial last row
+          return { x: rx0 + c * cellW, y: y0 + r * cellH, cell, baseR };
         });
+        // publish positions for the HTML station labels (x/y centre + base radius)
+        positions = loops.map((l, i) => ({ id: l.id, x: cells[i].x, y: cells[i].y, r: cells[i].baseR }));
       }
       layout();
 
@@ -304,70 +285,26 @@
         return best;
       }
 
+      // Clicking a glyph enters its system; hover just shows a pointer cursor.
+      // The always-visible station labels carry name/status/cost + enter/edit, so
+      // touch & keyboard go through those real buttons (no canvas tap-dance needed).
       const onMove = (e: MouseEvent) => {
-        // a touch-pinned card stays put until tapped away / entered
-        if (hover?.pinned) return;
         const rect = app.canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const id = pick(mx, my);
-        const loop = id ? cosmosStore.get(id) : null;
-        const p = id ? hits.get(id) : null;
-        if (loop && p) {
-          placeCard(p.x, p.y, p.r, loop, false);
-          app.canvas.style.cursor = 'pointer';
-        } else {
-          hover = null;
-          app.canvas.style.cursor = 'default';
-        }
-      };
-      const onLeave = () => {
-        if (hover?.pinned) return;
-        hover = null;
+        const id = pick(e.clientX - rect.left, e.clientY - rect.top);
+        app.canvas.style.cursor = id ? 'pointer' : 'default';
       };
       const onClick = (e: MouseEvent) => {
         const rect = app.canvas.getBoundingClientRect();
         const id = pick(e.clientX - rect.left, e.clientY - rect.top);
         if (id) onEnter(id);
       };
-      // Touch: first tap reveals the card (pinned), a second tap on the SAME
-      // glyph enters; tapping empty space / another glyph re-targets. We never
-      // dive straight in on the first touch (plan §7 hover→tap).
-      const onTouchStart = (e: TouchEvent) => {
-        const t = e.touches[0] ?? e.changedTouches[0];
-        if (!t) return;
-        const rect = app.canvas.getBoundingClientRect();
-        const mx = t.clientX - rect.left;
-        const my = t.clientY - rect.top;
-        const id = pick(mx, my);
-        if (!id) {
-          hover = null;
-          return;
-        }
-        const loop = cosmosStore.get(id);
-        const p = hits.get(id);
-        if (!loop || !p) return;
-        if (hover?.pinned && hover.loop.id === id) {
-          // second tap on the already-revealed glyph → enter
-          e.preventDefault();
-          enterFromRow(id);
-          return;
-        }
-        // first tap → reveal a pinned card with explicit enter/edit
-        e.preventDefault();
-        placeCard(p.x, p.y, p.r, loop, true);
-      };
       app.canvas.style.pointerEvents = 'auto';
       app.canvas.addEventListener('mousemove', onMove);
-      app.canvas.addEventListener('mouseleave', onLeave);
       app.canvas.addEventListener('click', onClick);
-      app.canvas.addEventListener('touchstart', onTouchStart, { passive: false });
       cleanup = () => {
         ro.disconnect();
         app.canvas.removeEventListener('mousemove', onMove);
-        app.canvas.removeEventListener('mouseleave', onLeave);
         app.canvas.removeEventListener('click', onClick);
-        app.canvas.removeEventListener('touchstart', onTouchStart);
       };
 
       // eased per-glyph signals (keyed by loop id)
@@ -402,7 +339,7 @@
           const cell = cells[i];
           if (!cell) return;
           const { x: cx, y: cy } = cell;
-          const baseR = Math.max(10, Math.min(22, cell.cell * 0.12));
+          const baseR = cell.baseR;
           // star radius nudged by spend (log so a big run doesn't dwarf a small)
           const sr = baseR + Math.min(baseR * 0.6, Math.log1p(l.cumUsd) * 2.2);
 
@@ -500,14 +437,6 @@
           }
         });
 
-        // keep a pinned/hover card glued to its glyph as the field reflows
-        if (hover) {
-          const p = hits.get(hover.loop.id);
-          const loop = cosmosStore.get(hover.loop.id);
-          if (p && loop) placeCard(p.x, p.y, p.r, loop, hover.pinned);
-          else hover = null;
-        }
-
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -533,47 +462,51 @@
 <div class="cosmos">
   <div bind:this={host} class="field" aria-hidden="true"></div>
 
-  <!-- rich hover / touch-detail card, clamped to the host (flips below near the top) -->
-  {#if hover}
-    {@const key = stateKey(hover.loop)}
-    <div
-      bind:this={cardEl}
-      class="card"
-      class:below={hover.below}
-      class:pinned={hover.pinned}
-      style="left:{hover.x}px; top:{hover.y}px;"
-      role={hover.pinned ? 'dialog' : undefined}
-      aria-label={hover.pinned ? loopAria(hover.loop) : undefined}
-    >
-      <div class="cname">{hover.loop.name}</div>
-      <div class="crow">
-        <span class="ccost num">{fmtUsd(hover.loop.cumUsd)}</span>
-        <span class="cstat {key}">
-          <span class="cglyph" aria-hidden="true">{stateGlyph(key)}</span>
-          {stateLabel(key)}
-        </span>
-      </div>
-      {#if hover.loop.currentItem}
-        <div class="cur mono">→ {hover.loop.currentItem}</div>
-      {/if}
-      {#if hover.pinned}
-        <div class="cactions">
-          <button class="cbtn enter" onclick={() => hover && enterFromRow(hover.loop.id)}>
-            enter system →
+  <!-- always-visible STATION labels: each glyph names itself (id · status · cost)
+       and IS the accessible enter/edit affordance, sitting just under its glyph.
+       This replaces the old anonymous-dots + disconnected bottom roster. -->
+  <div class="stations" aria-label="loops">
+    {#each cosmosStore.loops as l (l.id)}
+      {@const p = positions.find((q) => q.id === l.id)}
+      {#if p}
+        {@const key = stateKey(l)}
+        <div
+          class="station"
+          class:dim={!matches(l)}
+          class:needs={l.needsYou}
+          style="left:{p.x}px; top:{p.y + p.r + 12}px;"
+        >
+          <button class="enter" onclick={() => enterFromRow(l.id)} aria-label="Enter {loopAria(l)}">
+            <span class="s-id mono">{l.id}</span>
+            <span class="s-row">
+              <span class="s-stat {key}">
+                <span class="s-glyph" aria-hidden="true">{stateGlyph(key)}</span>
+                {stateLabel(key)}
+              </span>
+              <span class="s-cost num">{fmtUsd(l.cumUsd)}</span>
+            </span>
+            {#if l.currentItem}
+              <span class="s-cur mono" title={l.currentItem}>→ {l.currentItem}</span>
+            {/if}
+            {#if l.retroStatus}
+              <span class="s-retro {l.retroStatus}">
+                <span aria-hidden="true">{l.retroStatus === 'pending' ? '◷' : '✓'}</span>
+                retro {l.retroStatus}
+              </span>
+            {/if}
           </button>
           <button
-            class="cbtn edit"
-            onclick={() => hover && cosmosStore.editLoop(hover.loop.id)}
-            aria-label="Edit loop {hover.loop.id}"
+            class="edit"
+            onclick={() => cosmosStore.editLoop(l.id)}
+            aria-label="Edit loop {l.id}"
+            title="Edit {l.name}"
           >
-            ✎ edit
+            <span aria-hidden="true">✎</span>
           </button>
         </div>
-      {:else}
-        <div class="hint">click to enter system</div>
       {/if}
-    </div>
-  {/if}
+    {/each}
+  </div>
 
   <!-- ── N-needs-you badge: the one glance-first, loud-allowed count ──────────
        glyph + label, never hue alone; only shown when something waits on you -->
@@ -590,81 +523,31 @@
     </button>
   {/if}
 
-  <!-- ── the unified loop roster: the single home for ENTER + EDIT ──────────
-       desktop = compact bottom bar · phone = scrollable bottom sheet -->
-  {#if !cosmosStore.loading && cosmosStore.loops.length}
-    <section
-      class="roster"
-      class:sheet={uiStore.isPhone}
-      aria-label="loop roster — enter or edit a loop"
-    >
-      <!-- filter pills: All / Needs you / Running. Status by label, not hue. -->
-      <div class="pills" role="group" aria-label="filter loops">
-        <button class="pill" class:on={filter === 'all'} aria-pressed={filter === 'all'} onclick={() => (filter = 'all')}>
-          All<span class="pcount num">{cosmosStore.loops.length}</span>
-        </button>
-        <button
-          class="pill"
-          class:on={filter === 'needs'}
-          class:has={needsYouCount > 0}
-          aria-pressed={filter === 'needs'}
-          onclick={() => (filter = 'needs')}
-        >
-          Needs you<span class="pcount num">{needsYouCount}</span>
-        </button>
-        <button
-          class="pill"
-          class:on={filter === 'running'}
-          aria-pressed={filter === 'running'}
-          onclick={() => (filter = 'running')}
-        >
-          Running<span class="pcount num">{runningCount}</span>
-        </button>
-      </div>
-
-      {#if rosterView.length === 0}
-        <p class="rosterempty mono" role="status">
-          {filter === 'needs' ? 'nothing needs you' : 'no running loops'}
-        </p>
-      {:else}
-        <ul>
-          {#each rosterView as l (l.id)}
-            {@const key = stateKey(l)}
-            <li class="row" class:needs={l.needsYou}>
-              <button
-                class="enter"
-                onclick={() => enterFromRow(l.id)}
-                onmouseenter={() => (hover = hover?.pinned ? hover : null)}
-                aria-label="Enter {loopAria(l)}"
-              >
-                <span class="dot {key}" aria-hidden="true">
-                  <span class="dglyph">{stateGlyph(key)}</span>
-                </span>
-                <span class="meta">
-                  <span class="lid mono">{l.id}</span>
-                  <span class="lstate">{stateLabel(key)}</span>
-                </span>
-                {#if l.retroStatus}
-                  <span class="retro {l.retroStatus}" title="retro {l.retroStatus}">
-                    <span class="rglyph" aria-hidden="true">{l.retroStatus === 'pending' ? '◷' : '✓'}</span>
-                    retro {l.retroStatus}
-                  </span>
-                {/if}
-                <span class="lcost num">{fmtUsd(l.cumUsd)}</span>
-              </button>
-              <button
-                class="edit"
-                onclick={() => cosmosStore.editLoop(l.id)}
-                aria-label="Edit loop {l.id}"
-                title="Edit {l.name}"
-              >
-                <span aria-hidden="true">✎</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+  <!-- at-scale filter bar — only when there are many loops; it DIMS the stations
+       that don't match so triage still works on a wall of loops. -->
+  {#if showFilters}
+    <div class="filters" role="group" aria-label="filter loops">
+      <button class="pill" class:on={filter === 'all'} aria-pressed={filter === 'all'} onclick={() => (filter = 'all')}>
+        All<span class="pcount num">{cosmosStore.loops.length}</span>
+      </button>
+      <button
+        class="pill"
+        class:on={filter === 'needs'}
+        class:has={needsYouCount > 0}
+        aria-pressed={filter === 'needs'}
+        onclick={() => (filter = 'needs')}
+      >
+        Needs you<span class="pcount num">{needsYouCount}</span>
+      </button>
+      <button
+        class="pill"
+        class:on={filter === 'running'}
+        aria-pressed={filter === 'running'}
+        onclick={() => (filter = 'running')}
+      >
+        Running<span class="pcount num">{runningCount}</span>
+      </button>
+    </div>
   {/if}
 
   <!-- ── overlays (HTML, so they survive any canvas suppression) ──────────── -->
@@ -699,125 +582,141 @@
     display: block;
   }
 
-  /* ── unified roster ───────────────────────────────────────────────────── */
-  .roster {
+  /* ── station labels (one per glyph) — each loop names itself under its star ── */
+  .stations {
     position: absolute;
-    bottom: var(--chrome-inset);
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: min(92vw, 920px);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius-pill);
-    backdrop-filter: blur(8px);
+    inset: 0;
+    pointer-events: none; /* gaps pass clicks through to the canvas glyphs */
     z-index: 11;
-    padding: var(--space-1) var(--space-2);
   }
-  .roster ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  .station {
+    position: absolute;
+    transform: translateX(-50%); /* centre on the glyph; `top` already sits below it */
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    align-items: flex-start;
     gap: var(--space-1);
+    transition: opacity var(--dur-mid) var(--ease-standard);
   }
-  /* phone: a scrollable bottom SHEET (clears the cost strip) */
-  .roster.sheet {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    transform: none;
-    max-width: none;
-    border-radius: var(--radius) var(--radius) 0 0;
-    border-bottom: none;
-    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-    max-height: 42vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+  .station.dim {
+    opacity: 0.28; /* at-scale filter: non-matching stations recede */
   }
-  .roster.sheet ul {
-    flex-direction: column;
-    flex-wrap: nowrap;
-    gap: var(--space-2);
-  }
-
-  .row {
-    display: flex;
-    align-items: stretch;
-    gap: var(--space-1);
-  }
-  .roster.sheet .row {
-    width: 100%;
-  }
-
-  .row .enter,
-  .row .edit {
+  .station .enter,
+  .station .edit {
+    pointer-events: auto;
     border: 1px solid var(--hairline);
-    background: transparent;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
     color: var(--starlight);
     cursor: pointer;
+    backdrop-filter: blur(6px);
     transition: border-color var(--dur-fast) var(--ease-standard),
       background var(--dur-fast) var(--ease-standard),
-      color var(--dur-fast) var(--ease-standard);
+      color var(--dur-fast) var(--ease-standard),
+      opacity var(--dur-fast) var(--ease-standard);
   }
-  .row .enter {
+  .station .enter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 96px;
+    max-width: 210px;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .station .enter:hover {
+    border-color: color-mix(in srgb, var(--brass) 50%, transparent);
+    background: color-mix(in srgb, var(--brass) 12%, var(--panel));
+  }
+  .station.needs .enter {
+    border-color: color-mix(in srgb, var(--crimson) 45%, var(--hairline));
+  }
+  .s-id {
+    font-size: var(--text-xs);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--brass);
+    line-height: 1.2;
+  }
+  .s-row {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-3);
-    border-radius: var(--radius-pill);
+    line-height: 1.2;
   }
-  .roster.sheet .row .enter {
-    flex: 1 1 auto;
-    border-radius: var(--radius);
-    justify-content: flex-start;
+  .s-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-meta);
   }
-  .row .enter:hover {
-    border-color: color-mix(in srgb, var(--brass) 45%, transparent);
-    background: color-mix(in srgb, var(--brass) 8%, transparent);
+  .s-glyph {
+    font-size: var(--text-xs);
   }
-  .row .edit {
+  .s-stat.running {
+    color: var(--amber);
+  }
+  .s-stat.certified-done {
+    color: var(--plasma-green);
+  }
+  .s-stat.stopped-ember {
+    color: var(--ember);
+  }
+  .s-stat.quota-frost,
+  .s-stat.quota-wait {
+    color: var(--frost);
+  }
+  .s-stat.handoff-beacon,
+  .s-stat.handoff,
+  .s-stat.error {
+    color: var(--crimson);
+  }
+  .s-cost {
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
+  }
+  .s-cur {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+  }
+  .s-retro {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .s-retro.pending {
+    color: var(--amber);
+  }
+  /* the per-station edit affordance — quiet until hover / keyboard focus */
+  .station .edit {
+    align-self: stretch;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    border-radius: var(--radius-pill);
+    width: 30px;
+    border-radius: var(--radius);
     color: var(--text-meta);
     font-size: var(--text-sm);
+    opacity: 0;
   }
-  .roster.sheet .row .edit {
-    border-radius: var(--radius);
-    width: 44px;
+  .station:hover .edit,
+  .station:focus-within .edit {
+    opacity: 1;
   }
-  .row .edit:hover {
+  .station .edit:hover {
     border-color: var(--brass);
     color: var(--brass);
-    background: color-mix(in srgb, var(--brass) 8%, transparent);
-  }
-
-  .meta {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    line-height: 1.1;
-  }
-  .lid {
-    font-size: var(--text-xs);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--brass);
-  }
-  .lstate {
-    font-size: var(--text-2xs);
-    letter-spacing: 0.06em;
-    color: var(--text-meta);
-  }
-  .lcost {
-    font-size: var(--text-xs);
-    color: var(--text-meta);
-    margin-left: auto;
   }
 
   /* ── N-needs-you badge — the one element allowed to be loud ──────────────── */
@@ -871,17 +770,22 @@
     color: color-mix(in srgb, var(--crimson) 30%, var(--starlight));
   }
 
-  /* ── filter pills ───────────────────────────────────────────────────────── */
-  .pills {
+  /* ── at-scale filter bar (top, below the needs-you badge) ─────────────────── */
+  .filters {
+    position: absolute;
+    top: calc(var(--chrome-inset) + 46px);
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
     gap: var(--space-1);
-    margin-bottom: var(--space-1);
-  }
-  .roster.sheet .pills {
-    justify-content: flex-start;
-    margin-bottom: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius-pill);
+    backdrop-filter: blur(8px);
+    z-index: 11;
   }
   .pill {
     display: inline-flex;
@@ -931,191 +835,8 @@
     color: var(--starlight);
   }
 
-  .rosterempty {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    text-align: center;
-    font-size: var(--text-xs);
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
-  }
-
-  /* a row waiting on a human gets a quiet crimson rail (paired with the dot glyph) */
-  .row.needs .enter {
-    border-color: color-mix(in srgb, var(--crimson) 40%, var(--hairline));
-  }
-
-  /* ── retro tag on a row ─────────────────────────────────────────────────── */
-  .retro {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 1px 6px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    font-size: var(--text-2xs);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-    white-space: nowrap;
-  }
-  .retro .rglyph {
-    font-size: 9px;
-    line-height: 1;
-  }
-  .retro.pending {
-    border-color: color-mix(in srgb, var(--amber) 40%, var(--hairline));
-    color: var(--amber);
-  }
-  .retro.done {
-    color: var(--text-faint);
-  }
-
-  /* status dot carries a SHAPE glyph too — never hue alone */
-  .dot {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--text-faint);
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .dot .dglyph {
-    font-size: 9px;
-    line-height: 1;
-    color: var(--void);
-    font-weight: 700;
-  }
-  .dot.running {
-    background: var(--amber);
-  }
-  .dot.certified-done {
-    background: var(--plasma-green);
-  }
-  .dot.stopped-ember {
-    background: var(--ember);
-  }
-  .dot.quota-frost,
-  .dot.quota-wait {
-    background: var(--frost);
-  }
-  .dot.handoff-beacon,
-  .dot.handoff,
-  .dot.error {
-    background: var(--crimson);
-  }
-
-  /* ── hover / detail card ──────────────────────────────────────────────── */
-  .card {
-    position: absolute;
-    transform: translate(-50%, -100%);
-    min-width: 160px;
-    max-width: 240px;
-    padding: var(--space-2) var(--space-3);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    backdrop-filter: blur(8px);
-    pointer-events: none;
-    z-index: 12;
-  }
-  /* flipped below the glyph (anchor at the card's TOP) */
-  .card.below {
-    transform: translate(-50%, 0);
-  }
-  /* a pinned (touch-revealed) card is interactive */
-  .card.pinned {
-    pointer-events: auto;
-  }
-  .cname {
-    font-size: var(--text-sm);
-    color: var(--starlight);
-    margin-bottom: var(--space-1);
-    line-height: 1.3;
-  }
-  .crow {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
-  }
-  .ccost {
-    color: var(--brass);
-  }
-  .cstat {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: var(--text-2xs);
-    color: var(--text-meta);
-  }
-  .cglyph {
-    font-size: var(--text-xs);
-  }
-  .cstat.running {
-    color: var(--amber);
-  }
-  .cstat.certified-done {
-    color: var(--plasma-green);
-  }
-  .cstat.stopped-ember {
-    color: var(--ember);
-  }
-  .cstat.quota-frost,
-  .cstat.quota-wait {
-    color: var(--frost);
-  }
-  .cstat.handoff-beacon,
-  .cstat.handoff,
-  .cstat.error {
-    color: var(--crimson);
-  }
-  .cur {
-    margin-top: var(--space-1);
-    font-size: var(--text-2xs);
-    color: var(--text-meta);
-  }
-  .hint {
-    margin-top: var(--space-2);
-    font-size: var(--text-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--text-faint);
-  }
-  .cactions {
-    display: flex;
-    gap: var(--space-1);
-    margin-top: var(--space-2);
-  }
-  .cbtn {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: var(--space-1) var(--space-3);
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--surface-2);
-    color: var(--starlight);
-    cursor: pointer;
-    transition: border-color var(--dur-fast) var(--ease-standard);
-  }
-  .cbtn.enter {
-    flex: 1 1 auto;
-    border-color: color-mix(in srgb, var(--brass) 45%, transparent);
-    color: var(--brass);
-  }
-  .cbtn.edit {
-    color: var(--text-meta);
-  }
-  .cbtn:hover {
-    border-color: var(--brass);
-  }
+  /* (the old roster-row, status-dot and hover-card styles were removed —
+     the per-glyph stations above replace them entirely) */
 
   /* ── overlays ─────────────────────────────────────────────────────────── */
   .loading {
