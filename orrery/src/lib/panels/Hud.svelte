@@ -156,17 +156,28 @@
   }
   .pill.beacon {
     color: var(--crimson);
-    border-color: color-mix(in srgb, var(--crimson) 50%, transparent);
-    background: color-mix(in srgb, var(--crimson) 12%, transparent);
-    animation: beaconPulse 1.6s ease-in-out infinite;
+    /* the loudest state. Urgency reads as a slow breathing GLOW, never an opacity
+       blink; the static border+shadow stays high-contrast so reduced-motion
+       (which freezes the animation) never makes the state disappear. */
+    border-color: var(--crimson);
+    background: color-mix(in srgb, var(--crimson) 16%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 45%, transparent);
+    animation: beaconBreathe 2.2s ease-in-out infinite;
   }
   .pill.idle {
     color: var(--text-dim);
     border-color: var(--hairline);
   }
-  @keyframes beaconPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
+  @keyframes beaconBreathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 35%, transparent),
+        0 0 6px color-mix(in srgb, var(--crimson) 18%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 65%, transparent),
+        0 0 14px color-mix(in srgb, var(--crimson) 45%, transparent);
+    }
   }
   .phase {
     font-size: 11px;
@@ -186,10 +197,10 @@
     line-height: 1;
   }
   .label {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .horizon {
     font-size: 11px;
@@ -216,9 +227,27 @@
   .quota .num { color: var(--frost); }
   .meta {
     display: flex;
-    gap: 6px;
-    font-size: 10.5px;
-    color: var(--text-faint);
+    gap: var(--space-1);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     flex-wrap: wrap;
+  }
+
+  /* phone / tier-1: a compact HUD that fits a 360px width and doesn't crowd the
+     canvas — drop the meta row, shrink the headline, span the top edge. */
+  @media (max-width: 640px) {
+    .hud {
+      left: var(--space-2);
+      right: var(--space-2);
+      min-width: 0;
+      padding: var(--space-3);
+      gap: var(--space-2);
+    }
+    .big {
+      font-size: var(--text-xl);
+    }
+    .meta {
+      display: none;
+    }
   }
 </style>

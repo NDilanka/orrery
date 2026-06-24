@@ -103,20 +103,25 @@
 <style>
   .verdict {
     position: absolute;
-    bottom: 230px;
-    right: 18px;
+    /* stack above MetricsPanel: it clears the strip at (strip-h + space-4) and
+       reserves ~200px for its card; sit one gap above that so the two never
+       overlap. On a 700px-tall window this anchors ~352px from the bottom. */
+    bottom: calc(var(--strip-h) + var(--space-4) + var(--metrics-block) + var(--space-3));
+    right: var(--chrome-inset);
     width: 300px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 16px;
+    gap: var(--space-3);
+    padding: var(--space-4);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-left-width: 3px;
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
     z-index: 11;
-    font-size: 12px;
+    font-size: var(--text-sm);
+    /* MetricsPanel's populated card height; keeps the stack math in one place */
+    --metrics-block: 200px;
   }
   .verdict.pass {
     border-left-color: var(--plasma-green);
@@ -183,10 +188,10 @@
     gap: 5px;
   }
   .blabel {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .crit {
     margin: 0;
@@ -231,5 +236,13 @@
   }
   .strikes {
     color: var(--crimson);
+  }
+  /* Tier-1 / phone: full-width bottom sheet so the card never overflows 360px */
+  @media (max-width: 640px) {
+    .verdict {
+      left: var(--space-2);
+      right: var(--space-2);
+      width: auto;
+    }
   }
 </style>

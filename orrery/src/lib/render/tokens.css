@@ -33,7 +33,10 @@
   --panel-edge: rgba(201, 162, 75, 0.28);
   --hairline: rgba(234, 240, 255, 0.08);
   --text-dim: rgba(234, 240, 255, 0.56);
-  --text-faint: rgba(234, 240, 255, 0.34);
+  /* state-bearing small labels live here (AA on the void at ≥10.5px) */
+  --text-meta: rgba(234, 240, 255, 0.66);
+  /* lifted 0.34 → 0.46: decorative-only glyphs ≥11px (WCAG non-text 3:1) */
+  --text-faint: rgba(234, 240, 255, 0.46);
 
   /* ── typography ── */
   --font-grotesk: "Space Grotesk", "Inter", system-ui, "Segoe UI", sans-serif;
@@ -43,6 +46,40 @@
 
   --radius: 10px;
   --radius-pill: 999px;
+
+  /* ── spacing scale (4px base) — kills hand-coded px gaps/insets ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --chrome-inset: 18px; /* the canonical viewport gutter all chrome pins to */
+  --strip-h: 120px; /* cost/quota strip height — bottom chrome clears this */
+
+  /* ── type scale — replaces ~80 ad-hoc/fractional font-sizes ── */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --text-display: 30px;
+
+  /* ── tonal elevation ramp (lightness, not just opacity) for z-stack depth ── */
+  --surface-1: #0c0f1e;
+  --surface-2: #11142a;
+  --surface-3: #161a36;
+  --surface-4: #1c2042;
+
+  /* ── motion tokens (CSS chrome) — a non-linear duration ladder + eases.
+        Desktop-biased short; the Pixi rAF keeps its own lerp model. ── */
+  --dur-fast: 150ms; /* in-place state change */
+  --dur-mid: 240ms; /* local move / panel */
+  --dur-zoom: 450ms; /* altitude zoom */
+  --ease-standard: cubic-bezier(0.2, 0, 0.38, 0.9);
+  --ease-out: cubic-bezier(0, 0, 0.38, 0.9); /* entrances */
+  --ease-in: cubic-bezier(0.2, 0, 1, 0.9); /* exits */
 }
 
 /* base obsidian theme */
@@ -76,6 +113,15 @@ body {
 
 .mono {
   font-family: var(--font-mono);
+}
+
+/* ── single global keyboard focus ring (WCAG 2.4.7) ──
+   One rule for every interactive element so each panel can drop its ad-hoc
+   outline:none / border-only focus hacks. Pointer focus stays quiet
+   (:focus-visible), keyboard focus is always a clear plasma ring. */
+:where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--plasma-cyan);
+  outline-offset: 2px;
 }
 
 /* reduced-motion is first-class (plan §3 accessibility) */

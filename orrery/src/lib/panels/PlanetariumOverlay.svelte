@@ -54,12 +54,19 @@
 </script>
 
 <div class="planetarium" class:reduced={uiStore.reducedMotion}>
-  <!-- recessed identity (always, low-contrast) -->
+  <!-- recessed identity + the load-bearing numbers (legible without the HUD) -->
   <div class="ident mono">
     <span class="lid">{s.loopId}</span>
-    <span class="dot">·</span>
-    <span class="cost">{fmtUsd(s.run.cumUsd)}</span>
+    <span class="dot" aria-hidden="true">·</span>
+    <span class="cost num">{fmtUsd(s.run.cumUsd)}</span>
+    {#if s.cost.ratePerMin > 0}
+      <span class="dot" aria-hidden="true">·</span>
+      <span class="rate num">{fmtUsd(s.cost.ratePerMin)}/min</span>
+    {/if}
   </div>
+  {#if s.currentItem}
+    <div class="curitem mono" title={s.currentItem}>→ {s.currentItem}</div>
+  {/if}
 
   <!-- threshold text — appears only when there's something worth saying -->
   {#if threshold}
@@ -87,9 +94,9 @@
     left: 0;
     right: 0;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
-    color: var(--text-faint);
+    color: var(--text-meta);
     text-transform: uppercase;
   }
   .ident .lid {
@@ -97,6 +104,24 @@
   }
   .ident .cost {
     color: var(--brass);
+  }
+  .ident .rate {
+    color: var(--text-meta);
+  }
+  /* what the loop is working on right now — the other load-bearing fact */
+  .curitem {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.1em;
+    color: var(--text-meta);
+    padding: 0 var(--space-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* the threshold line sits just below the star (centre), big + readable */
   .threshold {
@@ -152,5 +177,18 @@
   .exit:hover {
     color: var(--starlight);
     border-color: var(--brass);
+  }
+
+  /* phone: the top edge is taken by the (wrapping) navbar + mode toggle, so the
+     load-bearing identity numbers move BELOW the star where they stay readable. */
+  @media (max-width: 640px) {
+    .ident {
+      top: auto;
+      bottom: 32%;
+    }
+    .curitem {
+      top: auto;
+      bottom: calc(32% - 20px);
+    }
   }
 </style>

@@ -189,17 +189,17 @@
 
 <style>
   .control {
-    position: absolute;
-    bottom: 180px;
-    left: 50%;
-    transform: translateX(-50%);
+    /* positioned by the parent .bottom-dock; wraps on narrow widths */
     display: flex;
     align-items: center;
-    gap: 9px;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    max-width: min(620px, 92vw);
     padding: 9px 12px;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius);
     backdrop-filter: blur(8px);
   }
   .btn {
