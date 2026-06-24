@@ -204,7 +204,7 @@
   }
   .btn {
     font-family: var(--font-grotesk);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.04em;
     padding: 7px 15px;
@@ -213,7 +213,9 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color 0.2s, background 0.2s, transform 0.1s;
+    transition: border-color var(--dur-mid) var(--ease-standard),
+      background var(--dur-mid) var(--ease-standard),
+      transform var(--dur-fast) var(--ease-standard);
   }
   .btn:hover:not(:disabled) {
     border-color: var(--brass);
@@ -242,7 +244,7 @@
     animation: workPulse 1.2s ease-in-out infinite;
   }
   .pending {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.06em;
   }
   .pending.braking {

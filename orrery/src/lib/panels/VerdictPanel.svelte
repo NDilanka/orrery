@@ -136,10 +136,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .vtitle {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.08em;
     color: var(--starlight);
   }
@@ -148,7 +148,7 @@
     border: none;
     color: var(--text-faint);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--text-md);
     line-height: 1;
     padding: 2px 4px;
   }
@@ -158,7 +158,7 @@
   .vbadge {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   .seal {
@@ -176,7 +176,7 @@
     font-weight: 600;
   }
   .model {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-dim);
     padding: 2px 7px;
     border-radius: var(--radius-pill);
@@ -203,30 +203,30 @@
   }
   .crit li {
     color: var(--crimson);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.35;
   }
   .ok {
     color: var(--plasma-green);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .evidence {
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.4;
     white-space: pre-wrap;
     word-break: break-word;
   }
   .next {
     color: var(--starlight);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.4;
   }
   .gate {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-dim);
     border-top: 1px solid var(--hairline);
-    padding-top: 8px;
+    padding-top: var(--space-2);
   }
   .gate.g {
     color: var(--plasma-green);

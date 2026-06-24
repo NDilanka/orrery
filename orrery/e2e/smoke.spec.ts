@@ -140,4 +140,48 @@ test.describe('orrery — browser replay smoke', () => {
 
     expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
   });
+
+  test('4 · ? opens the keyboard HelpOverlay; Esc closes it', async ({ page }) => {
+    const { pageErrors } = collectErrors(page);
+
+    await page.goto('/');
+    await expectLiveCanvas(page);
+    // enter a System so we're in instrument context (shortcuts are guarded elsewhere)
+    await page.locator('.roster .enter').first().click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
+
+    const help = page.locator('[role="dialog"]', { hasText: 'KEYBOARD' });
+    await expect(help).toHaveCount(0); // closed by default
+    await page.keyboard.press('Shift+Slash'); // "?"
+    await expect(help).toBeVisible({ timeout: 5_000 });
+    await page.keyboard.press('Escape');
+    await expect(help).toHaveCount(0);
+
+    expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
+  });
+
+  test('5 · Body view: in-card back returns to the System', async ({ page }) => {
+    const { pageErrors } = collectErrors(page);
+
+    await page.goto('/');
+    await expectLiveCanvas(page);
+    const bmad = page.locator('.roster .enter', { hasText: 'bmad' });
+    await expect(bmad).toBeVisible({ timeout: 20_000 });
+    await bmad.click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
+
+    // fly into the current item's Body dossier
+    const fly = page.locator('.nbtn.body');
+    await expect(fly).toBeVisible({ timeout: 20_000 });
+    await fly.click();
+
+    // the dossier's in-card back control returns to the System (HUD chrome returns)
+    const back = page.locator('button.back', { hasText: 'system' });
+    await expect(back).toBeVisible({ timeout: 10_000 });
+    await back.click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 10_000 });
+    await expect(back).toHaveCount(0);
+
+    expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
+  });
 });

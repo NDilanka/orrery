@@ -105,7 +105,7 @@
     /* positioned by the parent .bottom-dock (sits just above the cost strip) */
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 7px 11px;
     width: min(620px, 80vw);
     background: var(--panel);
@@ -121,14 +121,14 @@
     box-shadow: 0 0 22px color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
   }
   .rwlabel {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.16em;
     color: var(--plasma-cyan);
-    padding-right: 4px;
+    padding-right: var(--space-1);
   }
   .tbtn {
     font-family: var(--font-grotesk);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     min-width: 30px;
     padding: 5px 9px;
@@ -137,7 +137,8 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      background var(--dur-fast) var(--ease-standard);
   }
   .tbtn:hover {
     border-color: color-mix(in srgb, var(--brass) 45%, transparent);
@@ -148,8 +149,8 @@
   }
   .tbtn.sp {
     min-width: 0;
-    font-size: 11px;
-    padding: 4px 8px;
+    font-size: var(--text-xs);
+    padding: var(--space-1) var(--space-2);
     color: var(--text-dim);
   }
   .tbtn.sp.active {
@@ -159,7 +160,7 @@
   }
   .speeds {
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .axis {
     position: relative;
@@ -204,7 +205,7 @@
     height: 100%;
     border-radius: 1px;
     background: var(--text-faint);
-    transition: transform 0.1s;
+    transition: transform var(--dur-fast) var(--ease-standard);
   }
   .pin:hover::after {
     transform: translateX(-50%) scaleY(1.4);
@@ -218,7 +219,7 @@
   .pin.stop::after { background: var(--ember); }
   .pos {
     font-size: 10.5px;
-    color: var(--text-faint);
+    color: var(--text-meta);
     min-width: 48px;
     text-align: right;
   }

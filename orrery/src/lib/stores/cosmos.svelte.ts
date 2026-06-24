@@ -47,6 +47,41 @@ export interface LoopSummary {
   doneCount: number;
   events: number;
   ratePerMin: number;
+  // ── Wave 3 roster-at-scale derived fields (TS-only, NOT parity-bound) ──
+  // needsYou: this loop is waiting on a human (handoff beacon or a crash).
+  // Shared by the filter pills, the per-row badge, and the N-needs-you count.
+  needsYou: boolean;
+  // urgency: a sort weight so the DOM roster floats the loops that want
+  // attention to the top (handoff/error → running → quota → idle → done).
+  // The Pixi star field stays POSITIONAL — this orders the roster only.
+  urgency: number;
+  // retroStatus: rolled up from the loaded state's epics (groups). 'pending'
+  // wins (a retro is owed) over 'done'; null when no group carries a retro.
+  retroStatus: 'pending' | 'done' | null;
+}
+
+// Roster sort weight by state — lower sorts first. Handoff / error are the
+// "needs you" tier and lead; certified-done sinks to the bottom. We read the
+// rest-state first (it wins over status), then fall back to status.
+function urgencyOf(status: RunStatus, restState: RestState): number {
+  if (restState === 'handoff-beacon' || status === 'handoff' || status === 'error') return 0;
+  if (restState === 'quota-frost' || status === 'quota-wait') return 3;
+  if (restState === 'stopped-ember') return 4;
+  if (restState === 'certified-done') return 6;
+  if (status === 'running') return 1;
+  if (status === 'stopping') return 2;
+  return 5; // idle ember
+}
+
+// Roll the per-epic retro status up to one roster tag: a pending retro (owed)
+// outranks a done one; ignore 'optional'/null so the row stays clean.
+function rollupRetro(groups: RunState['groups']): 'pending' | 'done' | null {
+  let sawDone = false;
+  for (const g of Object.values(groups)) {
+    if (g.retroStatus === 'pending') return 'pending';
+    if (g.retroStatus === 'done') sawDone = true;
+  }
+  return sawDone ? 'done' : null;
 }
 
 // Default ceiling when a loop.json / engine never declares one (keeps the
@@ -61,13 +96,17 @@ function summarize(
   const items = Object.values(state.items);
   const ceil = ceilingUsd ?? state.cost.ceilingUsd ?? DEFAULT_CEILING;
   const horizonFrac = ceil > 0 ? Math.min(2, state.run.cumUsd / ceil) : 0;
+  const status = state.run.status;
+  const restState = state.run.restState;
+  // "needs you" = a human gate: a handoff beacon or an outright error.
+  const needsYou = restState === 'handoff-beacon' || status === 'handoff' || status === 'error';
   return {
     id: choice.id,
     name: choice.name,
     theme: choice.theme,
     adapter: choice.adapter,
-    status: state.run.status,
-    restState: state.run.restState,
+    status,
+    restState,
     cumUsd: state.run.cumUsd,
     ceilingUsd: ceil,
     horizonFrac,
@@ -76,6 +115,9 @@ function summarize(
     doneCount: items.filter((it) => it.status === 'done').length,
     events: state.events,
     ratePerMin: state.cost.ratePerMin,
+    needsYou,
+    urgency: urgencyOf(status, restState),
+    retroStatus: rollupRetro(state.groups),
   };
 }
 
@@ -223,6 +265,9 @@ class CosmosStore {
           doneCount: 0,
           events: 0,
           ratePerMin: 0,
+          needsYou: false,
+          urgency: urgencyOf('idle', null),
+          retroStatus: null,
         });
       }
     }
@@ -317,6 +362,9 @@ class CosmosStore {
           doneCount: 0,
           events: 0,
           ratePerMin: 0,
+          needsYou: false,
+          urgency: urgencyOf('idle', null),
+          retroStatus: null,
         },
       ];
     }
@@ -325,6 +373,11 @@ class CosmosStore {
 
   get(id: string): LoopSummary | null {
     return this.loops.find((l) => l.id === id) ?? null;
+  }
+
+  /** How many loops are waiting on a human (handoff beacon / error). */
+  get needsYouCount(): number {
+    return this.loops.reduce((n, l) => n + (l.needsYou ? 1 : 0), 0);
   }
 }
 

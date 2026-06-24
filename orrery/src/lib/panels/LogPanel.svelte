@@ -194,7 +194,7 @@
     gap: 3px;
   }
   .empty {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-meta);
     font-style: italic;
     padding: 4px 0;
@@ -203,7 +203,7 @@
     display: flex;
     align-items: baseline;
     gap: var(--space-2);
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.4;
   }
   .ev {
