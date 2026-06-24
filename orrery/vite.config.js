@@ -25,8 +25,13 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` AND all loop runtime output. A running
+      //    loop writes log.jsonl / run.out / checkpoint.json / sprint-status.yaml — and the
+      //    Brake STOP flag — under loops/<id>/.loop, which sits inside the Vite root. Without
+      //    these ignores, every log append (and the Brake click that writes STOP) trips an HMR
+      //    full reload that wipes live UI state (e.g. the optimistic brake). The app reads
+      //    loops/ via Tauri commands, never as modules, so Vite never needs to watch them.
+      ignored: ["**/src-tauri/**", "**/loops/**", "**/.loop/**"],
     },
   },
 }));

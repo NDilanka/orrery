@@ -109,6 +109,24 @@ pub fn reduce_all_pub(state_dir: &Path, adapter: &str, log_file: Option<&str>) -
     reduce_all(state_dir, adapter, log_file)
 }
 
+/// Overlay value: read the STOP brake flag at `<state_dir>/STOP` → a `StopPending`.
+/// `reduce_all` replays only the event log + checkpoint + sprint-status, never the STOP file,
+/// so `run.stopPending` would be `null` on a fresh snapshot even when a brake is banked on
+/// disk — making a UI reload silently drop the pending brake (the engine still honors the file,
+/// which is why a second Brake click "works"). The snapshot/state builders overlay this so a
+/// banked brake is DURABLE across a reload. Kept OUT of the pure reducer / `reduce_all` so the
+/// cross-language parity goldens (built from the event stream only) stay untouched.
+fn stop_pending_at(state_dir: &Path) -> Option<crate::model::StopPending> {
+    use crate::model::StopPending;
+    let text = std::fs::read_to_string(state_dir.join("STOP")).ok()?;
+    Some(match text.trim().to_lowercase().as_str() {
+        "story" => StopPending::Story,
+        "now" => StopPending::Now,
+        // "phase", empty, or anything else → phase (parity with read_stop_flag's default)
+        _ => StopPending::Phase,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -120,7 +138,9 @@ pub fn load_run(
     log_file: Option<String>,
 ) -> Result<RunState, String> {
     let dir = PathBuf::from(&state_dir);
-    Ok(reduce_all(&dir, &adapter, log_file.as_deref()))
+    let mut state = reduce_all(&dir, &adapter, log_file.as_deref());
+    state.run.stop_pending = stop_pending_at(&dir); // durable brake across reload
+    Ok(state)
 }
 
 #[tauri::command]
@@ -133,8 +153,10 @@ pub fn watch_run(
     let dir = PathBuf::from(&state_dir);
     let lp = log_path(&dir, &adapter, log_file.as_deref());
 
-    // Emit the initial full snapshot synchronously.
-    let initial = reduce_all(&dir, &adapter, log_file.as_deref());
+    // Emit the initial full snapshot synchronously. Overlay the on-disk STOP brake so a banked
+    // brake survives a UI reload/reconnect (reduce_all never reads the STOP file).
+    let mut initial = reduce_all(&dir, &adapter, log_file.as_deref());
+    initial.run.stop_pending = stop_pending_at(&dir);
     channel
         .send(Delta::Snapshot { state: initial })
         .map_err(|e| e.to_string())?;
@@ -161,7 +183,8 @@ pub fn watch_run(
             }
             // Reduce ONCE per batch (not per line) → O(N) on mount instead of O(N^2), and one
             // authoritative State delta. ignore send errors (channel closed => navigated away).
-            let state = reduce_all(&dir, &adapter2, log_file2.as_deref());
+            let mut state = reduce_all(&dir, &adapter2, log_file2.as_deref());
+            state.run.stop_pending = stop_pending_at(&dir); // keep the banked brake live
             let _ = channel.send(Delta::State { state });
         };
 
