@@ -70,8 +70,10 @@
 <style>
   .metrics {
     position: absolute;
-    /* clear the 120px cost/quota strip pinned to the bottom edge */
-    bottom: calc(var(--strip-h) + var(--space-4));
+    /* Stack ABOVE the Mechanism gear cluster (which docks at
+       strip-h + space-4 and is 190px tall on desktop) so the two bottom-right
+       widgets never overlap. Offset = strip + gutter + mechanism box + a gap. */
+    bottom: calc(var(--strip-h) + var(--space-4) + 190px + var(--space-3));
     right: var(--chrome-inset);
     width: 248px;
     display: flex;
@@ -146,7 +148,23 @@
       backdrop-filter: none;
     }
   }
-  /* Tier-1 / phone: become a full-width bottom sheet instead of a fixed card */
+  /* Short viewport: the Mechanism shrinks to 150px (see Mechanism.svelte), so
+     re-derive the panel's stack offset to match and keep them from touching. */
+  @media (max-height: 760px) {
+    .metrics {
+      bottom: calc(var(--strip-h) + var(--space-4) + 150px + var(--space-3));
+    }
+  }
+  /* Very short viewport: the Mechanism is hidden (see Mechanism.svelte) so the
+     report card drops back to docking directly above the cost strip. */
+  @media (max-height: 600px) {
+    .metrics {
+      bottom: calc(var(--strip-h) + var(--space-4));
+    }
+  }
+  /* Tier-1 / phone: become a full-width bottom sheet instead of a fixed card.
+     Placed last so it wins over the height rules on small phones — and the
+     Mechanism is already phone-shrunk + Tier-1, so the two never fight here. */
   @media (max-width: 640px) {
     .metrics {
       left: var(--space-2);

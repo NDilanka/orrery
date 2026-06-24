@@ -251,6 +251,21 @@
     width: 150px;
     height: 150px;
   }
+  /* Short viewport: shrink so the stacked MetricsPanel above still fits without
+     pushing off-screen (MetricsPanel mirrors this 150px in its own offset). */
+  @media (max-height: 760px) {
+    .mechanism {
+      width: 150px;
+      height: 150px;
+    }
+  }
+  /* Very short viewport: drop the Mechanism entirely so RUN QUALITY stays
+     readable (MetricsPanel re-docks above the cost strip at this height). */
+  @media (max-height: 600px) {
+    .mechanism {
+      display: none;
+    }
+  }
   .mechanism canvas {
     width: 100%;
     height: 100%;
