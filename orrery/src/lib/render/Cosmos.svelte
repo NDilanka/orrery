@@ -173,6 +173,29 @@
     onEnter(id);
   }
 
+  // ── roster-at-scale: filter pills + an urgency-sorted DOM view ───────────
+  // The Pixi star FIELD stays positional (glyphs never reorder) — only this DOM
+  // roster sorts/filters, so a wall of loops still answers "what needs me?".
+  type RosterFilter = 'all' | 'needs' | 'running';
+  let filter = $state<RosterFilter>('all');
+
+  // How many loops are waiting on a human — the one glance-first count.
+  const needsYouCount = $derived(cosmosStore.needsYouCount);
+
+  // Urgency-sorted, then filter-narrowed. Stable within a tier (sort by id) so
+  // rows don't jitter as spend/glow change every frame.
+  const rosterView = $derived(
+    [...cosmosStore.loops]
+      .sort((a, b) => a.urgency - b.urgency || a.id.localeCompare(b.id))
+      .filter((l) => {
+        if (filter === 'needs') return l.needsYou;
+        if (filter === 'running') return l.status === 'running';
+        return true;
+      }),
+  );
+
+  const runningCount = $derived(cosmosStore.loops.filter((l) => l.status === 'running').length);
+
   onMount(() => {
     if (!browser) return;
     let destroyed = false;
@@ -552,6 +575,21 @@
     </div>
   {/if}
 
+  <!-- ── N-needs-you badge: the one glance-first, loud-allowed count ──────────
+       glyph + label, never hue alone; only shown when something waits on you -->
+  {#if !cosmosStore.loading && needsYouCount > 0}
+    <button
+      class="needsbadge"
+      onclick={() => (filter = filter === 'needs' ? 'all' : 'needs')}
+      aria-pressed={filter === 'needs'}
+      aria-label="{needsYouCount} {needsYouCount === 1 ? 'loop needs' : 'loops need'} you — filter the roster"
+    >
+      <span class="nbglyph" aria-hidden="true">!</span>
+      <span class="nbcount num">{needsYouCount}</span>
+      <span class="nblabel">{needsYouCount === 1 ? 'needs you' : 'need you'}</span>
+    </button>
+  {/if}
+
   <!-- ── the unified loop roster: the single home for ENTER + EDIT ──────────
        desktop = compact bottom bar · phone = scrollable bottom sheet -->
   {#if !cosmosStore.loading && cosmosStore.loops.length}
@@ -560,36 +598,72 @@
       class:sheet={uiStore.isPhone}
       aria-label="loop roster — enter or edit a loop"
     >
-      <ul>
-        {#each cosmosStore.loops as l (l.id)}
-          {@const key = stateKey(l)}
-          <li class="row">
-            <button
-              class="enter"
-              onclick={() => enterFromRow(l.id)}
-              onmouseenter={() => (hover = hover?.pinned ? hover : null)}
-              aria-label="Enter {loopAria(l)}"
-            >
-              <span class="dot {key}" aria-hidden="true">
-                <span class="dglyph">{stateGlyph(key)}</span>
-              </span>
-              <span class="meta">
-                <span class="lid mono">{l.id}</span>
-                <span class="lstate">{stateLabel(key)}</span>
-              </span>
-              <span class="lcost num">{fmtUsd(l.cumUsd)}</span>
-            </button>
-            <button
-              class="edit"
-              onclick={() => cosmosStore.editLoop(l.id)}
-              aria-label="Edit loop {l.id}"
-              title="Edit {l.name}"
-            >
-              <span aria-hidden="true">✎</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+      <!-- filter pills: All / Needs you / Running. Status by label, not hue. -->
+      <div class="pills" role="group" aria-label="filter loops">
+        <button class="pill" class:on={filter === 'all'} aria-pressed={filter === 'all'} onclick={() => (filter = 'all')}>
+          All<span class="pcount num">{cosmosStore.loops.length}</span>
+        </button>
+        <button
+          class="pill"
+          class:on={filter === 'needs'}
+          class:has={needsYouCount > 0}
+          aria-pressed={filter === 'needs'}
+          onclick={() => (filter = 'needs')}
+        >
+          Needs you<span class="pcount num">{needsYouCount}</span>
+        </button>
+        <button
+          class="pill"
+          class:on={filter === 'running'}
+          aria-pressed={filter === 'running'}
+          onclick={() => (filter = 'running')}
+        >
+          Running<span class="pcount num">{runningCount}</span>
+        </button>
+      </div>
+
+      {#if rosterView.length === 0}
+        <p class="rosterempty mono" role="status">
+          {filter === 'needs' ? 'nothing needs you' : 'no running loops'}
+        </p>
+      {:else}
+        <ul>
+          {#each rosterView as l (l.id)}
+            {@const key = stateKey(l)}
+            <li class="row" class:needs={l.needsYou}>
+              <button
+                class="enter"
+                onclick={() => enterFromRow(l.id)}
+                onmouseenter={() => (hover = hover?.pinned ? hover : null)}
+                aria-label="Enter {loopAria(l)}"
+              >
+                <span class="dot {key}" aria-hidden="true">
+                  <span class="dglyph">{stateGlyph(key)}</span>
+                </span>
+                <span class="meta">
+                  <span class="lid mono">{l.id}</span>
+                  <span class="lstate">{stateLabel(key)}</span>
+                </span>
+                {#if l.retroStatus}
+                  <span class="retro {l.retroStatus}" title="retro {l.retroStatus}">
+                    <span class="rglyph" aria-hidden="true">{l.retroStatus === 'pending' ? '◷' : '✓'}</span>
+                    retro {l.retroStatus}
+                  </span>
+                {/if}
+                <span class="lcost num">{fmtUsd(l.cumUsd)}</span>
+              </button>
+              <button
+                class="edit"
+                onclick={() => cosmosStore.editLoop(l.id)}
+                aria-label="Edit loop {l.id}"
+                title="Edit {l.name}"
+              >
+                <span aria-hidden="true">✎</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </section>
   {/if}
 
@@ -744,6 +818,157 @@
     font-size: var(--text-xs);
     color: var(--text-meta);
     margin-left: auto;
+  }
+
+  /* ── N-needs-you badge — the one element allowed to be loud ──────────────── */
+  .needsbadge {
+    position: absolute;
+    top: var(--chrome-inset);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    border: 1px solid color-mix(in srgb, var(--crimson) 55%, var(--panel-edge));
+    background: color-mix(in srgb, var(--crimson) 16%, var(--panel));
+    color: var(--starlight);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    font-family: var(--font-grotesk);
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      background var(--dur-fast) var(--ease-standard);
+  }
+  .needsbadge:hover,
+  .needsbadge[aria-pressed='true'] {
+    border-color: var(--crimson);
+    background: color-mix(in srgb, var(--crimson) 24%, var(--panel));
+  }
+  .needsbadge .nbglyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--crimson);
+    color: var(--void);
+    font-weight: 700;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .needsbadge .nbcount {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--starlight);
+  }
+  .needsbadge .nblabel {
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: color-mix(in srgb, var(--crimson) 30%, var(--starlight));
+  }
+
+  /* ── filter pills ───────────────────────────────────────────────────────── */
+  .pills {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-bottom: var(--space-1);
+  }
+  .roster.sheet .pills {
+    justify-content: flex-start;
+    margin-bottom: var(--space-2);
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: transparent;
+    color: var(--text-meta);
+    cursor: pointer;
+    font-family: var(--font-grotesk);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      color var(--dur-fast) var(--ease-standard),
+      background var(--dur-fast) var(--ease-standard);
+  }
+  .pill:hover {
+    border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+    color: var(--starlight);
+  }
+  .pill.on {
+    border-color: var(--brass);
+    color: var(--brass);
+    background: color-mix(in srgb, var(--brass) 8%, transparent);
+  }
+  .pill .pcount {
+    font-size: var(--text-2xs);
+    padding: 0 5px;
+    border-radius: var(--radius-pill);
+    background: var(--surface-3);
+    color: var(--text-meta);
+  }
+  .pill.on .pcount {
+    background: color-mix(in srgb, var(--brass) 22%, var(--surface-3));
+    color: var(--brass);
+  }
+  /* the Needs-you pill earns a crimson edge when the count is nonzero */
+  .pill.has {
+    border-color: color-mix(in srgb, var(--crimson) 40%, var(--hairline));
+    color: var(--starlight);
+  }
+  .pill.has .pcount {
+    background: color-mix(in srgb, var(--crimson) 30%, var(--surface-3));
+    color: var(--starlight);
+  }
+
+  .rosterempty {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    text-align: center;
+    font-size: var(--text-xs);
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+  }
+
+  /* a row waiting on a human gets a quiet crimson rail (paired with the dot glyph) */
+  .row.needs .enter {
+    border-color: color-mix(in srgb, var(--crimson) 40%, var(--hairline));
+  }
+
+  /* ── retro tag on a row ─────────────────────────────────────────────────── */
+  .retro {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .retro .rglyph {
+    font-size: 9px;
+    line-height: 1;
+  }
+  .retro.pending {
+    border-color: color-mix(in srgb, var(--amber) 40%, var(--hairline));
+    color: var(--amber);
+  }
+  .retro.done {
+    color: var(--text-faint);
   }
 
   /* status dot carries a SHAPE glyph too — never hue alone */

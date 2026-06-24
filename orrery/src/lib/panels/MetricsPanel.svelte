@@ -96,7 +96,7 @@
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 9px 12px;
+    gap: var(--space-2) var(--space-3);
   }
   .cell {
     display: flex;
@@ -110,7 +110,7 @@
     color: var(--text-meta);
   }
   .mval {
-    font-size: 15px;
+    font-size: var(--text-lg);
     font-weight: 600;
     color: var(--starlight);
     line-height: 1;

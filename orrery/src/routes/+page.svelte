@@ -14,6 +14,7 @@
   // `browser` guard); this shell only orchestrates view state + the transport.
 
   import '$lib/render/tokens.css';
+  import '$lib/fonts'; // self-hosted Space Grotesk + JetBrains Mono (offline-safe)
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { base } from '$app/paths';
@@ -34,6 +35,7 @@
   import QAConsole from '$lib/panels/QAConsole.svelte';
   import PlanetariumOverlay from '$lib/panels/PlanetariumOverlay.svelte';
   import LogPanel from '$lib/panels/LogPanel.svelte';
+  import HelpOverlay from '$lib/panels/HelpOverlay.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { logStore } from '$lib/stores/log.svelte';
@@ -55,6 +57,7 @@
   let view = $state<View>('cosmos');
   let activeLoop = $state<string | null>(null);
   let bodyKey = $state<string | null>(null);
+  let showHelp = $state(false); // the keyboard-shortcut legend overlay
   let mode = $state<'live' | 'replay'>('replay');
   // The kind of the transport that ACTUALLY mounted for the active System (single source of
   // truth for the badge) — vs `mode`, which is only the environment's capability at the Cosmos.
@@ -195,24 +198,54 @@
     void cosmosStore.load(); // refresh Tier-1 summaries on return
   }
 
+  // ── app-wide keyboard shortcuts (guarded vs text entry + open dialogs) ──
+  //   ?  toggle the shortcut legend · Esc  close help / leave a Body
+  //   i  ignite · b  brake(phase) · r  reignite   (only inside a System/Body)
+  function onKeydown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (
+      t &&
+      (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')
+    )
+      return;
+    if (cosmosStore.console) return; // the Tuning Console owns its own keys while open
+    if (e.key === '?') {
+      showHelp = !showHelp;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (showHelp) showHelp = false;
+      else if (view === 'body') backToSystem();
+      else return;
+      e.preventDefault();
+      return;
+    }
+    if (view === 'cosmos') return; // run controls only make sense inside a run
+    const k = e.key.toLowerCase();
+    if (k === 'i') void control('start');
+    else if (k === 'b') void control('stop:phase');
+    else if (k === 'r') void control('resume');
+    else return;
+    e.preventDefault();
+  }
+
   onMount(() => {
     mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
     const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
     void cosmosStore.load();
+    window.addEventListener('keydown', onKeydown);
     return () => {
       teardownUi();
       transport?.stop();
+      window.removeEventListener('keydown', onKeydown);
     };
   });
 </script>
 
 <svelte:head>
   <title>Orrery — {view === 'cosmos' ? 'cosmos' : activeLoop ?? view}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet"
-  />
+  <!-- fonts are self-hosted via $lib/fonts (no runtime CDN; works offline in Tauri) -->
 </svelte:head>
 
 <main class="stage">
@@ -247,9 +280,13 @@
           </nav>
         {/if}
 
+        <!-- chrome only at the System altitude — a Body dossier suppresses the whole
+             instrument (not just dims it) so panels never bleed behind the card. -->
+        {#if view === 'system'}
         {#if uiStore.ambient}
-          <!-- PLANETARIUM: ambient Tier-1; only threshold text, recessed exit. -->
-          <PlanetariumOverlay />
+          <!-- PLANETARIUM: ambient Tier-1; threshold text + a loud decision affordance
+               (answer a blocking question without leaving ambient). -->
+          <PlanetariumOverlay {answer} {observeOnly} />
         {:else}
           <!-- OBSERVATORY / REWIND chrome (the full instrument). The gear
                Mechanism is Tier-2 → hidden on a phone (uiStore.tierOne). -->
@@ -283,18 +320,17 @@
           </div>
         {/if}
 
-        <!-- mode toggle + ws freshness badge sit above every mode -->
-        {#if view === 'system'}
-          <ModeBar canRewind={!!playback} />
-        {/if}
+        <!-- mode toggle + ws freshness badge (System altitude only) -->
+        <ModeBar canRewind={!!playback} />
         <StaleBadge status={wsStatus} />
+        {/if}
       </div>
     {/if}
 
     <!-- ── BODY (one work-item dossier) ────────────────────────────────────── -->
     {#if view === 'body' && bodyKey}
       <div class="layer body-layer in">
-        <BodyView itemKey={bodyKey} />
+        <BodyView itemKey={bodyKey} onBack={backToSystem} />
       </div>
     {/if}
 
@@ -352,6 +388,11 @@
       </button>
     {/if}
 
+    <!-- keyboard-shortcut legend (toggled with ?) -->
+    {#if showHelp}
+      <HelpOverlay onClose={() => (showHelp = false)} />
+    {/if}
+
     <!-- A5: the Tuning Console (create / edit a loop) -->
     {#if cosmosStore.console}
       <TuningConsole
@@ -383,7 +424,8 @@
   .layer {
     position: absolute;
     inset: 0;
-    transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--dur-zoom) var(--ease-standard),
+      transform var(--dur-zoom) var(--ease-out);
     transform-origin: center center;
   }
   .layer.in {

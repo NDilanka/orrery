@@ -39,11 +39,11 @@
 <style>
   .modebar {
     position: absolute;
-    top: 18px;
+    top: var(--chrome-inset);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
     padding: 5px 6px;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
@@ -54,9 +54,9 @@
   .mbtn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     font-family: var(--font-grotesk);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
     padding: 6px 13px;
@@ -65,10 +65,12 @@
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
-    transition: color 0.16s, background 0.16s, border-color 0.16s;
+    transition: color var(--dur-fast) var(--ease-standard),
+      background var(--dur-fast) var(--ease-standard),
+      border-color var(--dur-fast) var(--ease-standard);
   }
   .mbtn .glyph {
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .mbtn:hover:not(:disabled):not(.active) {
     color: var(--starlight);

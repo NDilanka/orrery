@@ -104,8 +104,27 @@
             grid: { stroke: 'rgba(234,240,255,0.05)', width: 1 },
             ticks: { stroke: 'rgba(234,240,255,0.08)' },
             font: axisFont,
-            // x is the sample INDEX — render integers, not fractional ticks
-            // (0, 0.2, 0.4 …) which read as nonsense.
+            // x is the sample INDEX, so ticks MUST be unique integers. uPlot's
+            // default chooses fractional increments over a small range (giving
+            // 0,1,1,2,2,3 once Math.round() collapsed them) — so pin the tick
+            // increment to a whole-number ladder. uPlot walks `incrs` to find the
+            // smallest step whose pixel spacing clears its min-tick gap, so every
+            // candidate (1,2,5,…) is an integer ⇒ gridlines land only on integers.
+            incrs: [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000],
+            // Guard the degenerate axis: a 0- or 1-sample series spans [0,0] with
+            // no real increment, so uPlot can emit a NaN/duplicate split. Pin a
+            // single tick at 0 in that case; otherwise let `incrs` drive splits.
+            splits: (_self: any, _axisIdx: number, scaleMin: number, scaleMax: number, foundIncr: number, foundSpace: number) => {
+              if (!(scaleMax > scaleMin) || !isFinite(foundIncr) || foundIncr <= 0) {
+                return [Math.round(scaleMin) || 0];
+              }
+              const start = Math.ceil(scaleMin / foundIncr) * foundIncr;
+              const out: number[] = [];
+              for (let v = start; v <= scaleMax + 1e-9; v += foundIncr) out.push(Math.round(v));
+              return out.length ? out : [Math.round(scaleMin) || 0];
+            },
+            // Integer formatter — values are already whole, so print with no
+            // decimals (Math.round() also strips any -0 / float drift to a clean int).
             values: (_self: any, ticks: number[]) => ticks.map((v) => '' + Math.round(v)),
           },
           {
