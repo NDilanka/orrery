@@ -1,6 +1,6 @@
 //! File watcher (PROTOCOL.md §6 `watch_run`).
 //!
-//! A debounced (`notify-debouncer-mini`, ~150ms) recommended watcher over a `stateDir`. On each
+//! A debounced (`notify-debouncer-mini`, ~50ms) recommended watcher over a `stateDir`. On each
 //! change it tails new lines from the target log file and hands each complete line (as a parsed
 //! JSON `Value`) to a callback, which the control layer wires into the reducer.
 
@@ -29,8 +29,11 @@ where
     S: Fn() -> bool,
 {
     let (tx, rx) = mpsc::channel();
+    // A short debounce keeps the live log near-continuous: new log.jsonl lines surface within
+    // ~50ms of being appended (was 150ms) — the per-line Event deltas stream as fast as the
+    // engine writes them, instead of in visibly chunky batches.
     let mut debouncer = new_debouncer(
-        Duration::from_millis(150),
+        Duration::from_millis(50),
         move |res: DebounceEventResult| {
             // Forward; ignore send errors (receiver gone => loop exiting).
             let _ = tx.send(res);
@@ -59,7 +62,7 @@ where
         if should_stop() {
             break;
         }
-        match rx.recv_timeout(Duration::from_millis(300)) {
+        match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(Ok(_events)) => {
                 drain_new(&mut tailer, log_path, &mut on_events);
             }
@@ -67,7 +70,9 @@ where
                 // watch error; keep going (file may be transiently locked on Windows)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // periodic poll fallback (also catches missed events on some platforms)
+                // periodic poll fallback (~50ms): on Windows, notify frequently MISSES in-place
+                // appends to log.jsonl, so this poll — not the fs-event — is what actually keeps
+                // the live log advancing. A no-new-bytes drain is cheap (a stat + seek).
                 drain_new(&mut tailer, log_path, &mut on_events);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
