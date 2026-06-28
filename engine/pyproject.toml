@@ -17,6 +17,7 @@ dev = ["pytest", "ruff"]
 loop = "loop.cli:main"
 loop-stop = "loop.cli:main_stop"
 loop-bmad = "loop.cli:main_bmad"
+loop-qa = "loop.cli:main_qa"
 
 [tool.hatch.build.targets.wheel]
 packages = ["loop"]

@@ -1,0 +1,981 @@
+{
+  "app": "brain2",
+  "baseUrl": "http://localhost:3000",
+  "generatedFrom": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts",
+  "epicCount": 7,
+  "storyCount": 33,
+  "acCount": 143,
+  "epics": [
+    {
+      "epic": 1,
+      "storyCount": 4,
+      "acCount": 0,
+      "stories": [
+        {
+          "id": "1.1",
+          "epic": 1,
+          "title": "Project Scaffold & Authentication",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\1-1-project-scaffold-and-authentication.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "### AC-1: Starter Template Initialized\n**Given** no project exists yet\n**When** the starter template is initialized via `npm create convex@latest xynapse -- -t nextjs-clerk-shadcn`\n**Then** a working Next.js 16 + Convex + Clerk + shadcn/ui project is created\n**And** day-one dependencies are installed: `convex-helpers`, `serwist`, `@serwist/next`, `vitest`, `convex-test`, `@axe-core/playwright`\n**And** `next`, `convex`, and `@clerk/nextjs` are pinned to exact versions in package.json\n\n### AC-2: Complete Convex Schema (7 collections)\n**Given** the project is scaffolded\n**When** the complete Convex schema is created in `convex/schema.ts`\n**Then** all 7 collections are defined: `notes`, `categories`, `connections`, `mocs`, `auditLog`, `digests`, `userSettings`\n**And** all indexes are defined including `by_user`, `by_user_status`, `by_user_category`, `by_parent`, `by_source`, `by_target`, `by_note`, `by_user_action`, `by_user_date`\n**And** the vector index `by_embedding` is defined on `notes` with 1536 dimensions and `userId` filter field\n**And** all field types match the architecture document exactly (e.g., `status` as union of `\"pending\" | \"classified\" | \"failed\" | \"review\"`)\n**And** `categories.description: v.string()` is REQUIRED (not optional) — categories MUST include a semantic definition for classification prompts to inject\n**And** `notes.entities: v.optional(v.object({ people: v.array(v.string()), projects: v.array(v.string()), concepts: v.array(v.string()) }))` is defined — populated during classification, enables entity-based linking in post-MVP phases\n**And** `auditLog.details` supports optional fields: `promptVersion: v.optional(v.string())`, `wasEscalated: v.optional(v.boolean())`, `escalatedFrom: v.optional(v.id(\"auditLog\"))` — these enable per-version accuracy analysis and escalation trail reconstruction\n\n### AC-3: Schema Constraint Rationale\n**Given** the schema supports the classification pipeline\n**When** field constraints are reviewed\n**Then** `categories.description` is required so the classification prompt has semantic definitions to inject (a category without a description cannot be used by the classifier)\n**And** `notes.entities` is optional (absent for notes in `\"pending\"` or `\"failed\"` status; populated after successful classification)\n**And** `auditLog.details` fields for `promptVersion`/`wasEscalated`/`escalatedFrom` are all optional to preserve backwards compatibility if the escalation or versioning features are disabled\n\n### AC-4: Auth Wrappers\n**Given** the schema is deployed\n**When** `authenticatedQuery` and `authenticatedMutation` wrappers are created in `convex/lib/auth.ts`\n**Then** they use `convex-helpers` `customQuery`/`customMutation` to extract `userId` from Clerk JWT via `ctx.auth.getUserIdentity()`\n**And** they throw `ConvexError(\"Unauthenticated\")` when no identity is present\n**And** the wrappers attach `userId` to the context object for downstream use\n\n### AC-5: Clerk Middleware\n**Given** auth wrappers exist\n**When** Clerk middleware is configured in `middleware.ts`\n**Then** the `clerkMiddleware` protects all routes except `/sign-in(.*)` and `/sign-up(.*)`\n**And** the matcher pattern excludes static files and `_next` routes: `[\"/((?!.*\\\\..*|_next).*)\", \"/\", \"/(api|trpc)(.*)\"]`\n\n### AC-6: OAuth Redirect Flow\n**Given** Clerk middleware is configured\n**When** a user visits any protected route without authentication\n**Then** they are redirected to the Clerk sign-in page\n**And** Google and GitHub OAuth providers are available as sign-in options (FR53)\n\n### AC-7: Environment Variable Documentation\n**Given** the project is scaffolded\n**When** environment variable documentation is created\n**Then** `.env.example` is committed listing all required variables with comments:\n- `.env.local` vars: `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`\n- Convex env vars (via `npx convex env set`): `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`\n\n**And** comments explain which vars go in `.env.local` vs Convex env\n\n### AC-8: Vitest Configuration\n**Given** the project is scaffolded\n**When** `vitest.config.ts` is created\n**Then** it configures vitest with `convex-test` and the `edge-runtime` environment\n**And** test files use the `.test.ts` / `.test.tsx` naming convention (co-located with source files)\n\n### AC-9: Serwist Wired\n**Given** the project is scaffolded\n**When** Serwist is configured in `next.config.ts`\n**Then** the config uses Turbopack for dev and Webpack for production builds (Serwist compatibility)\n**And** Serwist Service Worker generation is wired (plumbing only — no offline features yet)\n\n### AC-10: Smoke Test Passes\n**Given** all infrastructure is in place\n**When** a smoke test is run in `convex/schema.test.ts`\n**Then** the test validates the testing pattern works (vitest + convex-test + edge-runtime)\n**And** the test passes successfully, confirming the dev environment is functional\n\n### AC-11: GitHub Actions CI\n**Given** the project is scaffolded\n**When** the GitHub Actions CI workflow is committed at `.github/workflows/ci.yml`\n**Then** the workflow runs on every push to `main` and every pull request\n**And** the pipeline executes in this order: (1) `tsc --noEmit` type check, (2) `eslint` lint, (3) `vitest run` backend tests (edge-runtime environment), (4) `@axe-core/playwright` accessibility checks (wired in Story 7.4 — workflow step is scaffolded now but executes against real routes once they exist)\n**And** the CI build FAILS if any step fails — main branch stays green\n**And** Vercel auto-deploys on successful push to `main` (separate, via Vercel GitHub integration)\n**And** Convex deploys via a pipeline step (`npx convex deploy`) using a deploy-key secret stored in GitHub Actions\n\n---"
+        },
+        {
+          "id": "1.2",
+          "epic": 1,
+          "title": "App Shell & Design Foundation",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\1-2-app-shell-and-design-foundation.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": ""
+        },
+        {
+          "id": "1.3",
+          "epic": 1,
+          "title": "Category Setup Wizard",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\1-3-category-setup-wizard.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": ""
+        },
+        {
+          "id": "1.4",
+          "epic": 1,
+          "title": "Proactivity Profile & Onboarding Completion",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\1-4-proactivity-profile-and-onboarding-completion.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": ""
+        }
+      ]
+    },
+    {
+      "epic": 2,
+      "storyCount": 6,
+      "acCount": 48,
+      "stories": [
+        {
+          "id": "2.1",
+          "epic": 2,
+          "title": "Capture Input & Thread Display",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-1-capture-input-and-thread-display.md",
+          "acCount": 9,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Capture input renders (messaging model)"
+            },
+            {
+              "id": "AC2",
+              "title": "Send behavior on mobile (< 768px)"
+            },
+            {
+              "id": "AC3",
+              "title": "Send behavior on desktop (≥ 768px)"
+            },
+            {
+              "id": "AC4",
+              "title": "Submit flow (optimistic, non-blocking)"
+            },
+            {
+              "id": "AC5",
+              "title": "Pending card visual state"
+            },
+            {
+              "id": "AC6",
+              "title": "Classification scheduling (defensive)"
+            },
+            {
+              "id": "AC7",
+              "title": "Burst capture integrity"
+            },
+            {
+              "id": "AC8",
+              "title": "Thread layout & auto-scroll"
+            },
+            {
+              "id": "AC9",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "**AC1 — Capture input renders (messaging model)**\nGiven the user is on the Capture tab, when the capture input renders, then:\n1. An auto-expanding `<textarea>` is displayed at the bottom of the viewport (messaging model).\n2. The input auto-focuses on mount, with the keyboard sliding up on mobile.\n3. The input uses system font at 16px minimum (global rule from Story 1.2 — already enforced in `globals.css`).\n4. The textarea auto-expands with content up to **40% of viewport height**, then scrolls internally.\n5. No title field, category selector, or tag input is present — only the textarea and the send button.\n\n**AC2 — Send behavior on mobile (< 768px)**\nGiven the input is rendered on mobile, then:\n1. The send button (48×48px filled circle) is always visible to the right of the input.\n2. Tapping the send button submits the capture.\n3. Pressing **Enter inserts a newline** (multi-line brain dumps).\n4. The send button is enabled only when input is non-empty (whitespace-only is empty).\n\n**AC3 — Send behavior on desktop (≥ 768px)**\nGiven the input is rendered on desktop, then:\n1. Pressing **Enter submits** the capture.\n2. Pressing **Shift+Enter inserts a newline**.\n3. The send button is also available for mouse/touch.\n\n**AC4 — Submit flow (optimistic, non-blocking)**\nGiven the user types a thought and submits, then:\n1. The input clears immediately.\n2. A `createNote` mutation stores the capture in Convex with: `userId`, `content`, `status: \"pending\"`, `isAtomic: false`, `createdAt: Date.now()`.\n3. A capture card appears in the thread above the input within **100ms** via Convex optimistic update (NFR2).\n4. The card shows the full user text (up to 3 lines, then `line-clamp-3` with tap-to-expand).\n5. The user can immediately start typing the next capture — the input is never blocked.\n\n**AC5 — Pending card visual state**\nGiven a capture card is in `\"pending\"` status, when it renders, then:\n1. No category chip is shown.\n2. A subtle CSS **border pulse** animation plays (2000ms sinusoidal cycle) communicating \"understanding your thought…\".\n3. The card has a 2px left-border in the neutral `--border` color.\n4. The card uses `p-4` padding, `rounded-lg` with **square left corners** (`border-radius: 0 8px 8px 0`), no shadow.\n\n**AC6 — Classification scheduling (defensive)**\nGiven the `createNote` mutation succeeds, when the note is stored, then:\n1. A classification action is scheduled via `scheduler.runAfter(0, internal.classify.classifyNote, { noteId })`.\n2. The mutation verifies **at least one category exists** before scheduling. If 0 categories exist, store with `status: \"pending\"` and **do not** schedule classification.\n\n**AC7 — Burst capture integrity**\nGiven the user submits multiple captures rapidly, then:\n1. Each card gets a unique ID tied to its Convex document.\n2. Cards maintain chronological capture order — never reorder.\n3. The input field is never blocked or displaced by incoming classifications.\n\n**AC8 — Thread layout & auto-scroll**\nGiven the thread has multiple cards, when scrolled, then:\n1. Recent captures are at the bottom, older captures above (messaging spatial model).\n2. The thread auto-scrolls to the newest capture on submission.\n\n**AC9 — Accessibility**\nGiven the capture input is evaluated for accessibility, then:\n1. The textarea has `role=\"textbox\"`, `aria-label=\"Capture a thought\"`, `aria-multiline=\"true\"`.\n2. The send button has `aria-label=\"Send capture\"`.\n3. The pending card has `aria-busy=\"true\"` and `aria-label=\"Understanding your thought\"`.\n4. All interactive elements have visible focus indicators.\n5. Keyboard navigation: Tab moves between input and send button."
+        },
+        {
+          "id": "2.2",
+          "epic": 2,
+          "title": "AI Classification Pipeline",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-2-ai-classification-pipeline.md",
+          "acCount": 10,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "`classifyNote` builds the versioned prompt and calls OpenRouter"
+            },
+            {
+              "id": "AC2",
+              "title": "Zod validation at the AI boundary"
+            },
+            {
+              "id": "AC3",
+              "title": "Store a single-idea classification"
+            },
+            {
+              "id": "AC4",
+              "title": "Low-confidence escalation routing (FR9)"
+            },
+            {
+              "id": "AC5",
+              "title": "OpenRouter API failure → retry then fail"
+            },
+            {
+              "id": "AC6",
+              "title": "Daily rate-limit gate (NFR40, NFR19)"
+            },
+            {
+              "id": "AC7",
+              "title": "Embedding chain (forward hook — Story 2.6, OUT OF SCOPE for 2.2)"
+            },
+            {
+              "id": "AC8",
+              "title": "Zod schema companion tests"
+            },
+            {
+              "id": "AC9",
+              "title": "Prompt infrastructure (`convex/lib/prompts.ts`)"
+            },
+            {
+              "id": "AC10",
+              "title": "Shared AI-pipeline utilities (reusable by 2.6 / 4.1 / 4.3)"
+            }
+          ],
+          "acMarkdown": "> Transcribed from `_bmad-output/planning-artifacts/epics.md#Story 2.2` (lines 712–785). The epics file is the **authoritative** contract (reconciled to the free-model policy in commit `9ebede8`). Where `architecture.md` differs, epics + the implemented `convex/schema.ts` win — see Dev Notes → \"Source-of-truth & reconciliation\".\n\n**AC1 — `classifyNote` builds the versioned prompt and calls OpenRouter**\nGiven a note with `status: \"pending\"` exists and classification is scheduled, when the `classifyNote` internal action executes, then:\n1. It reads the active prompt version via `getActivePromptVersion()`, which reads the `PROMPT_VERSION` Convex env var (default: `\"v3-entity-extraction\"`).\n2. It builds the prompt via `buildClassificationPrompt(version, injections)` in `convex/lib/prompts.ts`.\n3. Injections are assembled from: (a) the user's categories with their required `description` fields from the `categories` collection; (b) top-3 positive examples per category from `auditLog` (`action: \"classification\"`, `details.confidence > 0.85`, excluding notes that were subsequently corrected); (c) the last 20 corrections from `auditLog` (`userId`, `action: \"correction\"`, ordered by `createdAt` ascending so the newest appears **last** — LLMs weight later examples more heavily); (d) the capture text.\n4. The built prompt contains five sections in order: **Categories** (name + id + description per category), **Examples of Confident Classifications** (top-3 per category, grouped by category header), **Recent Corrections** (chronological, oldest-first), **Capture to Classify** (triple-quoted), **Instructions** (classify + extract entities + JSON output schema).\n5. The action calls OpenRouter with the model from the `CLASSIFICATION_MODEL` env var (default `qwen/qwen3-next-80b-a3b-instruct:free`), using OpenRouter `structured_outputs`, passing the built `system` and `user` prompts.\n6. The expected response format is `{ isAtomic: boolean, notes: [{ content, categoryId, confidence, reasoning, entities: { people, projects, concepts } }] }`, and each `entities` sub-field is a `string[]` (may be empty when no entities of that type are present).\n\n**AC2 — Zod validation at the AI boundary**\nGiven the LLM returns a response, when the response is parsed, then:\n1. It is validated using Zod `safeParse` with the `ClassificationResponseSchema`.\n2. The schema validates: `isAtomic` (boolean); `notes` array (min 1 entry); each entry has `content` (string, min 1), `categoryId` (string), `confidence` (number 0–1), `reasoning` (string), and an `entities` object containing `people` (string[]), `projects` (string[]), `concepts` (string[]).\n3. If validation fails, the action returns `{ success: false, error: result.error.message, retryable: false }` (a malformed response is **not** retryable — retrying the same prompt will not fix bad JSON).\n\n**AC3 — Store a single-idea classification**\nGiven a valid single-idea classification response (`isAtomic: true`, exactly 1 note), when the classification is stored via the `storeClassification` internal mutation, then:\n1. The note is updated with `categoryId`, `confidence`, and `status: \"classified\"` (or `\"review\"` if confidence is below the user's threshold).\n2. The note's `entities` field is populated from the LLM response (`entities: { people, projects, concepts }`).\n3. The note's `isAtomic` is set to `true` (single-idea confirmed).\n4. An `auditLog` entry is created with `userId`, `noteId`, `action: \"classification\"`, `details: { newCategory, confidence, modelUsed: <CLASSIFICATION_MODEL>, reasoning, promptVersion }`, `createdAt` (cross-cut: implements FR43 audit logging).\n5. `promptVersion` in `details` is the string value of the active version used for this classification call — this per-capture tagging enables the Week 6 per-version accuracy comparison query.\n\n> Multi-idea responses (`isAtomic: false` or `notes.length > 1`) are **Story 2.5's** scope (atomic split + linking). For 2.2, see Dev Notes → \"Scope boundary: single-idea only\" for the required graceful fallback so a multi-idea capture is never left stuck in `pending`.\n\n**AC4 — Low-confidence escalation routing (FR9)**\nGiven a classification confidence below the user's `confidenceThreshold` (default `0.60`), when the escalation routing is evaluated in `classify.ts`, then the flow executes:\n1. (step 1) Write a first `auditLog` entry for the classification-model attempt with `details.wasEscalated: true`.\n2. (step 2) Check the `ESCALATION_ENABLED` Convex env var.\n3. (step 3) If `ESCALATION_ENABLED === true`: call the escalation model `nvidia/nemotron-3-super-120b-a12b:free` via OpenRouter using the **same** prompt template; write a second `auditLog` entry with `details.escalatedFrom: <first entry id>`, `modelUsed: \"nvidia/nemotron-3-super-120b-a12b:free\"`, and `promptVersion`; then use the escalation model's result — status `\"classified\"` if its confidence ≥ 0.60, `\"review\"` otherwise.\n4. (step 4) If `ESCALATION_ENABLED === false` (MVP default): skip the escalation call and route directly to `status: \"review\"` based on the classification model's low confidence (FR9).\n5. When both models return low confidence (< 0.60), the note goes to `status: \"review\"` — **not** \"higher confidence of the two\" (honest uncertainty preserves the trust architecture over fabricated confidence).\n6. The note document stores only the **final** result (the escalation model's if escalated); the full escalation trail lives in `auditLog` via the two linked entries.\n7. The `ESCALATION_ENABLED` feature flag is a Convex env var, switchable via `npx convex env set ESCALATION_ENABLED=true` after the Week 6 gate review. **MVP ships with the flag `false` — the escalation model call is defined in code but not invoked.**\n8. Escalation cost is bounded: only ~15–20% of captures fall below threshold, so the escalation model is called only for those (not every classification).\n\n**AC5 — OpenRouter API failure → retry then fail**\nGiven the OpenRouter API call fails (network error, timeout, 5xx), when the action handles the failure, then:\n1. It returns `{ success: false, error, retryable: true }`.\n2. A retry is scheduled with exponential backoff: 1min, 5min, 30min (`RETRY_DELAYS = [60_000, 300_000, 1_800_000]`, max 3 retries).\n3. After 3 failed retries, the note status is set to `\"failed\"` via the `markFailed` internal mutation.\n4. The error is logged via `console.error` **without exposing user note content** (NFR41).\n\n**AC6 — Daily rate-limit gate (NFR40, NFR19)**\nGiven the rate-limit check runs before each API call, when the daily classification count is checked via the atomic `incrementAndCheck` mutation, then:\n1. If the count exceeds 40, the classification is **queued for the next day** rather than rejected (NFR40).\n2. The capture remains with `status: \"pending\"` — the capture is never lost (NFR19).\n\n**AC7 — Embedding chain (forward hook — Story 2.6, OUT OF SCOPE for 2.2)**\nGiven the classification action completes successfully, when the embedding pipeline exists (Story 2.6), then `scheduler.runAfter(0, internal.embed.generateEmbedding, { noteId })` is called to chain embedding, and embedding failure does not affect classification display (decoupled via scheduler).\n> `convex/embed.ts` does not exist yet (Story 2.6). Wiring this call now would break `tsc`. For 2.2, leave a clearly-labeled placeholder comment at the success point and do **not** create the chain. See Dev Notes → \"Forward dependency: embedding chain\".\n\n**AC8 — Zod schema companion tests**\nGiven companion tests for the Zod validation schema exist, when the tests run, then they verify: valid input acceptance, missing-field rejection, wrong-type rejection, confidence boundary values (0.0, 1.0, negative, > 1), and empty-`notes`-array rejection. (Enforcement rule 12: every Zod schema must have companion tests.)\n\n**AC9 — Prompt infrastructure (`convex/lib/prompts.ts`)**\nGiven this is the first AI pipeline action using a versioned prompt, when the prompt infrastructure is created, then `convex/lib/prompts.ts` exports:\n1. A `PromptVersion` type union — at minimum `\"v3-entity-extraction\"`, with historical labels (`\"v1-baseline\"`, `\"v2-positive-fewshot\"`) permitted.\n2. A `PROMPTS` record of `{ system: string; userTemplate: string }` per version — `v3-entity-extraction` contains the 5-section user template (Categories / Examples of Confident Classifications / Recent Corrections / Capture to Classify / Instructions) and a system prompt describing the classifier role and strict-JSON output requirement.\n3. `getActivePromptVersion(): PromptVersion` — reads `process.env.PROMPT_VERSION`, falls back to `\"v3-entity-extraction\"`.\n4. `buildClassificationPrompt(version, injections): { system: string; user: string }` — string interpolation for `{user_name}`, `{category_block}`, `{positive_examples_block}`, `{corrections_block}`, `{capture_text}`.\n5. The positive-examples query reads `auditLog` filtered by `action: \"classification\"` with `details.confidence > 0.85`, cross-referenced against correction entries for the same `noteId` to exclude subsequently-corrected captures, then groups by `categoryId` and takes the top 3 highest-confidence entries per category.\n6. The `PROMPT_VERSION` Convex env var can be switched at runtime via `npx convex env set PROMPT_VERSION=<version>` with no code deploy (adding a brand-new version still requires adding its entry to the `PROMPTS` record in a subsequent deploy).\n\n**AC10 — Shared AI-pipeline utilities (reusable by 2.6 / 4.1 / 4.3)**\nGiven this is the first AI pipeline action in the project, when shared utilities are created, then:\n1. `convex/lib/validation.ts` contains `ClassificationResponseSchema` (the first Zod schema — will grow with later AI stories, then split per-domain at ~150 lines).\n2. `convex/lib/retry.ts` contains the exponential-backoff retry pattern (1min/5min/30min, max 3 retries) — a phase override from architecture's `[1B]` marking; needed here in `[1A]` because 2.2 is the first external-API integration.\n3. `convex/lib/rateLimits.ts` contains the atomic `incrementAndCheck` mutation (configurable per-type daily cap: **40 classifications/day** to stay under OpenRouter's free 50/day `:free` ceiling, **100 embeddings/day**) — also a `[1B]→[1A]` phase override.\n4. These utilities (including `convex/lib/prompts.ts`) are reusable by subsequent stories (embedding in 2.6, clustering in 4.1, digest synthesis in 4.3)."
+        },
+        {
+          "id": "2.3",
+          "epic": 2,
+          "title": "Classification Display & Confidence Feedback",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-3-classification-display-and-confidence-feedback.md",
+          "acCount": 9,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Pending → classified transition (reactive)"
+            },
+            {
+              "id": "AC2",
+              "title": "High confidence (> 85%)"
+            },
+            {
+              "id": "AC3",
+              "title": "Medium confidence (60–85%)"
+            },
+            {
+              "id": "AC4",
+              "title": "Low confidence (< 60%, status `\"review\"`)"
+            },
+            {
+              "id": "AC5",
+              "title": "Failed status"
+            },
+            {
+              "id": "AC6",
+              "title": "No semantic content"
+            },
+            {
+              "id": "AC7",
+              "title": "Burst capture (staggered animation)"
+            },
+            {
+              "id": "AC8",
+              "title": "Needs Review filter (FR14)"
+            },
+            {
+              "id": "AC9",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Transcribed from `_bmad-output/planning-artifacts/epics.md#Story 2.3` (lines 788–842). The epics file is the **authoritative** contract. Where `architecture.md` or `ux-design-specification.md` differ, epics + the implemented `convex/schema.ts` + existing code win — see Dev Notes → \"Source-of-truth & reconciliation\".\n\n**AC1 — Pending → classified transition (reactive)**\nGiven a note transitions from `\"pending\"` to `\"classified\"` in Convex, when the reactive subscription on the capture card detects the change, then:\n1. A `ConfidenceBadge` (category chip) animates onto the card via a 300ms ease-out slide-in (`@keyframes slideIn` per spec — reuse the existing `slideUp` 300ms ease-out keyframe; see Dev Notes → \"Animations\").\n2. The border-pulse animation stops (the card is no longer `pending`).\n3. The 2px left-border updates from neutral `--border` to the category's HSL color (treatment follows the confidence variant — see AC2–AC4).\n4. The timestamp is displayed in `text-sm text-muted-foreground`, aligned right on the card header row.\n\n**AC2 — High confidence (> 85%)**\nGiven the classification has high confidence (`confidence > 0.85`), when the `ConfidenceBadge` renders, then:\n1. The chip has a **solid** category-color fill with dark text.\n2. **No** microcopy is displayed below the card.\n3. The left-border uses the **full solid** category color.\n\n**AC3 — Medium confidence (60–85%)**\nGiven the classification has medium confidence (`0.60 ≤ confidence ≤ 0.85`), when the `ConfidenceBadge` renders, then:\n1. The chip uses category color at **40% opacity (light) / 30% (dark)** with category-colored text and a subtle \"?\" icon.\n2. Microcopy appears below the card: **\"I'm not sure about this one — does this look right?\"**\n3. The left-border uses the muted category color matching the chip opacity.\n\n**AC4 — Low confidence (< 60%, status `\"review\"`)**\nGiven the classification has low confidence (`confidence < 0.60`) with `status: \"review\"`, when the `ConfidenceBadge` renders, then:\n1. The chip uses category color at **20% opacity (light) / 15% (dark)** with a **dashed** border.\n2. Microcopy appears below the card: **\"This one's tricky — where does it belong?\"**\n3. The left-border uses a **dashed** style matching the chip.\n\n**AC5 — Failed status**\nGiven a note has `status: \"failed\"`, when the card renders, then: no chip, **muted card opacity**, microcopy: **\"Saved — I'll classify this when I reconnect\"**.\n\n**AC6 — No semantic content**\nGiven a capture has no semantic content (e.g. `\"test\"`, `\"asdf\"`, `\".\"`) and the classification cannot determine a category, when the card renders, then: no chip, microcopy: **\"I'll keep this safe — you can categorize it later if you'd like\"**.\n> The 2.2 backend as shipped does not emit a \"no-category\" outcome (it always assigns a real `categoryId` or routes to `failed`). 2.3 implements the **display** of this state, keyed on a `classified`/`review` note that has **no `categoryId`** — see Dev Notes → \"The no-semantic-content state (data representation)\". This is defensive/forward-compatible rendering; emitting the state from the classifier is out of scope.\n\n**AC7 — Burst capture (staggered animation)**\nGiven multiple classifications arrive simultaneously, when 2+ cards receive classification within the same render cycle, then chip animations **stagger with a 200ms delay** between each.\n\n**AC8 — Needs Review filter (FR14)**\nGiven the user views items pending review, when they access the **\"Needs Review\"** filter, then all notes with `status: \"review\"` are shown with the medium/low confidence treatment inviting correction.\n\n**AC9 — Accessibility**\nGiven classification display is evaluated for accessibility, when card state transitions are inspected, then:\n1. Classification arrival triggers an `aria-live=\"polite\"` announcement: **\"Classified as [category], [confidence level] confidence\"**.\n2. The `ConfidenceBadge` has `role=\"button\"`, `aria-label=\"Category: [name], [confidence level] confidence. Tap to change\"`.\n3. Microcopy is linked to the badge via `aria-describedby`.\n4. All animations respect `prefers-reduced-motion` (instant appear — no slide/pulse)."
+        },
+        {
+          "id": "2.4",
+          "epic": 2,
+          "title": "One-Tap Correction & Learning Signals",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-4-one-tap-correction-and-learning-signals.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Open the correction dropdown"
+            },
+            {
+              "id": "AC2",
+              "title": "Optimistic chip update"
+            },
+            {
+              "id": "AC3",
+              "title": "Persist correction + learning signal"
+            },
+            {
+              "id": "AC4",
+              "title": "Confirmation toast (normal vs high-confidence override) (FR13)"
+            },
+            {
+              "id": "AC5",
+              "title": "Failure revert"
+            },
+            {
+              "id": "AC6",
+              "title": "Corrections feed future classification (FR12)"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Transcribed from `_bmad-output/planning-artifacts/epics.md#Story 2.4` (lines 846–895). The epics file is the **authoritative** contract. Where `architecture.md` or `ux-design-specification.md` differ, epics + the implemented `convex/schema.ts` + existing code win — see Dev Notes → \"Source-of-truth & reconciliation\".\n\n**AC1 — Open the correction dropdown**\nGiven a classified capture card is displayed, when the user taps the category chip (`ConfidenceBadge`), then:\n1. A Dropdown Menu opens showing **all** user-defined categories ordered by AI confidence (highest first — see Dev Notes → \"Dropdown ordering\" for the reconciled, buildable ordering).\n2. Each item is colored with its HSL-generated category color.\n3. The currently assigned category is visually indicated.\n\n**AC2 — Optimistic chip update**\nGiven the correction dropdown is open, when the user taps a different category, then:\n1. The chip updates **instantly** to the new category via optimistic update (local state before mutation).\n2. The left-border color updates to match.\n3. A `correctClassification` public mutation fires in the background.\n\n**AC3 — Persist correction + learning signal**\nGiven the `correctClassification` mutation executes, when the correction is stored, then:\n1. The note's `categoryId` is updated and `status` set to `\"classified\"` (if it was `\"review\"`).\n2. An `auditLog` entry is created with: `userId`, `noteId`, `action: \"correction\"`, `details: { previousCategory, newCategory, confidence: originalConfidence }`, `createdAt` (cross-cut: FR43, FR46).\n   - `previousCategory` / `newCategory` are **category `Id`s** (`v.id(\"categories\")`), `confidence` is the note's **original** confidence read **before** the patch. This exact shape is already consumed by the classifier's few-shot loop — see Dev Notes → \"The learning loop is already wired\".\n\n**AC4 — Confirmation toast (normal vs high-confidence override) (FR13)**\nGiven the correction is saved successfully, when the toast feedback appears, then:\n1. For **normal** corrections (original confidence ≤ 85%): **\"Got it — I'll remember that for next time.\"**\n2. For **high-confidence overrides** (original confidence > 85%): a distinct acknowledgment toast (FR13).\n3. The high-confidence toast uses a **TEMPLATE (not an LLM call)** to avoid added latency/cost on every correction: **``Got it — I'll weight `[previousCategoryName]` less next time when context points to `[newCategoryName]`.``** where the bracketed names are inserted from the category documents.\n4. The toast is **non-blocking, auto-dismisses after 3 seconds, never stacks** (a new toast replaces the existing one).\n\n**AC5 — Failure revert**\nGiven the correction mutation fails, when the optimistic update reverts, then:\n1. The chip and left-border revert to the original category.\n2. A toast appears: **\"Couldn't save — try again\"**.\n\n**AC6 — Corrections feed future classification (FR12)**\nGiven corrections accumulate over time, when the next classification runs (Story 2.2), then the last 20 corrections are included as few-shot examples, chronological with the most recent last (FR12).\n> This is **already implemented** in `convex/classify.ts` → `getClassificationContext` (it reads `auditLog` `action:\"correction\"` rows). 2.4 satisfies this AC by **writing the correctly-shaped rows** (AC3) and **proving the loop** with an integration test — see Dev Notes + Task 3.\n\n**AC7 — Accessibility**\nGiven the correction dropdown is evaluated for accessibility, when the component is inspected, then:\n1. The dropdown uses `role=\"menu\"` with `role=\"menuitem\"` per category.\n2. ↑↓ keys navigate, Enter selects, Escape dismisses.\n3. Focus is trapped inside while open.\n4. The chip has `aria-haspopup=\"menu\"` and an `aria-expanded` state.\n5. The toast uses `role=\"status\"` for screen-reader announcement.\n6. All items have visible focus indicators."
+        },
+        {
+          "id": "2.5",
+          "epic": 2,
+          "title": "Atomic Note Extraction & Linking",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-5-atomic-note-extraction-and-linking.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "The classifier may return a multi-idea response"
+            },
+            {
+              "id": "AC2",
+              "title": "Backend: store the split (the core data write)"
+            },
+            {
+              "id": "AC3",
+              "title": "Frontend: split cards render with a Captured-Together link"
+            },
+            {
+              "id": "AC4",
+              "title": "Captured-Together link expands to show origin + merge action"
+            },
+            {
+              "id": "AC5",
+              "title": "Merge back into one note (FR4)"
+            },
+            {
+              "id": "AC6",
+              "title": "Many-split (3+) collapse"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Transcribed from `_bmad-output/planning-artifacts/epics.md#Story 2.5` (lines 898–943). The epics file is the **authoritative** contract. Where `architecture.md` or `ux-design-specification.md` differ, epics + the implemented `convex/schema.ts` + existing code win — see Dev Notes → \"Source-of-truth & reconciliation\".\n\n**AC1 — The classifier may return a multi-idea response**\nGiven a user submits a capture containing multiple distinct ideas, when the classification action (Story 2.2) processes it, then the LLM may return `isAtomic: false` with multiple entries in the `notes` array. *(This is already what the 2.2 Zod schema accepts and the prompt asks for — 2.5 adds the handling.)*\n\n**AC2 — Backend: store the split (the core data write)**\nGiven an atomic split is detected (**2+ notes** in the response), when the split is processed, then:\n1. The original note (the capture) is **kept with its full text** and `isAtomic: false` — it becomes the hidden *parent/container* (preserves the original for the link preview + merge-back).\n2. A **child note** is created for each extracted idea with: `content`, `categoryId`, `confidence`, `status` (per the same threshold rule as 2.2 — `\"classified\"` if `confidence ≥ confidenceThreshold` else `\"review\"`), `parentCaptureId` (the original note's `_id`), `capturedTogetherGroup` (a single shared UUID for all siblings), `isAtomic: true`, `entities`, `createdAt`.\n3. A `connections` document is created for **each sibling pair** with `source: \"captured_together\"`, `userId`, `sourceNoteId`, `targetNoteId`, `similarity: 1.0`, `createdAt` (N children → `C(N,2)` connections; N=2 → 1, N=3 → 3).\n4. An `auditLog` entry (`action: \"classification\"`) is created for **each child note's** classification (`details: { newCategory, confidence, modelUsed, reasoning, promptVersion }`).\n\n**AC3 — Frontend: split cards render with a Captured-Together link**\nGiven an atomic split has been processed, when the capture thread renders the result, then:\n1. **Individual cards appear for each extracted (child) note** with their own confidence chip and left-border color (reuse the existing `ClassificationCard`).\n2. A **CapturedTogetherLink** appears between sibling cards: a 2px vertical connecting line + 🔗 icon + the text \"Captured together\" in `text-xs muted-foreground`.\n3. The parent/container note does **not** render as its own card.\n\n**AC4 — Captured-Together link expands to show origin + merge action**\nGiven the CapturedTogetherLink is displayed, when the user taps it, then:\n1. An expanded view shows: **\"Captured together on [date] from: '[first 50 chars of original]...'\"**.\n2. A **\"Merge back into one note\"** action is available.\n\n**AC5 — Merge back into one note (FR4)**\nGiven the user taps \"Merge back into one note\", when the merge executes, then:\n1. The child notes are **deleted**.\n2. The parent note is **restored** with `status: \"pending\"` (which **re-triggers classification**).\n3. The `connections` entries with `source: \"captured_together\"` for these notes are **deleted**.\n4. A toast appears: **\"Got it — I'll keep these together\"**.\n\n**AC6 — Many-split (3+) collapse**\nGiven a capture splits into **3+ notes**, when the thread renders, then:\n1. The **first 2 cards display fully**; the remaining appear as an **\"and N more notes\"** expandable group.\n2. Tapping the group reveals all split cards with their classifications and links.\n\n**AC7 — Accessibility**\nGiven atomic-split components are evaluated for accessibility, when inspected, then:\n1. The CapturedTogetherLink has `role=\"button\"`, `aria-label=\"These notes were captured together. Tap to see original or merge\"`.\n2. The merge button has `aria-label=\"Merge back into one note\"`.\n3. Splits are announced via `aria-live=\"polite\"`: **\"Captured. Split into [N] notes: [category 1], [category 2]\"**.\n4. All elements are keyboard-navigable; the sibling cards are wrapped in `role=\"group\"` with `aria-label=\"Captures from same thought\"`."
+        },
+        {
+          "id": "2.6",
+          "epic": 2,
+          "title": "Embedding Generation Pipeline",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\2-6-embedding-generation-pipeline.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Generate the embedding (chained after classification)"
+            },
+            {
+              "id": "AC2",
+              "title": "Store the vector + audit"
+            },
+            {
+              "id": "AC3",
+              "title": "Failure never affects classification/capture (NFR41)"
+            },
+            {
+              "id": "AC4",
+              "title": "Rate limit: queue, never reject (NFR40)"
+            },
+            {
+              "id": "AC5",
+              "title": "Timing (NFR5)"
+            },
+            {
+              "id": "AC6",
+              "title": "Embedding response validation (companion tests)"
+            }
+          ],
+          "acMarkdown": "> Transcribed from `_bmad-output/planning-artifacts/epics.md#Story 2.6` (lines 947–983). The epics file is the **authoritative** contract. Where `architecture.md` differs, epics + the implemented `convex/schema.ts` + existing code win — see Dev Notes → \"Source-of-truth & reconciliation\".\n\n**AC1 — Generate the embedding (chained after classification)**\nGiven a note has been **successfully classified** (Story 2.2 chains this), when the `generateEmbedding` internal action fires via `scheduler.runAfter(0, ...)`, then:\n1. It calls the configured **free embedding provider — Google `gemini-embedding-001`, finalized this story** — at **1536-dim output** so the existing `notes.by_embedding` vector index is unchanged, **directly** (not via OpenRouter, which has no embedding models).\n2. The input is the note's **`content`** field.\n3. The response returns a **1536-dimensional vector**.\n\n**AC2 — Store the vector + audit**\nGiven the embedding is generated successfully, when the vector is stored, then:\n1. The note's **`embedding`** field is updated with the float64 array.\n2. The vector is indexed by **`by_embedding`** with the `userId` filter (automatic — it is the schema's `vectorIndex`; storing the field indexes it).\n3. An **`auditLog`** entry is created with: `userId`, `noteId`, `action: \"embedding\"`, `details: { modelUsed: <configured embedding model id, e.g. \"gemini-embedding-001\"> }`, `createdAt`.\n\n**AC3 — Failure never affects classification/capture (NFR41)**\nGiven the embedding API call fails, when the failure is handled, then:\n1. A retry is scheduled with **exponential backoff (1min, 5min, 30min, max 3)** — reuse `convex/lib/retry.ts`.\n2. The note **remains classified and visible** — embedding failure **never** changes the note's `status` (no `markFailed`-style write touches `notes.status` in this pipeline).\n3. The error is logged via **`console.error` without exposing note `content`** (NFR41) — log the note id only.\n\n**AC4 — Rate limit: queue, never reject (NFR40)**\nGiven the embedding rate limit is checked, when the daily count exceeds **100**, then the embedding is **queued for the next day** (via `scheduler.runAfter(msUntilNextUtcMidnight, ...)`) rather than rejected. Uses the existing atomic `internal.lib.rateLimits.incrementAndCheck` with `type: \"embedding\"` (the 100/day cap already lives in `convex/lib/rateLimits.ts`).\n\n**AC5 — Timing (NFR5)**\nGiven embedding generation timing is measured, when the action completes, then it finishes **within 1 second per note** (async, non-blocking). This is provider latency for a single `embedContent` call; the pipeline adds no blocking work. Set a request timeout to abort a hung call (see Dev Notes).\n\n**AC6 — Embedding response validation (companion tests)**\nGiven companion tests for embedding response validation exist, when tests run, then they verify: **valid 1536-dim array acceptance**, **wrong-dimension rejection**, **non-numeric rejection**, and **empty/malformed response handling**."
+        }
+      ]
+    },
+    {
+      "epic": 3,
+      "storyCount": 5,
+      "acCount": 35,
+      "stories": [
+        {
+          "id": "3.1",
+          "epic": 3,
+          "title": "Note Browsing & Category Filtering",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\3-1-note-browsing-and-category-filtering.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Notes list renders (Browse tab):"
+            },
+            {
+              "id": "AC2",
+              "title": "Loading skeletons:"
+            },
+            {
+              "id": "AC3",
+              "title": "Desktop category sidebar (≥ 768px):"
+            },
+            {
+              "id": "AC4",
+              "title": "Mobile category filter (< 768px):"
+            },
+            {
+              "id": "AC5",
+              "title": "Category-empty state:"
+            },
+            {
+              "id": "AC6",
+              "title": "Zero-captures empty state:"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility:"
+            }
+          ],
+          "acMarkdown": "Verbatim from `epics.md#Story 3.1` (BDD groups AC1–AC8). The dev MUST satisfy every clause.\n\n**AC1 — Notes list renders (Browse tab):**\n1. All of the user's captured notes are displayed (filtered by `userId` via `authenticatedQuery`).\n2. Notes are sorted by `createdAt` **descending** (newest first) — opposite of the capture thread.\n3. Each note renders as a compact card showing: category chip (ConfidenceBadge), capture text (truncated `line-clamp-2`), relative timestamp, and a 2px left-border accent in the category color.\n4. Notes with `status: \"pending\"` or `\"failed\"` are included, with their respective visual treatments from Story 2.3.\n\n**AC2 — Loading skeletons:**\n1. While data has not yet arrived from Convex, shaped skeleton cards are displayed matching the card layout (chip placeholder + text lines).\n2. Skeletons use a slow 2s pulse animation.\n3. Skeletons appear only after a **200ms delay** (prevents flash for fast loads).\n\n**AC3 — Desktop category sidebar (≥ 768px):**\n1. The contextual sidebar shows the user's categories as a list with **note counts per category**.\n2. Each category item is colored with its HSL color.\n3. Tapping a category filters the notes list to only that category.\n\n**AC4 — Mobile category filter (< 768px):**\n1. A category filter bar or dropdown is available above the notes list.\n2. Selecting a category filters the list; selecting \"All\" removes the filter.\n\n**AC5 — Category-empty state:**\n1. When a category filter is active and no notes exist in that category, the empty state shows: `\"No captures in [Category] yet.\"`\n2. No CTA button is shown.\n\n**AC6 — Zero-captures empty state:**\n1. When the user has zero captures total, the Browse tab shows: `\"Your captures will appear here.\"`\n2. No guilt-inducing messaging (design-for-restart principle).\n\n**AC7 — Accessibility:**\n1. The list uses `role=\"feed\"` or `role=\"list\"` with `aria-label=\"Your captures\"`.\n2. Each note card uses `role=\"article\"` with an `aria-label` including category and truncated text.\n3. Category filter controls are keyboard-navigable.\n4. All elements have visible focus indicators.\n\n---"
+        },
+        {
+          "id": "3.2",
+          "epic": 3,
+          "title": "Note Detail View & Deletion",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\3-2-note-detail-view-and-deletion.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Opening the detail view (responsive):"
+            },
+            {
+              "id": "AC2",
+              "title": "Detail content:"
+            },
+            {
+              "id": "AC3",
+              "title": "Correction history display:"
+            },
+            {
+              "id": "AC4",
+              "title": "Delete action + confirmation:"
+            },
+            {
+              "id": "AC5",
+              "title": "Confirmed deletion:"
+            },
+            {
+              "id": "AC6",
+              "title": "Mobile Sheet overlay behavior:"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility:"
+            }
+          ],
+          "acMarkdown": "Verbatim from `epics.md#Story 3.2` (BDD groups AC1–AC7). The dev MUST satisfy every clause.\n\n**AC1 — Opening the detail view (responsive):**\n1. The user taps a note card (Browse tab or capture thread) → the note detail opens.\n2. On mobile (< 768px): a bottom Sheet slides up (half-screen default, draggable/expandable toward full-screen).\n3. On desktop (≥ 768px): the right detail panel shows the note detail (no overlay needed).\n\n**AC2 — Detail content:**\n1. Full capture text, **no truncation** (`whitespace-pre-wrap`).\n2. Category chip with the confidence variant (reuse `ConfidenceBadge`).\n3. Timestamp formatted via `Intl.DateTimeFormat` with the user's locale/timezone (absolute, not the relative \"3h\").\n4. Correction history — list of `auditLog` rows for this note with `action: \"correction\"`.\n5. The AI's classification reasoning — from the note's `auditLog` `action: \"classification\"` row, `details.reasoning`.\n6. For atomic child notes (`parentCaptureId` present): a \"Part of a capture\" link showing the original capture text and sibling notes.\n7. If the note has an `embedding`: a \"Related Notes\" section **placeholder** (populated in Story 3.3).\n\n**AC3 — Correction history display:**\n1. Each correction shows: previous category → new category, the original confidence, and a timestamp.\n2. Entries are ordered **chronologically (oldest first)** to show the learning progression.\n\n**AC4 — Delete action + confirmation:**\n1. The delete action is reachable via swipe-to-reveal (mobile), right-click menu (desktop), or a button in the detail view.\n2. A confirmation dialog appears: `\"Delete this capture? This can't be undone.\"`\n3. The confirm button uses `--destructive` color and is labeled `\"Delete\"` (not generic \"OK\").\n4. Cancel is on the **left**, Delete on the **right**.\n\n**AC5 — Confirmed deletion:**\n1. The `deleteNote` mutation deletes the note document from the `notes` collection.\n2. Associated `connections` entries (where `sourceNoteId` **or** `targetNoteId` matches) are deleted.\n3. Associated `auditLog` entries are **NOT** deleted (audit history preserved).\n4. If the note was a child of an atomic split, the captured-together link updates to reflect the removal.\n5. A toast appears: `\"Capture deleted\"` with a **5-second undo** option.\n6. Tapping \"Undo\" within 5 seconds restores the note.\n\n**AC6 — Mobile Sheet overlay behavior:**\n1. The Sheet can be dismissed by: swiping down, tapping the scrim (dimmed background), or tapping a close button.\n2. Maximum 1 Sheet open at a time (opening a new one replaces the current).\n3. Focus is trapped inside the Sheet and Escape dismisses it.\n4. The Sheet pushes up when the keyboard appears (for any input within the Sheet). *(N/A for this story — the detail Sheet has no text input; see Dev Notes.)*\n\n**AC7 — Accessibility:**\n1. Mobile Sheet and desktop panel have proper focus management (focus trapped in Sheet, auto-focus on open, return focus on close).\n2. Semantic heading structure: `<h2>` for the note, `<h3>` for sections.\n3. The correction history uses proper `<table>` semantics with accessible headers.\n4. The delete confirmation dialog has `role=\"alertdialog\"` with `aria-describedby` pointing to the description text.\n5. All interactive elements have visible focus indicators and are keyboard-navigable.\n\n---"
+        },
+        {
+          "id": "3.3",
+          "epic": 3,
+          "title": "Related Notes Panel",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\3-3-related-notes-panel.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Section appears + vector search (note has an embedding):"
+            },
+            {
+              "id": "AC2",
+              "title": "Results render:"
+            },
+            {
+              "id": "AC3",
+              "title": "\"Still forming\" (recent note, embedding not ready yet):"
+            },
+            {
+              "id": "AC4",
+              "title": "Empty (no similar notes found):"
+            },
+            {
+              "id": "AC5",
+              "title": "Performance:"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility:"
+            }
+          ],
+          "acMarkdown": "Verbatim intent from `epics.md#Story 3.3` (BDD groups AC1–AC6). The dev MUST satisfy every clause.\n\n**AC1 — Section appears + vector search (note has an embedding):**\n1. When viewing a note detail (Story 3.2) **and** the note has a value in its `embedding` field → a \"Related Notes\" section appears in the detail view.\n2. A `getRelatedNotes` **public action** is called with the `noteId`.\n3. The action performs a Convex **vector search** on the `by_embedding` index filtered by `userId`, returning the **top 5** most similar notes, **excluding the current note**.\n\n**AC2 — Results render:**\n1. Up to 5 related-note cards are displayed, each showing: category chip, capture text (truncated `line-clamp-2`), relative timestamp, and a **similarity indicator** (visual only — **no numeric score** in the main UI).\n2. Results include notes from **ANY category** and **ANY time period** — cross-category and cross-time connections are surfaced (FR17).\n3. Tapping a related note opens **its** detail view (mobile: replaces the current Sheet; desktop: navigates the detail panel).\n\n**AC3 — \"Still forming\" (recent note, embedding not ready yet):**\n1. When the note was recently captured and its embedding is still being generated → the section shows: `\"Connections are still forming...\"` in `text-xs muted-foreground`.\n2. The section **automatically refreshes** when the embedding becomes available (no manual reload required).\n\n**AC4 — Empty (no similar notes found):**\n1. When the vector search returns no results → the section shows: `\"No connections yet — keep capturing and I'll find patterns\"`.\n\n**AC5 — Performance:**\n1. The search returns within **500ms** for knowledge bases up to 100K notes (NFR6). (Reusing the stored embedding means **no embedding-API round-trip** here — only the vector search + a bounded hydrate, so this budget is comfortable.)\n\n**AC6 — Accessibility:**\n1. The section has `role=\"region\"` with `aria-label=\"Related notes\"`.\n2. Each related-note card is focusable and activatable via keyboard.\n3. The `\"Connections are still forming...\"` message uses `aria-live=\"polite\"` to announce when connections appear.\n4. All cards have visible focus indicators.\n\n---"
+        },
+        {
+          "id": "3.4",
+          "epic": 3,
+          "title": "Semantic Search",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\3-4-semantic-search.md",
+          "acCount": 10,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Mobile trigger (pull-down):"
+            },
+            {
+              "id": "AC2",
+              "title": "Desktop trigger (⌘K / Ctrl+K):"
+            },
+            {
+              "id": "AC3",
+              "title": "Debounce + cancel-on-type:"
+            },
+            {
+              "id": "AC4",
+              "title": "`searchNotes` action (query embedding + vector search):"
+            },
+            {
+              "id": "AC5",
+              "title": "Results render:"
+            },
+            {
+              "id": "AC6",
+              "title": "Empty results state:"
+            },
+            {
+              "id": "AC7",
+              "title": "Empty input state:"
+            },
+            {
+              "id": "AC8",
+              "title": "Dismiss:"
+            },
+            {
+              "id": "AC9",
+              "title": "Performance (NFR6):"
+            },
+            {
+              "id": "AC10",
+              "title": "Accessibility:"
+            }
+          ],
+          "acMarkdown": "Verbatim intent from `epics.md#Story 3.4` (BDD groups AC1–AC10). The dev MUST satisfy every clause. Where the epics and the UX spec both speak, the **exact copy strings below are authoritative** (cross-checked against `ux-design-specification.md`).\n\n**AC1 — Mobile trigger (pull-down):**\n1. On the Capture tab or Browse tab, on **mobile** (`< 768px`), pulling down from the **top of the capture thread** opens a **bottom Sheet** with a search input at the top.\n2. The input shows a search icon and the placeholder `\"Search your captures...\"`.\n\n**AC2 — Desktop trigger (⌘K / Ctrl+K):**\n1. On **desktop** (`≥ 768px`), pressing **⌘K** (Mac) or **Ctrl+K** (Windows) opens a **floating, centered search panel** overlaying the main content.\n2. The input **auto-focuses** with placeholder `\"Search your captures...\"`.\n\n**AC3 — Debounce + cancel-on-type:**\n1. Typing a natural-language query debounces **300ms** before triggering a search.\n2. Each new keystroke (after debounce) **aborts/supersedes the previous in-flight search** (cancel-on-type) — only the latest query's results may render.\n3. A **subtle loading indicator** appears while a search is in progress.\n\n**AC4 — `searchNotes` action (query embedding + vector search):**\n1. The debounced query calls a **public `searchNotes` action**.\n2. It generates a **query embedding** via the same free provider finalized in Story 2.6 — Google `gemini-embedding-001` at **1536-dim** output (so the existing `by_embedding` index is unchanged), using task type **`RETRIEVAL_QUERY`** (NOT `RETRIEVAL_DOCUMENT`).\n3. It performs a Convex **vector search** on `by_embedding` filtered by `userId`.\n4. Returns results **ranked by semantic similarity (not recency)**.\n\n**AC5 — Results render:**\n1. Each result is a card: capture text (truncated) + **category chip** + **relative date**.\n2. Results are ordered by **relevance (similarity score)**, not chronologically.\n3. Only results from the **most recent** query are displayed (stale results discarded — see AC3.2).\n4. Tapping a result opens the note detail (Sheet on mobile, detail panel on desktop).\n\n**AC6 — Empty results state:**\n1. When the search returns no matches → `\"No captures match that — try different words or a broader description\"`.\n\n**AC7 — Empty input state:**\n1. When the panel is open with **no query typed** → `\"Search across all your captures — try describing what you're looking for\"`.\n\n**AC8 — Dismiss:**\n1. Pressing **Escape** closes the panel and returns focus to the previous context.\n\n**AC9 — Performance (NFR6):**\n1. Results return within **500ms** (embedding generation + vector search combined).\n\n**AC10 — Accessibility:**\n1. The search input has `role=\"searchbox\"` with `aria-label=\"Search your captures\"`.\n2. Results use `role=\"listbox\"` with `aria-label=\"Search results\"`.\n3. Each result has `role=\"option\"` and is keyboard-selectable (**↑/↓** to navigate, **Enter** to open).\n4. The search panel **traps focus** and **Escape** dismisses (Radix Sheet/Dialog supplies both).\n5. The loading state is communicated via **`aria-busy=\"true\"`** on the results container.\n\n> **Search failure (UX spec line 1819, treat as binding):** when the embedding/search call **fails** (provider error, network), the results area shows the error copy `\"Search isn't working right now — try again in a moment\"` — this is **distinct from AC6** (\"no matches\"). A failure MUST NOT render as \"no matches.\"\n\n---"
+        },
+        {
+          "id": "3.5",
+          "epic": 3,
+          "title": "Re-Embedding Batch Utility",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\3-5-re-embedding-batch-utility.md",
+          "acCount": 5,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Iterate & re-embed (the `reEmbedAllNotes` action):"
+            },
+            {
+              "id": "AC2",
+              "title": "Rate limiting, next-day spill, idempotency:"
+            },
+            {
+              "id": "AC3",
+              "title": "Per-note error isolation:"
+            },
+            {
+              "id": "AC4",
+              "title": "Configurable model (NFR37):"
+            },
+            {
+              "id": "AC5",
+              "title": "Personal-scale performance & post-completion correctness:"
+            }
+          ],
+          "acMarkdown": "Verbatim intent from `epics.md#Story 3.5` (BDD groups AC1–AC5). The dev MUST satisfy every clause. This is a **backend-only** story — there is no UI AC (the Settings-hub trigger UI is Epic 6, Story 6.4). The deliverable is the `reEmbedAllNotes` action + its internal machinery and tests.\n\n**AC1 — Iterate & re-embed (the `reEmbedAllNotes` action):**\n1. When the `reEmbedAllNotes` action executes, it iterates **all** of the caller's notes using **paginated reads** (NOT `.collect()` / not loading every note at once).\n2. For each note **with content** (`content.trim() !== \"\"`), it generates a **new embedding** via the **configured** embedding model (the stored-document task type `RETRIEVAL_DOCUMENT`, 1536-dim).\n3. The new embedding **replaces** the existing one on the note document (`notes.embedding`).\n4. An `auditLog` entry with `action: \"embedding\"` is created for **each** re-embedded note (`details.modelUsed` = the configured model).\n\n**AC2 — Rate limiting, next-day spill, idempotency:**\n1. Rate limiting is respected: the **same per-user 100 embeddings/day** gate the live pipeline uses (`internal.lib.rateLimits.incrementAndCheck`, `type: \"embedding\"`), default **100/day**, **configurable**.\n2. If the daily limit is reached mid-batch, the **remaining** notes are scheduled for the next day via `scheduler.runAfter()` (queue, never reject — NFR40), resuming where it left off.\n3. The process is **idempotent / safe to retry**: re-running never corrupts data, never throws to the caller, and converges to *every note carrying a current-model embedding*. (Idempotency is about the embedding end-state — audit rows accumulate one-per-embedding-event by design, see Dev Notes → \"Idempotency vs. audit rows\".)\n\n**AC3 — Per-note error isolation:**\n1. When the re-embedding process hits an error on a **single** note, the error is **logged** and the process **continues with the next note** (NO abort on a single failure).\n2. Failed notes are **tracked for later retry** (a re-run of the utility re-attempts them — see Dev Notes → \"Failed-note tracking\").\n\n**AC4 — Configurable model (NFR37):**\n1. The embedding model identifier can be changed in **configuration** (`EMBEDDING_MODEL` env var) **without code changes**.\n2. The utility uses the **configured** model (`process.env.EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL`), **never a hardcoded model name**. The audit row's `details.modelUsed` records the model actually used.\n\n**AC5 — Personal-scale performance & post-completion correctness:**\n1. At **< 1000 notes**, the full re-embedding completes within **minutes (not days)** — see Dev Notes → \"Performance vs. rate-limit reconciliation\" for how this coexists with the 100/day default cap.\n2. After completion, the user's **vector search** (`api.embed.searchNotes`) and **related notes** (`notes.getRelatedNotes`) reflect the **new embeddings** immediately (patching `notes.embedding` auto-updates the `by_embedding` vector index — no separate reindex step).\n\n---"
+        }
+      ]
+    },
+    {
+      "epic": 4,
+      "storyCount": 5,
+      "acCount": 0,
+      "stories": [
+        {
+          "id": "4.1",
+          "epic": 4,
+          "title": "Nightly Clustering and Auto-MOC Generation",
+          "status": "in-progress",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\4-1-nightly-clustering-and-auto-moc-generation.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "Verbatim from `epics.md#Story-4.1`. Each maps to tasks below.\n\n**AC-1 — Cron configuration**\n> **Given** the cron system is configured\n> **When** `convex/crons.ts` is created\n> **Then** the `nightly-clustering` cron is defined to run at 3 AM user-local time (UTC offset computed from `userSettings.timezone`)\n> **And** crons are staggered: clustering at 3 AM, digest at 4 AM — NOT chained (each independently retryable)\n> **And** cron names use kebab-case (`\"nightly-clustering\"`, `\"daily-digest\"`)\n\n**AC-2 — Loading embeddings + scale strategy**\n> **Given** the `runNightlyClustering` internal action fires\n> **When** it loads the user's note embeddings\n> **Then** it reads all notes with embeddings via paginated queries (not all-at-once)\n> **And** for <5K notes: computes pairwise cosine similarity in-memory\n> **And** for 5K-50K notes: uses Convex vector search to find top-50 neighbors per note (O(n×50) instead of O(n²))\n\n**AC-3 — Adjacency graph + cluster extraction**\n> **Given** cosine similarities are computed\n> **When** the adjacency graph is built\n> **Then** an edge exists between two notes where cosine similarity exceeds 0.70 threshold\n> **And** connected components are found via BFS/DFS traversal\n> **And** clusters with fewer than 3 notes are discarded\n> **And** clusters with more than 100 notes are split into sub-clusters\n\n**AC-4 — Match against existing MOCs**\n> **Given** valid clusters are identified\n> **When** they are compared against existing MOCs\n> **Then** if a cluster matches an existing MOC (significant overlap in note IDs): the MOC's `noteIds` are updated and `clusterVersion` is incremented\n> **And** if a cluster is novel (no matching existing MOC): a new MOC document is created\n\n**AC-5 — New MOC creation + title generation + audit**\n> **Given** a new MOC is created\n> **When** the title needs to be generated\n> **Then** an LLM call (a free OpenRouter model per the free-model policy; default `qwen/qwen3-next-80b-a3b-instruct:free`) synthesizes a title from the cluster's note contents\n> **And** the MOC is stored with: `userId`, `title`, `noteIds`, `confidence` (cluster's internal similarity score), `status: \"suggested\"`, `clusterVersion: 1`, `createdAt`, `updatedAt`\n> **And** an `auditLog` entry is created with `action: \"moc_generated\"` (cross-cut: FR43)\n\n**AC-6 — Existing MOC update + audit**\n> **Given** an existing MOC is updated\n> **When** its note membership changes\n> **Then** the `noteIds` array is updated, `clusterVersion` incremented, `updatedAt` refreshed\n> **And** an `auditLog` entry is created with `action: \"moc_updated\"`\n\n**AC-7 — Idempotency**\n> **Given** the clustering job is evaluated for correctness\n> **When** it runs multiple times with the same data\n> **Then** it produces the same results (idempotent — no duplicate MOCs, NFR21)\n> **And** the `clusterVersion` field prevents duplicate processing\n\n**AC-8 — Performance**\n> **Given** the clustering job is evaluated for performance\n> **When** it runs at personal scale\n> **Then** it completes within 60 seconds for up to 100K notes (NFR7)\n\n**AC-9 — Failure handling + graceful degradation**\n> **Given** the clustering job fails mid-execution\n> **When** a retry occurs\n> **Then** auto-retry with exponential backoff handles the failure (NFR22)\n> **And** the daily digest (Story 4.3) still runs with yesterday's MOC data (graceful degradation)\n\n**Governing requirements:** FR28, FR29, FR30, FR31 (clustering/MOC generation); FR42 (confidence on every MOC); FR43 (audit every AI decision); NFR7 (<60 s / 100K notes); NFR14 (per-user isolation); NFR21 (idempotent); NFR22 (auto-retry backoff); NFR41 (never log note content). [Source: prd.md#FR28–FR43, #NFR7/14/21/22/41]\n\n---"
+        },
+        {
+          "id": "4.2",
+          "epic": 4,
+          "title": "MOC Browsing & Curation",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\4-2-moc-browsing-and-curation.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "Verbatim from `epics.md#Story-4.2`. Each maps to tasks below.\n\n**AC-1 — MOC list grouped by status**\n> **Given** auto-MOCs exist from nightly clustering\n> **When** the user views the MOC list\n> **Then** MOCs are displayed grouped by status: \"Suggested\" (AI-generated, not yet curated) and \"Promoted\" (user-confirmed permanent collections)\n> **And** each MOC card shows: title, note count, confidence indicator (\"AI thinks these belong together\" label for suggested), and a preview of 2-3 note snippets\n> **And** MOCs are sorted by `updatedAt` descending (most recently updated first)\n\n**AC-2 — Introductory language for first MOC**\n> **Given** the user views a suggested MOC introduced with the microcopy\n> **When** it is the first MOC the user sees\n> **Then** the introductory language is: \"I noticed something — these ideas might belong together\"\n\n**AC-3 — MOC detail: note list**\n> **Given** the user opens a MOC detail\n> **When** the MOC's notes are displayed\n> **Then** all notes in the MOC are listed as cards with category chips, text previews, and timestamps\n> **And** each note has a \"×\" remove button\n> **And** tapping a note card navigates to the note detail (Story 3.2)\n\n**AC-4 — Remove note from MOC**\n> **Given** the user taps \"×\" on a note in a MOC\n> **When** the note is removed\n> **Then** the note is removed from the MOC's `noteIds` array\n> **And** the MOC is updated (no confirmation needed — removal is reversible via next clustering run)\n> **And** if the MOC drops below 3 notes, it is automatically archived\n\n**AC-5 — Inline rename**\n> **Given** the user wants to rename a MOC\n> **When** they tap the title (or an edit icon)\n> **Then** the title becomes editable inline\n> **And** pressing Enter or tapping away saves the new title\n> **And** the rename is stored in Convex\n\n**AC-6 — Promote to permanent**\n> **Given** the user wants to promote a suggested MOC\n> **When** they tap \"Promote\" (or equivalent action)\n> **Then** the MOC's `status` changes from `\"suggested\"` to `\"promoted\"`\n> **And** promoted MOCs persist across clustering runs (not overwritten)\n\n**AC-7 — Dismiss MOC**\n> **Given** the user wants to dismiss a suggested MOC\n> **When** they tap \"×\" on the MOC card or a \"Dismiss\" action\n> **Then** the MOC's `status` changes to `\"archived\"`\n> **And** archived MOCs do not appear in the list\n> **And** no confirmation is needed (dismissal is reversible — the MOC can resurface if clustering data warrants it)\n\n**AC-8 — Empty state / Dark Night teaser**\n> **Given** no MOCs exist yet (early usage, <15 captures)\n> **When** the MOC section is viewed\n> **Then** the empty state shows: \"Your ideas are starting to cluster — a suggested collection is forming\" (connections-forming teaser for the Dark Night period)\n\n**AC-9 — Accessibility**\n> **Given** MOC components are evaluated for accessibility\n> **When** the MOC list and detail are inspected\n> **Then** the MOC list uses `role=\"list\"` with `aria-label=\"Knowledge collections\"`\n> **And** each MOC card is focusable and activatable via keyboard\n> **And** the remove \"×\" button has `aria-label=\"Remove [note title] from this collection\"`\n> **And** the inline rename input has `aria-label=\"Collection name\"` and is keyboard-accessible\n> **And** promote/dismiss actions have descriptive `aria-label` text\n\n**Governing requirements:** FR32 (MOC curation), FR33a (connections-forming teaser), FR42 (confidence on every MOC), NFR14 (per-user isolation), NFR29 (4.5:1 contrast), NFR30 (focus indicators), NFR31 (reduced motion), NFR32 (44px touch targets), NFR33 (ARIA live regions). [Source: prd.md#FR32/FR33a/FR42, epics.md#Story-4.2]\n\n---"
+        },
+        {
+          "id": "4.3",
+          "epic": 4,
+          "title": "Daily Digest Synthesis",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\4-3-daily-digest-synthesis.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "Verbatim from `epics.md#Story-4.3`. Each maps to tasks below.\n\n**AC-1 — Cron fires → worthiness evaluated first**\n> **Given** the `daily-digest` cron fires at 4 AM user-local time\n> **When** the `generateDailyDigest` internal action executes\n> **Then** it first evaluates whether a digest is worth generating (intelligent silence algorithm)\n\n**AC-2 — Intelligent silence algorithm (the four worthiness checks)**\n> **Given** the intelligent silence algorithm runs\n> **When** it evaluates digest worthiness\n> **Then** it checks: (1) any new MOCs since last digest? (2) any existing MOCs updated with new notes? (3) any cross-category connections with similarity >0.75 involving notes from different days? (4) any stalled projects (category with no new captures in 7+ days, configurable)?\n> **And** if ALL checks return empty → NO digest is generated, NO notification is sent (FR36)\n> **And** silence preserves the signal-to-noise ratio — when a notification DOES arrive, the user knows it's worth opening\n\n**AC-3 — Surprise heuristic (content filter on connections)**\n> **Given** the surprise heuristic runs on potential digest content\n> **When** connections are evaluated for inclusion\n> **Then** connections where BOTH notes are in the same category AND captured on the same day are FILTERED OUT (expected, low-value) (FR37)\n> **And** connections spanning different categories OR different weeks are INCLUDED (surprising, high-value)\n\n**AC-4 — Stalled project detection + proactivity profile**\n> **Given** stalled project detection runs\n> **When** a category has had no new captures for 7+ consecutive days\n> **Then** a stalled project nudge is included in the digest content\n> **And** the nudge follows the proactivity profile: Coached profiles get nudges, Zen profiles do not (FR35, FR39)\n\n**AC-5 — Content synthesis (LLM)**\n> **Given** the digest is worth generating\n> **When** the content synthesis occurs\n> **Then** a call to a free OpenRouter model (per the free-model policy; default `qwen/qwen3-next-80b-a3b-instruct:free`) synthesizes a natural-language digest from: filtered connections, new/updated MOCs, stalled project data\n> **And** the digest is structured into sections: \"Connections forming\" (new cross-category links), \"Follow-ups\" (time-sensitive items, person mentions), \"This week's theme\" (suggested MOC)\n> **And** the digest follows the 70/30 ratio: ~70% familiar captures (reinforcement), ~30% surprising connections (discovery)\n\n**AC-6 — Storage + audit + notification scheduling**\n> **Given** the digest is generated\n> **When** it is stored\n> **Then** a `digests` document is created with: `userId`, `type: \"daily\"`, `content: { sections: [...], summary }`, `isRead: false`, `createdAt`\n> **And** an `auditLog` entry is created with `action: \"digest_generated\"`\n> **And** a push notification is queued for the user's configured morning time via `scheduler.runAt(morningTimeUTC, internal.notifications.sendPushNotification, { digestId })`\n\n**AC-7 — First-digest quality gate**\n> **Given** the first digest is generated\n> **When** determining if enough data exists\n> **Then** the first digest waits until 3+ captures exist to ensure quality (no \"Day 1 digest with 1 note\")\n\n**AC-8 — Weekly review is CUT (no weekly cron)**\n> **Given** FR34 (weekly review) is on the CUT LIST\n> **When** the cron system is designed\n> **Then** no weekly review cron is created for MVP\n> **And** the architecture supports adding it later without changes to the daily digest pipeline\n\n**AC-9 — Idempotency + LLM-failure handling**\n> **Given** the digest synthesis is evaluated for reliability\n> **When** it runs\n> **Then** the job is idempotent — running it twice for the same day produces only one digest (NFR21)\n> **And** if the LLM call fails, the digest is not generated (no partial/broken digests) and retry occurs\n\n**Governing requirements:** FR33 (daily digest synthesis), FR35 (stalled-project nudges), FR36 (intelligent silence), FR37 (surprise heuristic), FR39 (adapt to proactivity profile), FR43 (audit every AI decision); NFR14 (per-user isolation), NFR21 (idempotent jobs — no duplicate digests), NFR22 (auto-retry backoff), NFR41 (never log note content). The <10 s digest-synthesis latency budget is architecture-stated, not an NFR. [Source: prd.md#FR33-FR43; architecture.md#Decision 6.4, line 115]\n\n---"
+        },
+        {
+          "id": "4.4",
+          "epic": 4,
+          "title": "Digest Display & Interactivity",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\4-4-digest-display-and-interactivity.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "Verbatim from `epics.md#Story-4.4` (lines 1421–1490), regrouped into labeled ACs. Each maps to tasks below.\n\n**AC-1 — DigestLayout renders the header + content-bearing sections**\n> **Given** the user navigates to the Digest tab\n> **When** a digest exists for today (or the most recent unread digest)\n> **Then** the DigestLayout renders with the header: \"Here's what's connecting in your brain today\" (`text-2xl` semibold)\n> **And** the digest is organized into sections, each appearing only when it has content: \"Connections forming\" / \"Follow-ups\" / \"This week's theme\"\n\n**AC-2 — Section + card styling, intelligence ordering**\n> **Given** a digest section is rendered\n> **When** the section content is displayed\n> **Then** section headers use `text-sm muted-foreground` with uppercase styling\n> **And** digest cards use tighter spacing than the capture thread: `p-3` internal padding, `gap-4` between cards\n> **And** each card shows: one-line summary, category chip, and one-tap action to explore\n> **And** content is ordered by intelligence (themes, connections, urgency) — never chronologically\n\n**AC-3 — Note deep-link (Story 3.2)**\n> **Given** the user taps a digest item referencing a note\n> **When** the navigation occurs\n> **Then** the note detail opens (Sheet on mobile, detail panel on desktop) — Story 3.2 (FR40)\n\n**AC-4 — MOC deep-link (Story 4.2)**\n> **Given** the user taps a digest item referencing a MOC\n> **When** the navigation occurs\n> **Then** the MOC detail opens (Story 4.2) showing the collection's notes (FR40)\n\n**AC-5 — Stalled-project nudge response (FR41)**\n> **Given** a stalled-project nudge appears in the digest\n> **When** the user reads the nudge (e.g., \"Dashboard v2 hasn't had activity in 9 days. Still active, or should it move to the back burner?\")\n> **Then** the user can respond with one of three actions: \"Still active\" (dismiss nudge), \"Paused\" (mute future nudges for this topic), or \"Archived\" (stop tracking) (FR41)\n> **And** the response is stored and affects future nudge generation\n\n**AC-6 — Empty state: < 3 captures**\n> **Given** the user has fewer than 3 captures\n> **When** the Digest tab is opened\n> **Then** the empty state shows: \"Capture a few thoughts first — I'll start finding connections after 3+ captures.\"\n> **And** a CTA button \"Go to Capture →\" navigates to the Capture tab\n\n**AC-7 — Empty state: 3+ captures, no digest content**\n> **Given** the user has 3+ captures but no meaningful digest content\n> **When** the Digest tab is opened with no generated digest\n> **Then** the empty state shows: \"Your ideas are growing — I'll surface connections when patterns emerge.\"\n> **And** no CTA — patience is the action\n\n**AC-8 — Dark Night connections-forming teaser**\n> **Given** the user is in the Dark Night period (Week 2-3: 10+ captures accumulated but no auto-MOC has materialized yet)\n> **When** the user views the Digest tab or (desktop) detail panel\n> **Then** a subtle connections-forming teaser is displayed: \"Your ideas are starting to cluster — a suggested collection is forming.\"\n> **And** the teaser appears once the user has ≥10 captures but no MOCs, and disappears once the first MOC is generated\n\n**AC-9 — Loading skeletons**\n> **Given** the digest is loading\n> **When** data has not yet arrived\n> **Then** shaped skeleton cards with section header outlines are displayed with slow 2s pulse\n> **And** skeletons appear only after 200ms delay\n\n**AC-10 — Mark as read**\n> **Given** the user opens the digest\n> **When** the digest is marked as read\n> **Then** the `isRead` field on the digest document is set to `true`\n\n**AC-11 — Accessibility**\n> **Given** the digest is evaluated for accessibility\n> **When** the layout is inspected\n> **Then** sections use `role=\"region\"` with `aria-label=\"[section name]\"`\n> **And** the digest container has `aria-label=\"Daily digest\"`\n> **And** all cards are keyboard-navigable and activatable via Enter\n> **And** stalled-project response buttons have descriptive `aria-label` text\n> **And** color contrast meets 4.5:1 minimum\n> **And** all touch targets ≥ 44x44px\n\n**Governing requirements:** FR40 (deep-link navigation from digest to note/MOC), FR41 (stalled-project nudge response), FR43 (audit AI decisions — N/A for read-only display; nudge responses are user actions, not AI decisions, so no audit row required), FR33a (Dark Night connections-forming teaser); NFR14 (per-user isolation — every new query/mutation is `authenticatedQuery`/`authenticatedMutation`, never accepts `userId`), NFR41 (never log note content). UX: the <30 s scan target, system voice, section taxonomy. [Source: epics.md#Story-4.4; prd.md#FR40-FR41; ux-design-specification.md]\n\n---"
+        },
+        {
+          "id": "4.5",
+          "epic": 4,
+          "title": "Push Notifications & Proactivity Engine",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\4-5-push-notifications-and-proactivity-engine.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "Verbatim from `epics.md#Story-4.5` (lines 1499–1538), regrouped into labeled ACs. Each maps to tasks below.\n\n**AC-1 — Web Push + VAPID configured**\n> **Given** the push notification system is set up\n> **When** Web Push API + VAPID is configured\n> **Then** VAPID keys are generated via `web-push generate-vapid-keys` and stored as Convex env vars (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`)\n> **And** the `web-push` npm package is available in Convex actions\n\n**AC-2 — Subscription prompt (after first capture, never in onboarding)**\n> **Given** the user has completed their first successful capture (not during onboarding)\n> **When** the push subscription prompt appears\n> **Then** a non-blocking toast or banner requests notification permission: \"Want to receive your daily digest? You can change this anytime.\"\n> **And** if the user grants permission, the push subscription endpoint is stored in `userSettings.pushSubscription` as a serialized JSON string\n> **And** if the user dismisses, the prompt reappears after the 5th capture (never blocks capture flow)\n> **And** no permission prompt appears during onboarding\n\n**AC-3 — Scheduled delivery at the user's morning time (NFR11)**\n> **Given** a digest has been generated (Story 4.3)\n> **When** the push notification is scheduled\n> **Then** the `sendPushNotification` internal action is scheduled via `scheduler.runAt(userMorningTimeUTC)` using the user's `digestTime` and `timezone` from `userSettings`\n> **And** the notification is dispatched within 1 minute of the scheduled time (NFR11)\n\n**AC-4 — Notification content + tap target**\n> **Given** the notification is sent\n> **When** the user receives it\n> **Then** the notification shows: \"Your daily digest is ready. [N] new connection[s] discovered.\" (or similar concise summary)\n> **And** tapping the notification opens the app directly to the Digest tab\n\n**AC-5 — Proactivity engine (per-profile behavior, FR39)**\n> **Given** the proactivity engine evaluates notification behavior\n> **When** the user's profile is checked\n> **Then** Zen: daily digest notification only (no nudges, no stalled project alerts)\n> **And** Balanced: daily digest + gentle reminders (stalled projects after 14+ days)\n> **And** Coached: daily digest + active nudges (stalled projects after 7+ days, \"capture drought\" after 3 days)\n> **And** Custom: user-configurable combination of the above behaviors (FR39)\n\n**AC-6 — Delivery failure is graceful**\n> **Given** the push subscription fails or expires\n> **When** the notification cannot be delivered\n> **Then** the failure is logged via `console.error`\n> **And** the digest remains accessible in-app on the Digest tab (push is a convenience, not a requirement)\n\n**AC-7 — Multi-user-ready architecture (documented, not implemented)**\n> **Given** the notification system is evaluated for the future multi-user path\n> **When** the architecture is reviewed\n> **Then** MVP uses `scheduler.runAt()` with per-user calculated timestamps from the nightly digest job\n> **And** future multi-user: global cron triggers fan-out that schedules individual `runAt()` per user (documented, not implemented)\n\n**Governing requirements:** FR38 (push notifications at user-configured times), FR39 (adapt notifications to proactivity profile), FR40 (navigate from notification → Digest tab); NFR11 (push dispatched within 1 min of schedule), NFR14 (per-user isolation — every new query/mutation is `authenticatedQuery`/`authenticatedMutation` or an internal user-scoped query; never accepts a `userId` from a client), NFR41 (never log note content — push logs carry ids/status/error strings only), NFR22 (graceful degradation — a failed push never breaks the digest). UX: \"push notifications are invitations, not guilt trips\"; \"capture is sacred — nothing interrupts the capture flow.\" [Source: epics.md#Story-4.5; prd.md#FR38-FR40; architecture.md#Decision-6.5; ux-design-specification.md L123,L220,L286]\n\n---"
+        }
+      ]
+    },
+    {
+      "epic": 5,
+      "storyCount": 3,
+      "acCount": 22,
+      "stories": [
+        {
+          "id": "5.1",
+          "epic": 5,
+          "title": "Audit Trail Browser",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\5-1-audit-trail-browser.md",
+          "acCount": 8,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "List renders (entry point: Settings → Audit Trail)"
+            },
+            {
+              "id": "AC2",
+              "title": "Classification entry detail"
+            },
+            {
+              "id": "AC3",
+              "title": "Correction entry detail"
+            },
+            {
+              "id": "AC4",
+              "title": "Filtering"
+            },
+            {
+              "id": "AC5",
+              "title": "Pagination / scale"
+            },
+            {
+              "id": "AC6",
+              "title": "Note deep-link"
+            },
+            {
+              "id": "AC7",
+              "title": "Empty state"
+            },
+            {
+              "id": "AC8",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-5.1` (lines 1548–1595). Transcribed faithfully; **(the parenthetical notes are dev guidance, not new requirements)**.\n\n**AC1 — List renders (entry point: Settings → Audit Trail)**\n- **Given** the user navigates to Settings → Audit Trail, **When** the browser renders, **Then** it displays all `auditLog` entries for the user, sorted by `createdAt` **descending** (newest first).\n- **And** each entry shows: timestamp (formatted via `Intl.DateTimeFormat`), action type as a **human-readable label** (\"Classification\", \"Correction\", \"Embedding\", \"Collection Generated\", \"Collection Updated\", \"Digest Generated\"), referenced note (truncated text preview when `noteId` exists), and key details.\n\n**AC2 — Classification entry detail**\n- **Given** a classification entry, **Then** it shows: assigned category, **numeric confidence** (e.g. \"92%\"), the model id used (e.g. `qwen/qwen3-next-80b-a3b-instruct:free`), and the AI's reasoning text.\n- **And** this is the **ONLY** place in the app where numeric confidence percentages are shown (main UI uses visual variants only — do not regress that rule elsewhere).\n\n**AC3 — Correction entry detail**\n- **Given** a correction entry, **Then** it shows: previous category → new category, the **original** confidence (what the AI assigned before the user corrected), and the timestamp of the correction.\n\n**AC4 — Filtering**\n- **Given** the user wants to filter, **Then** filters are available for: **action type** (classification, correction, embedding, moc_generated, …), **date range** (from/to), **category**, and **specific note**.\n- **And** filters can be combined (e.g. \"all corrections in the last 7 days for category Projects\").\n- **And** the query uses the `by_user_action` and `by_note` indexes for efficient filtering (see Dev Notes — index-selection strategy; the category predicate is the one documented exception).\n\n**AC5 — Pagination / scale**\n- **Given** many entries, **Then** pagination or infinite scroll is implemented (do **not** load all entries at once).\n- **And** loading states use **skeleton cards** consistent with the app's loading pattern.\n\n**AC6 — Note deep-link**\n- **Given** the user taps an audit entry referencing a note, **Then** the note detail opens (Story 3.2). **Reuse** the existing `?note=` overlay (see Dev Notes — do NOT build a new viewer; mind the param collision).\n\n**AC7 — Empty state**\n- **Given** the audit trail is empty (new user, no captures), **Then** the empty state shows exactly: **\"AI decisions will appear here as you capture thoughts.\"**\n\n**AC8 — Accessibility**\n- **Given** the browser is evaluated for a11y, **Then** the audit list uses proper `<table>` semantics with column headers (`<th>`) and `aria-sort` on sortable columns.\n- **And** filter controls have visible labels and are keyboard-operable.\n- **And** all entries are keyboard-navigable (Tab between rows, Enter to open the note).\n- **And** color contrast meets 4.5:1 minimum.\n- **And** **long-press on mobile / right-click on desktop** from any classified card in the capture thread also opens the audit trail **filtered to that note** (\"Why this category?\" contextual access)."
+        },
+        {
+          "id": "5.2",
+          "epic": 5,
+          "title": "Correction Rate Trends & Trust Metrics",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\5-2-correction-rate-trends-and-trust-metrics.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Trend visualization renders (entry point: Settings → Audit Trail, or a dedicated \"Trust Metrics\" section)"
+            },
+            {
+              "id": "AC2",
+              "title": "Rate computed from `auditLog`"
+            },
+            {
+              "id": "AC3",
+              "title": "Summary metrics"
+            },
+            {
+              "id": "AC4",
+              "title": "Confidence display consistency verified (FR42)"
+            },
+            {
+              "id": "AC5",
+              "title": "Correction-history data model supports future learning (FR46)"
+            },
+            {
+              "id": "AC6",
+              "title": "Insufficient-data empty state"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-5.2` (lines 1599–1645). Transcribed faithfully; **(the parenthetical notes are dev guidance, not new requirements)**.\n\n**AC1 — Trend visualization renders (entry point: Settings → Audit Trail, or a dedicated \"Trust Metrics\" section)**\n- **Given** the user navigates to the Trust Metrics section, **When** the correction-trends view renders, **Then** a trend visualization shows the correction rate over time.\n- **And** the correction rate is `corrections / total_classifications` per time period (**weekly** buckets — see Dev Notes for the bucketing decision).\n- **And** the trend is a **simple declining line or bar chart** showing the rate dropping over time (e.g. 15% → 8% → 4.2%). (Built as a lightweight inline **SVG** — do NOT add a charting library; see Dev Notes trap #1.)\n\n**AC2 — Rate computed from `auditLog`**\n- **Given** the rate is calculated, **When** the data is queried from `auditLog`, **Then** classifications are counted by filtering `action: \"classification\"` grouped by time period.\n- **And** corrections are counted by filtering `action: \"correction\"` grouped by time period.\n- **And** the rate is `corrections / classifications` (displayed as **correction rate** — falling is good). (Accuracy = `1 - rate`; pick one consistent framing in the UI — this story displays **correction rate** to match the \"declining line\" narrative.)\n\n**AC3 — Summary metrics**\n- **Given** summary metrics are displayed, **When** the trust-metrics section renders, **Then** it shows: **total captures classified**, **total corrections made**, **current correction rate (last 7 days)**, and **overall trend direction** (improving / stable / declining).\n- (Trend direction semantics: **improving = correction rate falling**. See the aria-label example in AC7.)\n\n**AC4 — Confidence display consistency verified (FR42)**\n- **Given** confidence scores are verified across the app, **When** all AI-generated outputs are reviewed, **Then** every classification card displays confidence via **`ConfidenceBadge`** (verified from Epic 2).\n- **And** every MOC displays a confidence indicator (\"AI thinks these belong together\" with visual treatment per confidence level, from Epic 4).\n- **And** the audit trail (Story 5.1) shows numeric confidence for detailed inspection.\n- **And** the consistency of confidence display across all surfaces is **verified** (this is a VERIFY task — assert via tests; do NOT refactor existing surfaces — see Dev Notes trap #6).\n\n**AC5 — Correction-history data model supports future learning (FR46)**\n- **Given** the correction-history data model supports future learning, **When** the data model is verified, **Then** every correction in `auditLog` has: `previousCategory`, `newCategory`, `confidence` (original), `createdAt` (timestamp).\n- **And** this structure supports a future decay algorithm (recent corrections weighted higher) **without schema changes**.\n- **And** corrections are queryable by recency (the `by_user_action` index with trailing `createdAt` enables this). (VERIFY task — already true from Story 2.4; assert it, change nothing.)\n\n**AC6 — Insufficient-data empty state**\n- **Given** not enough data exists for meaningful trends (**< 20 classifications**, lifetime total), **When** the trends view renders, **Then** the empty state shows exactly: **\"Keep capturing — I'll show accuracy trends after 20+ classifications.\"**\n- **And** **no chart is shown** (prevents a misleading visualization from a tiny sample).\n\n**AC7 — Accessibility**\n- **Given** the trends are evaluated for a11y, **When** the visualization is inspected, **Then** the chart has a **text-based alternative** (e.g. a table of values below the chart).\n- **And** the chart uses `role=\"img\"` with an `aria-label` summarizing the trend (e.g. \"Correction rate: 15% in week 1, 8% in week 2, 4% in week 3 — improving\").\n- **And** colors used in the chart are **not the sole indicator** (line/point labels, data-point annotations)."
+        },
+        {
+          "id": "5.3",
+          "epic": 5,
+          "title": "Circuit Breakers & Absence Tolerance",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\5-3-circuit-breakers-and-absence-tolerance.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Three circuit breakers evaluated during daily digest synthesis"
+            },
+            {
+              "id": "AC2",
+              "title": "Circuit Breaker 1: Capture Drought → gentle re-engagement nudge"
+            },
+            {
+              "id": "AC3",
+              "title": "Circuit Breaker 2: Trust Erosion → informational audit alert"
+            },
+            {
+              "id": "AC4",
+              "title": "Circuit Breaker 3: Nudge Fatigue → automatic profile downshift"
+            },
+            {
+              "id": "AC5",
+              "title": "Design-for-restart / Absence Tolerance (FR48) — VERIFY across the whole app"
+            },
+            {
+              "id": "AC6",
+              "title": "Integration with existing systems"
+            },
+            {
+              "id": "AC7",
+              "title": "Correctness / boundary tests"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-5.3` (lines 1649–1704). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**. The three breakers are evaluated inside the **existing** daily-digest cron pipeline (Story 4.3 `generateDailyDigest` → `digestForUser`); the pure detection logic lives in `convex/lib/` as reusable, testable units.\n\n**AC1 — Three circuit breakers evaluated during daily digest synthesis**\n- **Given** the circuit-breaker detection logic is implemented, **When** the daily digest evaluation runs (integrated with Story 4.3's pipeline), **Then** all three circuit breakers below are evaluated each cron run.\n- (They are **additional checks inside the existing `digestForUser`** — NOT a new cron, NOT a new public action. Pure detection functions live in `convex/lib/circuitBreakers.ts`; the DB reads/writes are internal queries/mutations added to `convex/digest.ts`. See Dev Notes \"Integration map\".)\n\n**AC2 — Circuit Breaker 1: Capture Drought → gentle re-engagement nudge**\n- **Given** the user has captured **fewer than 1 note/day for 3+ consecutive days** (operationalized as: **no capture within `captureDroughtDays` days**, the proactivity-config threshold — see trap #2), **When** the drought is detected, **Then** a re-engagement nudge is included in the next digest **if the proactivity profile allows it**, with the **exact** copy: **\"Haven't heard from you in a few days — ready when you are\"**.\n- **And** the nudge is **gentle, not guilt-inducing** (consistent with \"absence is not failure\"). It is **code-generated deterministic copy** (NOT LLM prose — guarantees the tone) and **rate-limited** so a prolonged drought does not re-nudge daily (see trap #3 — the cadence guard).\n- **And** **Zen profiles do NOT receive this nudge; Balanced and Coached profiles DO.** (This requires a config change — see trap #1: today only Coached has a non-null `captureDroughtDays`. Set Balanced's to `3` so it matches the AC. Custom follows Balanced for MVP.)\n\n**AC3 — Circuit Breaker 2: Trust Erosion → informational audit alert**\n- **Given** the **correction rate exceeds 20%** over any **rolling 7-day window**, **When** the threshold is breached, **Then** an alert is logged in the audit trail with **`action: \"trust_erosion_alert\"`**.\n- **And** the alert is **visible in the Audit Trail Browser (Story 5.1)** for the user (developer) to investigate.\n- **And** the system does **NOT** automatically change classification behavior — the alert is **informational only**, prompting the developer to retune prompts or switch models.\n- (`rate = corrections / classifications` over the last 7 days, both row-counts, mirroring Story 5.2's definition. \"Exceeds 20%\" → strict `> 0.20`; exactly 20% does NOT fire. Apply a brand-new-user sample guard — see trap #4. De-dupe so the alert is not re-logged every day the rate stays high — see trap #5.)\n\n**AC4 — Circuit Breaker 3: Nudge Fatigue → automatic profile downshift**\n- **Given** **3+ consecutive digests** have been delivered but **remain unread** (`isRead: false`), **When** nudge fatigue is detected, **Then** the user's proactivity profile is **automatically downshifted one level**: **Coached → Balanced → Zen**.\n- **And** the downshift is logged in the audit trail with **`action: \"nudge_fatigue_downshift\"`**.\n- **And** the user is **NOT notified** about the downshift (no push, no UI — reducing noise is the goal).\n- **And** the user can manually re-escalate via Settings (Story 1.4 / Epic 6) — **out of scope here** (no Settings profile-editor UI is built in this story; only the internal downshift path).\n- (Downshift **stops at Zen** (cannot go lower). **Custom is NOT downshifted** — its knobs are user-defined, Story 6.4. Re-evaluate only against digests created **after the last downshift** so a single fatigue episode doesn't cascade — see trap #6.)\n\n**AC5 — Design-for-restart / Absence Tolerance (FR48) — VERIFY across the whole app**\n- **Given** a user returns after **any** absence (1 day, 2 weeks, 3 months), **When** the app loads, **Then** it presents the **same clean interface as daily use**:\n  - **NO** \"Welcome back!\" message.\n  - **NO** accumulated badge counts on any tab.\n  - **NO** \"You missed X digests\" or unread indicators.\n  - **NO** backlog or \"catch up\" interface.\n  - **Mobile:** clean Capture tab with auto-focused input + blinking cursor.\n  - **Desktop:** Digest tab showing the **ONE** most recent digest (not a list of missed ones), OR a clean Capture tab if no recent digest.\n- **And** the design-for-restart principle is **verified across ALL screens and states**.\n- (This is a **VERIFY task** — the app already satisfies FR48 (audit confirms it). Assert it via tests; do **NOT** rebuild. See Dev Notes \"Design-for-restart — current state\". Note the deliberate tension with AC2's drought nudge — see trap #7.)\n\n**AC6 — Integration with existing systems**\n- **Given** circuit breakers interact with existing systems, **When** the integration is verified, **Then** capture-drought and nudge-fatigue checks are evaluated **as part of the daily digest synthesis** (Story 4.3) — additional checks in the existing `generateDailyDigest` / `digestForUser`.\n- **And** the trust-erosion check runs as a **lightweight query in the same cron cycle**.\n- **And** circuit-breaker utility functions live in **`convex/lib/`** as **reusable, testable units**.\n\n**AC7 — Correctness / boundary tests**\n- **Given** circuit-breaker logic is evaluated for correctness, **When** tests are run, **Then** tests verify: capture-drought detection at **exactly 3 days** (boundary), trust-erosion at **exactly 20%** (boundary — does NOT fire), nudge-fatigue at **exactly 3 unread digests** (boundary).\n- **And** tests verify: profile downshift **stops at Zen** (cannot downshift below Zen).\n- **And** tests verify: circuit breakers do **NOT** fire for **brand-new users with insufficient data**."
+        }
+      ]
+    },
+    {
+      "epic": 6,
+      "storyCount": 4,
+      "acCount": 25,
+      "stories": [
+        {
+          "id": "6.1",
+          "epic": 6,
+          "title": "Category Management with Usage Stats",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\6-1-category-management-with-usage-stats.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Category list with usage stats"
+            },
+            {
+              "id": "AC2",
+              "title": "Create a category (inline)"
+            },
+            {
+              "id": "AC3",
+              "title": "Rename a category (inline)"
+            },
+            {
+              "id": "AC4",
+              "title": "Delete a category (with confirmation + reclassification)"
+            },
+            {
+              "id": "AC5",
+              "title": "Loading skeleton"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-6.1` (lines 1712–1756). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**. This is the **first** story of Epic 6 (Advanced Knowledge Organization) and the first user-facing **write** surface for the category taxonomy created at onboarding (Story 1.3). It is a **Settings** concern, not a capture concern (architecture.md:53).\n\n**AC1 — Category list with usage stats**\n- **Given** the user navigates to **Settings → Categories**, **When** the category management page renders, **Then** all user-defined categories are listed with: **category name** (colored swatch derived from its HSL hue), **note count**, **percentage of total captures**, and the category's **left-border color swatch**.\n- **And** categories are **sorted by `sortOrder`** (matching the order from onboarding).\n- (Note count comes from the **existing** `notes.getCategoryNoteCounts` query — do NOT write a new counter. Percentage = `categoryCount / sum(all category counts)` computed client-side, guarding divide-by-zero → `0%`. See Dev Notes \"Usage stats — reuse, don't rebuild\". The \"name colored with HSL color\" means a **swatch/border** in the hue — **never render the category text itself in the hue** (`colors.ts` contract: hues are decorative, 3:1 non-text only; text uses Stone `--foreground`).)\n\n**AC2 — Create a category (inline)**\n- **Given** the user wants to create a new category, **When** they tap **\"Add Category\"** (or equivalent action), **Then** a new inline input field appears.\n- **And** upon entering a name and confirming, a new `categories` document is created with **`isAISuggested: false`**.\n- **And** the HSL color generation regenerates colors for **ALL** categories (even distribution across the color wheel changes when `n` changes).\n- **And** all existing note cards update their left-border and chip colors to reflect the new distribution.\n- (**TRAP — the AC says \"entering a name\" but the schema REQUIRES a non-empty `description`** and the classifier injects descriptions into its prompt — a description-less category \"cannot be used by the classifier\" (epics.md:377). The inline create form MUST collect **both a name and a description** (description required, mirroring `createCategories`' server validation). See trap #1. The \"regenerate colors for ALL categories\" + \"note cards update\" behavior is **automatic and FREE** via the reactive `getCategories` query — do NOT persist colors, do NOT write a recolor routine. See trap #3.)\n\n**AC3 — Rename a category (inline)**\n- **Given** the user wants to rename a category, **When** they tap the category name (or an edit icon), **Then** the name becomes editable inline.\n- **And** pressing **Enter** or tapping away **saves** the new name.\n- **And** the rename **propagates to all views** where the category name appears (capture thread, browse, digest).\n- (Propagation to **live** views is automatic — every surface reads the name through the reactive `getCategories` query; notes store `categoryId`, never a denormalized name. The ONE exception: already-generated `digests` store a denormalized `category` name **string** snapshot (`schema.ts:123`) — historical digests keep the old name; NEW digests use the new name. This point-in-time snapshot staleness is **acceptable** — do NOT rewrite historical digest content. See trap #4. Rename edits the **name only** in this story; description editing is out of scope (deferred to Settings hub, Story 6.4).)\n\n**AC4 — Delete a category (with confirmation + reclassification)**\n- **Given** the user wants to delete a category, **When** they tap a delete action, **Then** a confirmation dialog appears: **\"Delete [Category Name]? [N] captures will become uncategorized.\"**\n- **And** the confirm button uses **`--destructive`** color and is labeled **\"Delete\"** (not generic \"OK\").\n- **And** upon confirmation, the category document is deleted.\n- **And** all notes with this `categoryId` have their **`categoryId` set to `undefined`** and **`status` set to `\"pending\"`** (re-classification triggered).\n- **And** HSL colors **regenerate** for remaining categories.\n- (`[N]` is the deleted category's note count (`getCategoryNoteCounts[id]`, or recompute in the mutation). **Re-classification gate (trap #2):** schedule `internal.classify.classifyNote` per affected note **only if ≥1 category remains** after deletion — mirror `createNote`'s defensive 0-categories guard (`notes.ts:31-42`). Deleting the **last** category leaves notes `pending` + uncategorized with nothing scheduled. Color regeneration is again automatic via reactive `getCategories`. Mirror the **`DeleteNoteDialog`** a11y pattern exactly (trap #5).)\n\n**AC5 — Loading skeleton**\n- **Given** the category management page is loading, **When** data is being fetched, **Then** **skeleton rows** matching the expected category-row layout are displayed with a **slow 2s pulse**.\n- (Reuse the `Skeleton` primitive (`components/ui/skeleton.tsx`) whose Tailwind `animate-pulse` IS the global ~2s pulse — mirror `NoteCardSkeleton.tsx`. The query is \"loading\" when `useQuery` returns `undefined`.)\n\n**AC6 — Accessibility**\n- **Given** the category management is evaluated for accessibility, **When** the page is inspected, **Then**:\n  - the category list uses **semantic list markup** (`<ul>`/`<li>`) with **`aria-label=\"Your categories\"`**;\n  - edit controls are **keyboard-accessible** (Tab to navigate, **Enter** to edit/confirm, **Escape** to cancel);\n  - the delete confirmation uses **`role=\"alertdialog\"`** with **`aria-describedby`**;\n  - color swatches are **accompanied by text labels** (color is **never** the sole indicator);\n  - all interactive elements have **visible focus indicators** (`focus-visible:ring-2 focus-visible:ring-ring`)."
+        },
+        {
+          "id": "6.2",
+          "epic": 6,
+          "title": "AI Category Suggestions",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\6-2-ai-category-suggestions.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Generate a suggestion only on sustained evidence"
+            },
+            {
+              "id": "AC2",
+              "title": "Suggestion card content + microcopy"
+            },
+            {
+              "id": "AC3",
+              "title": "Accept the suggestion"
+            },
+            {
+              "id": "AC4",
+              "title": "Reject (dismiss) the suggestion"
+            },
+            {
+              "id": "AC5",
+              "title": "Modify before accepting"
+            },
+            {
+              "id": "AC6",
+              "title": "Conservatism thresholds (the algorithm gate)"
+            },
+            {
+              "id": "AC7",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-6.2` (lines 1760–1804). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**. This is the **second** story of Epic 6 and the project's **first AI-initiated taxonomy write** — the AI proposes, the user disposes (UX spec line 211: \"AI suggested → You confirmed\" collaboration narrative). It builds on Story 6.1's category-management surface (the suggestion card renders inside Settings → Categories). **Conservative by design** — the whole point is to NOT proliferate categories (PRD line 265: \"It would rather classify into existing categories imperfectly than fragment the taxonomy… The goal is 4-7 categories total, not 15.\").\n\n**AC1 — Generate a suggestion only on sustained evidence**\n- **Given** the system monitors capture patterns over time, **When** 20+ captures across multiple weeks (**minimum 3 weeks** of data) consistently don't fit well into existing categories (classification confidence for these notes **averages below 70%**), **Then** the system generates a category suggestion.\n- **And** the suggestion is **conservative** — **one suggestion at a time**, no category proliferation.\n- (This is a **scheduled background job** — a weekly cron (`internal.categorySuggestions.generateCategorySuggestions`), NOT a per-capture trigger. \"Don't fit well\" = a note the classifier assigned with **low confidence**: `status ∈ {classified, review}` AND `confidence != null` AND `confidence < 0.70` (the `SUGGESTION_CONFIDENCE_CEILING`). Such notes ARE captured live today — Story 5.3 confirmed the free-OpenRouter classifier runs and writes `confidence`. \"One at a time\" = the generation **GATE skips if a `pending` suggestion already exists**. See trap #1 + Dev Notes \"Suggestion algorithm\".)\n\n**AC2 — Suggestion card content + microcopy**\n- **Given** a category suggestion is generated, **When** it appears in **Settings → Categories**, **Then** a **suggestion card** is displayed with: **proposed category name**, **evidence summary** (\"Over the past 6 weeks, 34 notes about [topic] don't fit your current categories\"), **example notes** (3–5 representative captures), and **confidence level**.\n- **And** the suggestion uses the microcopy pattern: **not aggressive** (\"Consider adding…?\" not \"You should add…\").\n- (The evidence summary string is **LLM-generated** and stored on the suggestion row (`evidence` field) — render it verbatim. Example notes' **text** is resolved server-side in the public query (`getPendingSuggestion` does ≤5 `ctx.db.get`s and returns `{_id, content}`) so the card has the captures to display. Confidence renders as `\"Confidence: {Math.round(confidence*100)}%\"` (the UX example shows \"Confidence: 81%\", UX spec line 261). Mirror the **`MOCSuggestionCard`** tone/structure — it is the established \"AI proposes\" card; reuse its dismiss-\"×\" + intro-microcopy patterns. The intro line is conservative, e.g. **\"Consider adding a new category?\"** — never imperative.)\n\n**AC3 — Accept the suggestion**\n- **Given** the suggestion is displayed, **When** the user wants to accept it, **Then** they tap **\"Add [Category Name]\"**.\n- **And** a new category is created with **`isAISuggested: true`**.\n- **And** the system **prompts for retroactive reclassification (Story 6.3)**.\n- **And** HSL colors **regenerate** for all categories.\n- (Accept calls a dedicated mutation `acceptCategorySuggestion({ suggestionId, name })` — it creates the category with `isAISuggested: **true**` (NOT `createCategory`, which hardcodes `false`), `sortOrder = max+1`, `description = suggestion.suggestedDescription`, and marks the suggestion row `status: \"accepted\"`. **Color regeneration is automatic/FREE** via the reactive `getCategories` — same as Story 6.1 trap #3; nothing to write. **The \"prompts for retroactive reclassification\" clause is Story 6.3's flow and is OUT OF SCOPE here** — 6.3 is still `backlog`. In 6.2, accept **creates the category and stops**; do NOT build the batch-reclassify confirmation dialog. See trap #4.)\n\n**AC4 — Reject (dismiss) the suggestion**\n- **Given** the suggestion is displayed, **When** the user wants to reject it, **Then** they tap **\"Dismiss\" (or \"×\")**.\n- **And** the suggestion is dismissed and **will not recur for this topic for at least 4 weeks**.\n- **And** **no confirmation is needed** (dismissal is low-risk).\n- (Dismiss calls `dismissSuggestion({ suggestionId })` → patches `status: \"dismissed\"`, `respondedAt: Date.now()`. **No `alertdialog`** — fire immediately (mirror `MOCSuggestionCard`'s no-confirmation dismiss, UX spec line 2003 \"Dismiss MOC … No — dismissal is reversible\"). The **4-week cooldown** is enforced in the generation GATE: skip if the most-recent dismissed suggestion's `respondedAt` is within `SUGGESTION_COOLDOWN_WEEKS` (28 days). See Dev Notes \"Cooldown\" — at single-user MVP the cooldown is applied as a **global** post-dismissal pause (only one suggestion is ever live), which is strictly *more* conservative than per-topic; the per-topic nuance is a documented simplification.)\n\n**AC5 — Modify before accepting**\n- **Given** the suggestion is displayed, **When** the user wants to modify it, **Then** they can **edit the proposed category name** before accepting.\n- **And** acceptance with a modified name creates the category with the user's chosen name and **`isAISuggested: true`**.\n- (Inline-edit the name on the card (mirror Story 6.1's `CategoryManager` rename / `MOCTitleEditor` inline-edit: auto-focus, Enter/blur commits the edit into local state, Escape reverts). The edited name is the `name` arg passed to `acceptCategorySuggestion`. `isAISuggested` stays **true** even when the name is user-edited — it was still an AI-originated suggestion. The **description is NOT user-editable** here (the LLM-generated `suggestedDescription` is used as-is; description editing is the Settings-hub/6.4 concern, mirroring 6.1's rename-name-only scope).)\n\n**AC6 — Conservatism thresholds (the algorithm gate)**\n- **Given** the suggestion algorithm is evaluated for conservatism, **When** the thresholds are tested, **Then** the algorithm does **NOT** suggest a new category if: **fewer than 20** qualifying notes exist, the qualifying notes span **fewer than 3 weeks**, or the user **already has 7+ categories** (the goal is 4–7 total, not 15).\n- (Three hard gates, all in one pure, unit-testable predicate `shouldGenerateSuggestion(...)`: `qualifyingCount >= 20` AND `weeksSpanned >= 3` AND `categoryCount < 7` — plus the AC1/AC4 gates (no existing `pending`, not within the 4-week dismissal cooldown). `weeksSpanned` = `(newestQualifying.createdAt − oldestQualifying.createdAt) / WEEK_MS`. These are the **conservatism contract** — test each boundary first-class. See trap #2.)\n\n**AC7 — Accessibility**\n- **Given** the suggestion system is evaluated for accessibility, **When** the suggestion card is inspected, **Then**:\n  - the card is **keyboard-navigable** with **accept/reject/modify** actions accessible via **Tab and Enter**;\n  - **example notes are read aloud by screen readers as supporting evidence** (render them as real text content, e.g. inside a labelled list/region — not `aria-hidden`);\n  - all actions have **descriptive `aria-label`** text (e.g. `Add category ${name}`, `Dismiss category suggestion`, `Edit suggested category name`);\n  - all interactive elements have **visible focus indicators** (`focus-visible:ring-2 focus-visible:ring-ring`)."
+        },
+        {
+          "id": "6.3",
+          "epic": 6,
+          "title": "Retroactive Reclassification",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\6-3-retroactive-reclassification.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Identify candidate notes by a lightweight confidence check"
+            },
+            {
+              "id": "AC2",
+              "title": "Confirmation dialog"
+            },
+            {
+              "id": "AC3",
+              "title": "Confirm → batched, idempotent reclassification with audit trail"
+            },
+            {
+              "id": "AC4",
+              "title": "Decline → category kept, no notes moved"
+            },
+            {
+              "id": "AC5",
+              "title": "Batched, progress-tracked, cancellable execution"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-6.3` (lines 1808–1849). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**. This is the **third** story of Epic 6 and the **completion of the category-creation loop** opened by 6.1 (manual create) and 6.2 (AI-suggestion accept): both now end with an optional \"Reclassify [N] existing notes?\" prompt. It is a **confirm-then-act, high-impact-but-reversible** operation (UX spec line 1482, 1903) — a single explicit confirmation, then a **batched, cancellable, idempotent** background move. **No new AI call** — candidate selection is a confidence-threshold filter, not a per-note LLM re-classification (see trap #8).\n\n**AC1 — Identify candidate notes by a lightweight confidence check**\n- **Given** a new category has been created (via Story 6.1 manual creation **or** Story 6.2 suggestion acceptance), **When** the system identifies notes that might belong to the new category, **Then** it evaluates existing notes by running a **lightweight classification check**: notes currently classified with **confidence below 75%** in their assigned category are candidates for reclassification.\n- (The \"lightweight classification check\" is a **pure DB threshold filter**, NOT an LLM/embedding re-classification. A **candidate** = a note where `(status ∈ {classified, review})` AND `confidence != null` AND `confidence < RECLASSIFICATION_CONFIDENCE_CEILING (0.75)` AND it has an assigned `categoryId` that is **not** the new category. These are the captures the classifier was *unsure* about — the notes most likely to benefit from a freshly-created category. This is the deliberate MVP interpretation faithful to the AC's literal candidate definition and AC3's \"set to a **system-defined value**\" — it needs no `GEMINI_API_KEY` and matches the project free-model / no-embeddings posture (memory `project_gemini_api_key_missing`, mirrors 6.2's confidence-based approach). See trap #8 + Dev Notes \"Candidate selection\".)\n\n**AC2 — Confirmation dialog**\n- **Given** candidate notes are identified, **When** the reclassification prompt appears, **Then** a confirmation dialog shows: **\"Reclassify [N] existing notes to [New Category Name]?\"**\n- **And** the dialog explains: **\"This will update the category for [N] existing notes.\"**\n- **And** the **Cancel** button is on the **left**, the **\"Reclassify\"** action button is on the **right** (standard confirmation pattern).\n- (Mirror `DeleteCategoryDialog` exactly (`role=\"alertdialog\"`, `aria-describedby` → the description). The confirm button is the **primary** action labelled with the verb **\"Reclassify\"** (UX line 1921 — verb, never \"OK\") — **NOT** `--destructive`: reclassification is high-impact but reversible (per-note correction undoes it), so it does **not** use the destructive red (trap #3). Pluralize \"note\"/\"notes\" on `N`. The dialog only appears when **N ≥ 1** — a zero-candidate creation is silent, AC1's \"When the system identifies notes that might belong\" (trap #12). `N` and the category name come from the just-created category — the card/form already holds both.)\n\n**AC3 — Confirm → batched, idempotent reclassification with audit trail**\n- **Given** the user confirms reclassification, **When** the batch reclassification executes, **Then** each candidate note's **`categoryId` is updated to the new category**.\n- **And** each note's **`confidence` is recalculated or set to a system-defined value (e.g., `0.80` — system-initiated reclassification)**.\n- **And** an **`auditLog` entry is created for each reclassified note** with `action: \"reclassification\"`, `details: { previousCategory, newCategory }`.\n- **And** the reclassification process is **idempotent** (running it twice doesn't double-reclassify).\n- (Set `confidence = RECLASSIFIED_CONFIDENCE (0.80)` (a flat system value — NO per-note LLM recompute, AC3's \"set to a system-defined value\") and `status = \"classified\"` (0.80 clears the default 0.6 threshold and resolves any `review` note out of the review queue — the consistent corollary; trap #9). `action: \"reclassification\"` is **ALREADY in the `auditLog.action` union** (schema.ts:89) — do **NOT** widen it (trap #4). Write `details: { previousCategory: <note's old categoryId>, newCategory: <job.categoryId>, confidence: 0.80 }`. **Idempotency is structural**: a reclassified note now has `confidence 0.80 (≥ 0.75 ceiling)` and the target `categoryId`, so it **drops out of the candidate filter** — a second run moves nothing (trap #2). No separate \"processed\" set needed; the note data IS the cursor.)\n\n**AC4 — Decline → category kept, no notes moved**\n- **Given** the user declines reclassification, **When** they tap **Cancel**, **Then** the new category is **still created** (from Story 6.1 or 6.2) but **no existing notes are moved**.\n- **And** future captures may be classified into the new category normally.\n- (The category is created by `createCategory` / `acceptCategorySuggestion` **before** the dialog opens — Cancel simply closes the dialog and clears the trigger state; **no** reclassification job is started. The new category is immediately live for future classification (it is in the user's `categories` set → the classifier's prompt). Cancel must NOT delete or alter the category.)\n\n**AC5 — Batched, progress-tracked, cancellable execution**\n- **Given** the reclassification involves many notes, **When** the batch process runs, **Then** it processes notes **in batches** (not all at once) to avoid Convex action timeouts.\n- **And** a progress indicator shows **\"Reclassifying [X] of [N] notes...\"**\n- **And** the process **can be cancelled mid-way** (already-reclassified notes remain, unprocessed ones stay in their original category).\n- (Implement as a **self-rescheduling `internalMutation`** (`reclassifyBatch`) — reclassification is pure DB work (patch + audit insert, **no `fetch`**), so a **mutation** is correct: each batch is a bounded transaction and there is **no action to time out** (trap #5). Each invocation processes ≤ `RECLASSIFICATION_BATCH_SIZE (50)` candidates, patches the `reclassificationJobs` progress row, and `ctx.scheduler.runAfter(0, …reclassifyBatch, { jobId })` reschedules itself until no candidates remain → `status: \"completed\"`. The progress indicator reads the reactive `getActiveReclassificationJob` query → renders `Reclassifying {processedCount} of {total} notes…` with `aria-live=\"polite\"` (AC6) + a **Cancel** button → `cancelReclassification({ jobId })` patches `status: \"cancelled\"`; the in-flight worker checks `status !== \"running\"` at the **top** of its next batch and stops, leaving processed notes moved and the rest untouched (trap #7). `N` (= `total`) is snapshotted at job start.)\n\n**AC6 — Accessibility**\n- **Given** reclassification is evaluated for accessibility, **When** the confirmation dialog is inspected, **Then**:\n  - the dialog uses **`role=\"alertdialog\"`** with **`aria-describedby`** linking to the description (mirror `DeleteCategoryDialog`);\n  - **focus is trapped** within the dialog (Radix `Dialog` provides this) and returns to the trigger on close;\n  - **Escape dismisses** (equivalent to Cancel — Radix `onOpenChange(false)`);\n  - the **progress indicator uses `aria-live=\"polite\"`** for updates (a `role=\"status\"` region announcing `Reclassifying X of N notes…`);\n  - all interactive elements (Cancel, Reclassify, the progress Cancel) have **visible focus indicators** (`focus-visible:ring-2 focus-visible:ring-ring`) and descriptive labels."
+        },
+        {
+          "id": "6.4",
+          "epic": 6,
+          "title": "Settings Hub & Profile Modification",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\6-4-settings-hub-and-profile-modification.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Settings hub: organized links with current values + AI API Costs section"
+            },
+            {
+              "id": "AC2",
+              "title": "Proactivity modification page: the four onboarding cards, active highlighted, change anytime"
+            },
+            {
+              "id": "AC3",
+              "title": "Selecting a profile updates immediately + toast + next-cycle effect"
+            },
+            {
+              "id": "AC4",
+              "title": "Confidence threshold control (0.40–0.90), applies to future classifications"
+            },
+            {
+              "id": "AC5",
+              "title": "Timezone & digest delivery time, with immediate UTC recalculation + push reschedule"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story-6.4` (lines 1853–1907). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**. This is the **final feature story of Epic 6** — it turns the placeholder Settings page (a stub since Story 5.1, `app/(app)/(main)/settings/page.tsx:4-9` literally says \"The full hub is Story 6.4\") into a real hub and adds the **post-onboarding modification** surface for the four preferences captured once during onboarding (Story 1.4): proactivity profile, confidence threshold, timezone, digest time. **No new schema, no new table, no new cron** — every field already exists on `userSettings` (schema.ts:138–153); this story adds the **update mutations** (none exist yet — onboarding only ever *inserts*) and the **UI to drive them**. **No external-provider dependency** (no GEMINI/VAPID): all four are plain `userSettings` patches read fresh by the pipelines that consume them.\n\n**AC1 — Settings hub: organized links with current values + AI API Costs section**\n- **Given** the user navigates to Settings, **When** the settings hub page renders, **Then** it displays organized links to: **Categories** (Story 6.1), **Proactivity Profile** (this story), **Audit Trail** (Story 5.1), **Export** (Story 7.5), **Account** (Story 7.6), and an **\"AI API Costs\" external-link section**.\n- **And** each link shows a **brief description and the current value** (e.g., \"Proactivity: Balanced\", \"Categories: 4\").\n- **And** the \"AI API Costs\" section contains **two `target=\"_blank\" rel=\"noopener\"` outbound links**: \"OpenRouter dashboard\" (classification + digest costs) and the embedding provider's dashboard (e.g. Google AI Studio) (embedding costs) — satisfying **NFR45 via external-dashboard path per architecture Decision 5.3**.\n- **And** a brief caption below reads: **\"View current-month AI usage and costs in each provider's dashboard\"**.\n- (**Export (7.5) and Account (7.6) routes DO NOT EXIST** — Epic 7 is backlog. Render them as **disabled \"Coming soon\" rows**, NOT active links that 404 — trap #3. **PRESERVE the existing \"Trust Metrics\" link** (Story 5.2, currently in the hub) — the AC list is additive, not exclusive; removing a working link is a 5.2 regression — trap #2. The hub must become a **reactive client surface** to show live current values (`getUserSettings.proactivityProfile` → \"Proactivity: <Label>\"; `getCategories().length` → \"Categories: N\") — auth-gate the queries with `isAuthenticated ? {} : \"skip\"` (mirror `settings/categories/page.tsx`) — trap #12. The two cost links use **representative canonical dashboard URLs** (OpenRouter: `https://openrouter.ai/activity`; Google AI Studio: `https://aistudio.google.com/`); `rel=\"noopener\"` is mandatory (the AC names it). See Dev Notes \"Settings hub design\".)\n\n**AC2 — Proactivity modification page: the four onboarding cards, active highlighted, change anytime**\n- **Given** the user navigates to **Settings → Proactivity**, **When** the proactivity modification page renders, **Then** the **same four profile cards from onboarding** (Story 1.4) are displayed: **Zen, Balanced, Coached, Custom**.\n- **And** the **currently active profile is highlighted**.\n- **And** **\"You can change this anytime\"** is shown in muted text (consistent with onboarding).\n- (**Reuse the `PROACTIVITY_PROFILES` constant** (`lib/onboarding/proactivityProfiles.ts` — the single source of truth for the 4 cards/labels/descriptions, already used by onboarding) — do NOT re-list the profiles inline (drift). **Mirror the `role=\"radio\"` in `radiogroup` card pattern** from `components/onboarding/ProactivitySelector.tsx` (Radix `RadioGroup` + `RadioGroupPrimitive.Item asChild`, `data-[state=checked]:border-primary`, `Check` icon on the selected). But this is a **NEW component** (`ProactivitySettings.tsx`) — do NOT reuse `ProactivitySelector` directly: it calls `completeOnboarding(profile, timezone)` and has a \"Continue\" button (onboarding flow); here selection is **immediate** with NO Continue (AC3) and a different mutation — trap #4. \"Active\" = `settings.proactivityProfile`.)\n\n**AC3 — Selecting a profile updates immediately + toast + next-cycle effect**\n- **Given** the user selects a different proactivity profile, **When** they tap a new profile card, **Then** the **`userSettings.proactivityProfile` is updated immediately** via Convex mutation.\n- **And** a confirmation **toast appears: \"Profile updated to [name]\"**.\n- **And** the change **takes effect from the next digest cycle** (no retroactive changes to already-scheduled notifications).\n- (Call the new `updateProactivityProfile({ proactivityProfile })` mutation on card tap — **no Continue button**. Toast via `@/hooks/use-toast` (`toast({ description: \"Profile updated to Balanced\" })`; use the profile's **label**, e.g. \"Balanced\", not the value \"balanced\"). \"Takes effect next digest cycle\" requires **NO reschedule work** — the digest pipeline reads `proactivityProfile` **fresh** every 4 AM-UTC run (`internal.digest.getUserDigestSettings`, digest.ts:353–375), so a patch alone is sufficient; do NOT touch any scheduled job for a profile change — trap #9. NOT an AI decision → **no `auditLog` row** (mirror `savePushSubscription` — trap #7). Graceful-failure toast on mutation reject (mirror `CategoryManager`).)\n\n**AC4 — Confidence threshold control (0.40–0.90), applies to future classifications**\n- **Given** the user wants to modify the confidence threshold, **When** they access the confidence setting, **Then** the **current threshold is displayed (default 0.60)**.\n- **And** the user can adjust it **via a slider or input (range: 0.40 to 0.90)**.\n- **And** a description explains: **\"Lower = more auto-classification, higher = more items in 'Needs Review'\"**.\n- **And** the change is **saved to `userSettings.confidenceThreshold`** and **applies to future classifications**.\n- (Use a **native `<input type=\"range\" min={0.40} max={0.90} step={0.05}>`** — there is **NO `slider.tsx`** in `components/ui` and **NO `@radix-ui/react-slider` dependency**; do NOT add one for a single control (the codebase's minimal-dependency stance — cf. the 3.2 `vaul` rejection — trap #5). A native range input **automatically exposes `aria-valuemin`/`aria-valuemax`/`aria-valuenow`** via the implicit `role=\"slider\"` (satisfies AC6) — render a visible numeric/percent readout beside it. Save via `updateConfidenceThreshold({ confidenceThreshold })` **on commit** (`onChange` or pointer-up — debounce/commit so you don't fire a mutation per pixel). **Server validates the range** (ConvexError if `< 0.40` or `> 0.90` — security boundary, never trust the client — trap #11). \"Applies to future classifications\" needs **NO extra work**: `getClassificationContext` reads `confidenceThreshold` fresh per note (classify.ts ~199–305) — a patch is sufficient — trap #10. No audit row.)\n\n**AC5 — Timezone & digest delivery time, with immediate UTC recalculation + push reschedule**\n- **Given** the user wants to modify timezone or digest delivery time, **When** they access these settings, **Then** the **current timezone (auto-detected) and digest time (default \"08:00\") are displayed**.\n- **And** the user can **modify both**.\n- **And** changes are **saved to `userSettings`** and affect the **next scheduled digest/notification delivery**.\n- **Given** the user changes their timezone in settings, **When** the timezone is updated in `userSettings.timezone`, **Then**:\n  - the **UTC equivalent of the user's configured digest time is recalculated immediately**;\n  - **any scheduled notification delivery (via `scheduler.runAt`) for today's digest is rescheduled to the new UTC timestamp**;\n  - the nightly clustering (3 AM local) and daily digest (4 AM local) cron jobs **recalculate their UTC offsets for subsequent runs**;\n  - **for MVP single-user: cron schedules are computed per-run from `userSettings.timezone`, not hardcoded** — changing timezone takes effect on the next cron cycle.\n- (Implement `updateDigestPreferences({ timezone, digestTime })` (one mutation, both values — the UI sends current values, mirror how `completeOnboarding` sends the full set). **Validate** `digestTime` with `parseHhmm` and `timezone` with `isValidIanaTimeZone` (both exported from `lib/time.ts` in Task 2 — ConvexError on invalid — trap #11). The **\"recalculated immediately\" + \"rescheduled\" + \"today's pending push\"** bullets are the **only genuinely-new scheduling work** → reschedule the caller's pending same-day push (Task 4, trap #6): `nextUtcOccurrenceOfLocalTime(digestTime, timezone, Date.now())` recomputes the UTC instant; find + cancel the caller's pending `sendPushNotification` and re-`runAt` it. **The cron bullets are an architecture-reconciled DESCOPE, NOT a `crons.ts` change** — Convex crons are fixed-UTC, evaluated at deploy time with NO DB access (`crons.ts:6-10`), and per-user-timezone cron firing is the **sanctioned Decision 6.5 multi-user deferral** (Story 4.1 review, deferred-work.md line 99). \"Cron schedules computed per-run from `userSettings.timezone` / takes effect next cron cycle\" is **already satisfied in spirit** because the digest action **re-reads `userSettings.timezone` fresh** every 4 AM-UTC run and recomputes the per-user delivery time (`digestForUser`, digest.ts:1389–1400). **Do NOT refactor `crons.ts`** — trap #1. See Dev Notes \"Timezone change — exact scope\".)\n\n**AC6 — Accessibility**\n- **Given** the settings hub is evaluated for accessibility, **When** the pages are inspected, **Then**:\n  - **all form controls have visible labels and are keyboard-operable**;\n  - the proactivity cards **reuse the `role=\"radio\"` in `radiogroup` pattern from onboarding**;\n  - **slider/input controls have `aria-valuemin`, `aria-valuemax`, and `aria-valuenow`** attributes (native `<input type=\"range\">` provides these);\n  - **all changes provide confirmation via `role=\"status\"` toast announcements** (the app `Toaster` already renders an `aria-live` region — `components/ui/toaster.tsx`);\n  - **color contrast meets 4.5:1 minimum throughout**.\n- (Mirror the onboarding `RadioGroup` a11y (focus-visible rings, `Check` icon as a non-color indicator). Native range input keyboard-operates (arrows) and exposes the value attrs automatically. Each settings page gets an **axe** pass (mirror `CategoryManager.test.tsx`); per project convention the jsdom `color-contrast` axe rule is disabled — confirm contrast visually, deferred-work.md line 14.)"
+        }
+      ]
+    },
+    {
+      "epic": 7,
+      "storyCount": 6,
+      "acCount": 13,
+      "stories": [
+        {
+          "id": "7.1",
+          "epic": 7,
+          "title": "Offline Capture Queue",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-1-offline-capture-queue.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "### Layer 1: Online (default — already working, must not regress)\n\n1. When online, capture continues to use the existing path unchanged: `CaptureThread` fires `api.notes.createNote` with `withOptimisticUpdate`, the card appears instantly (`status:\"pending\"`, border-pulse), classification is scheduled server-side, and the reactive `getNotes` subscription resolves the card. **No existing Story 2.1/2.3 behavior may break.** (Regression guard.)\n\n### Layer 2: Offline with JavaScript (Service Worker + IndexedDB)\n\n2. **Given** the app is loaded and React has hydrated, **when** the user is offline (no network connectivity), **then** a subtle offline indicator appears (small dot/icon in the status area, **amber**) — not blocking, not alarming — **and** the capture input remains fully functional (type, send).\n3. **Given** the user submits a capture while offline, **when** the `createNote` mutation fails due to no connectivity (or `navigator.onLine === false` is detected up front), **then** the failure is caught by the `useOfflineCapture` hook, **and** the capture is stored in IndexedDB with `{ content, createdAt, syncStatus: \"queued\" }`, **and** a capture card appears in the thread with the microcopy **\"Saved locally — I'll classify this when I reconnect\"**, **and** the card has **no border pulse** (nothing is pending — it is queued, not classifying), **and** the user can continue capturing more thoughts (all queued in IndexedDB).\n4. **Given** offline captures exist in the IndexedDB queue, **when** network connectivity returns, **then** the queue is replayed: each queued capture is submitted to Convex via `api.notes.createNote` **in order (oldest `createdAt` first)**, **and** on successful sync the record's `syncStatus` is updated to `\"synced\"` in IndexedDB (then pruned — see Dev Notes), **and** the synced cards transition to the live classification state (border pulse starts as classification kicks in), **and** a subtle toast confirms **\"N captures synced\"** (e.g. \"2 captures synced\"). The toast uses `role=\"status\"`.\n5. **Given** the IndexedDB queue persists across app restarts, **when** the user closes and reopens the app while still offline, **then** previously queued captures are still visible in the thread in the \"Saved locally\" state (NFR20), **and** when connectivity returns they sync normally (AC4).\n6. **Given** the Background Sync API is not available (some browsers / iOS), **when** the app detects no Background Sync support, **then** it falls back to checking connectivity on each app focus / `visibilitychange` and on the `window` `online` event, **and** queued captures sync on the next online detection.\n\n### Layer 3: Pre-Hydration Capture (Static HTML form)\n\n7. **Given** the Service Worker has cached the app shell (full precaching is **Story 7.2** — see cross-story dependency note), **when** the user opens the app and React has **not yet hydrated** (cold launch window), **then** a static HTML `<form>` with a native `<textarea>` and submit button is visible and functional, **and** the form is part of the cached app shell — it works without JavaScript.\n8. **Given** the user types and submits via the static HTML form before hydration, **when** the submission is intercepted by the Service Worker's `fetch` event handler, **then** the Service Worker extracts the form data and stores it in IndexedDB (same queue/shape as Layer 2), **and** the form clears / shows a brief confirmation via the Service Worker's synthetic response.\n9. **Given** React hydrates after a pre-hydration capture, **when** hydration completes, **then** React reads the IndexedDB queue and reconciles: pre-hydration captures appear in the capture thread, **and** if online they are immediately submitted to Convex, **and** if offline they remain queued alongside any post-hydration offline captures (no duplicates).\n\n### ADR conformance & accessibility\n\n10. **Given** the offline architecture follows the ADR, **when** the implementation is reviewed, **then** Layer 1 (online) is the default path (unchanged from Epic 2), Layer 2 handles typical offline scenarios, Layer 3 handles the cold-launch edge case, **and** each layer is independent and testable.\n11. **Given** offline capture is evaluated for accessibility, **when** the offline state is inspected, **then** the offline indicator is **not color-only** (icon + color + accessible text), **and** the \"Saved locally\" card state is announced via `aria-live=\"polite\"`, **and** the static HTML form (Layer 3) has a proper `<label>` and is keyboard-submittable, **and** the sync toast uses `role=\"status\"`."
+        },
+        {
+          "id": "7.2",
+          "epic": 7,
+          "title": "PWA Installation & App Shell Caching",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-2-pwa-installation-and-app-shell-caching.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "### Manifest & icons\n\n1. **Given** the PWA manifest is configured, **when** `app/manifest.ts` is created, **then** it exports a default function returning a `MetadataRoute.Manifest` with: `name: \"xynapse\"`, `short_name: \"xynapse\"`, `display: \"standalone\"`, `start_url: \"/\"`, a `theme_color` and `background_color` derived from `--background` (single static value per the manifest spec — per-theme color is handled by the `viewport` `themeColor` media queries in AC4, see Dev Notes), **and** `icons` providing **192x192** and **512x512** PNGs. Next.js auto-injects `<link rel=\"manifest\" href=\"/manifest.webmanifest\">` when this file exists — do **not** add a manual `<link>`.\n2. **Given** icons must exist as real files, **when** the manifest references them, **then** valid PNG icons exist at `public/icon-192.png` (192x192) and `public/icon-512.png` (512x512) — placeholder/solid-brand for MVP, branded as later polish. These same files back the Story 4.5 push notification `icon`/`badge` (`app/sw.ts:54-57` already references `/icon-192.png`), which are **currently 404** — this story fixes that.\n\n### Service Worker caching strategy\n\n3. **Given** the Service Worker caching strategy is implemented via Serwist, **when** the caching layers are reviewed, **then**: **(Precached on SW install)** the static app shell — JS chunks (app shell, capture module, navigation), CSS (Tailwind build), the PWA manifest, and app icons — is served from cache for an instant warm launch (already provided by Serwist's `self.__SW_MANIFEST` precache + `defaultCache` runtime caching in `app/sw.ts`; verify, do not rebuild). **(Runtime cached)** offline browsing of recent Convex data is handled **by the Convex client, not the Service Worker** — see Dev Notes → caching reality; the SW must NOT attempt to fetch-cache Convex traffic. **(Network only)** AI classification, embedding, search, and correction mutations are always fresh — naturally satisfied because they ride Convex's transport, which the SW never intercepts.\n4. **Given** the PWA must launch correctly themed and in standalone mode, **when** `app/layout.tsx` is configured, **then** it exports `viewport` (Next.js `Viewport`) with `themeColor` as a **media-query array** — `{ media: \"(prefers-color-scheme: light)\", color: \"#fafaf9\" }` and `{ media: \"(prefers-color-scheme: dark)\", color: \"#1c1917\" }` (matching `--background` light/dark) — plus `width: \"device-width\"`, `initialScale: 1`, and **`viewportFit: \"cover\"`** (this is the missing piece that makes `env(safe-area-inset-*)` resolve to non-zero — see AC6), **and** `metadata.appleWebApp` enables iOS standalone (`capable: true`, a `statusBarStyle`, `title: \"xynapse\"`).\n\n### Installability & launch (live-smoke — real browser)\n\n5. **Given** the PWA is installable, **when** the user visits in Chrome (desktop/Android) or Safari (iOS), **then** the browser's native install prompt is available (Chrome/Android), iOS users can \"Add to Home Screen\" via the share sheet, **and** the installed PWA launches in **standalone** mode (no URL bar / browser nav).\n6. **Given** the PWA launches from the home screen, **when** the app starts, **then** the cached app shell renders within ~0.3–0.5s (SW serves cached assets), the capture input is visible/functional before the Convex client connects (the Story 7.1 pre-hydration form), no splash screen blocks the user (the app shell **is** the splash), **and** the theme color matches the current light/dark mode (no jarring flash).\n7. **Given** viewport and safe-area concerns, **when** the PWA renders on various devices, **then** `100dvh` (with `100vh` fallback) is used for full-height (already in `.app-shell`), **and** `env(safe-area-inset-top)`/`env(safe-area-inset-bottom)` are applied to the top status area and the tab bar / capture input area (`.top-bar`, `.tab-bar` exist; the capture input must respect the iOS home-indicator bottom inset), **all** now active because of `viewport-fit=cover` from AC4.\n8. **Given** the Service Worker is updated, **when** a new app version is deployed, **then** the SW updates in the background and the new version activates on the next launch with **no disruptive \"update available\" modal** — already satisfied by `skipWaiting: true` + `clientsClaim: true` in `app/sw.ts:13-14`; verify and do not regress.\n\n### Accessibility\n\n9. **Given** PWA installation is evaluated for accessibility, **when** the installed app is inspected, **then** all prior-epic accessibility features (focus management, keyboard nav, screen-reader support, the Story 7.1 offline indicator and queued-card announcements) work **identically** in standalone mode without browser chrome — no feature may depend on browser UI."
+        },
+        {
+          "id": "7.3",
+          "epic": 7,
+          "title": "Responsive Design Polish",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-3-responsive-design-polish.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "### Responsive audit scope (the verification contract)\n\n1. **Given** the responsive shell from Story 1.2 (mobile `<768px` via `useBreakpoint()` / Tailwind `md:`), **when** a comprehensive responsive audit is performed across all screens built in Epics 1–6, **then** every screen below is verified — by reading its component for layout-safe classes (deterministic) **and** by real-browser smoke at mobile (320px, 375px, 414px), tablet (768px, 1024px), and desktop (1280px, 1440px) widths (live-smoke; see Dev Notes → Verification boundary). The narrowest supported width is **320px**; nothing may overflow, clip, or horizontally scroll there.\n\n### Capture tab\n\n2. **Given** the capture thread on mobile at **320px** (smallest supported), **when** it renders, **then** the capture input, the send button (**48×48px** — `components/capture/CaptureInput.tsx:89` `h-12 w-12`, verify-only), and capture cards render with **no horizontal overflow or clipping**; cards keep their `p-4` padding (`ClassificationCard.tsx:299`) and the thread keeps its vertical spacing; **and** the fixed bottom tab bar does not overlap the input field (the composer clears the `.tab-bar` via `<main pb-16>` and the bar owns the bottom safe-area inset — Story 7.2 finding, verify-only).\n\n### Browse tab\n\n3. **Given** the Browse view on desktop (`≥768px`), **when** the category sidebar + notes list + detail panel render, **then** the multi-column layout has appropriate proportions with **no content overflow**, and the detail panel (`components/browse/NoteDetail.tsx`) shows full note detail without forcing scroll for typical note lengths. (Verify-only — layout is CSS-`md:`-driven.)\n\n### Digest tab\n\n4. **Given** the digest on mobile, **when** digest cards render, **then** they are scannable within the viewport with their established spacing and section headers visible without excessive scrolling; **and** the empty-state **\"Go to Capture →\" CTA meets a 44×44px minimum touch target** — **CODE CHANGE:** `EmptyDigestState.tsx` currently renders it at `h-9` (36px); raise it to ≥44px tall (e.g. add `min-h-11` to the CTA `className`, or an equivalent size) without breaking its centered layout.\n\n### Settings\n\n5. **Given** the settings pages on mobile (category management, audit trail, proactivity, trust), **when** they render, **then** all form controls are usable on small viewports with **no horizontal scrolling**; **and** the audit-trail table **stacks into a card-style layout on mobile** (no horizontal-scroll table). This is **already implemented** — `components/settings/AuditTrailBrowser.tsx:304-360` uses `block md:table-row` / `block md:table-cell` to collapse rows into stacked cards below `md`. Verify it still holds; do **not** rebuild it.\n\n### Cross-breakpoint state preservation (UX-DR22)\n\n6. **Given** the viewport transitions between mobile and desktop (e.g. tablet rotation, devtools resize), **when** the layout changes, **then** **scroll position, active tab, selected capture, and sidebar collapse state are preserved.** Verify the mechanism holds: active tab = route (`/capture`,`/browse`,`/digest`,`/settings`); selected capture = URL `?note=` param; sidebar collapse = `localStorage[\"xynapse-sidebar-collapsed\"]` (`lib/hooks/useSidebarCollapse.ts`); scroll position is preserved **because the responsive layout toggles via CSS `md:` classes, not JS conditional unmount** — the scroll container (`<main className=\"overflow-auto\">`) is never remounted on resize. **CRITICAL GUARD:** do not refactor any always-present scroll/selection container into a `useBreakpoint()` ternary that mounts/unmounts on resize — that would remount the subtree and lose scroll/state (see Dev Notes).\n\n### PWA-specific responsive concerns\n\n7. **Given** the PWA renders on various devices, **when** RTL text is captured (Arabic, Hebrew quotes or names), **then** `dir=\"auto\"`-equivalent handling prevents layout breakage on textarea **and** card/detail text. **CODE CHANGE:** apply `data-user-content` to the six user-generated text elements in Dev Notes → RTL targets (the global rule `[data-user-content] { unicode-bidi: plaintext }` already exists in `app/globals.css:112-116`; the textarea is already covered). **And** portrait is the preferred mobile orientation with **no lock enforced** — landscape must still work (verify: no orientation lock anywhere; nothing to add).\n\n### Quality gate (regression contract)\n\n8. **Given** the existing suite is green (990 passed / 83 files at baseline), **when** this story's changes land, **then** `tsc --noEmit`, `eslint .`, and `vitest run` all pass with **0 regressions**, and `next build --webpack` still succeeds. New deterministic tests cover the two code changes (RTL attribute presence, CTA min-height class); the visual/overflow assertions are explicitly enumerated as live-smoke, **not** silently skipped."
+        },
+        {
+          "id": "7.4",
+          "epic": 7,
+          "title": "Accessibility Audit & CI Integration",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-4-accessibility-audit-and-ci-integration.md",
+          "acCount": 0,
+          "criteria": [],
+          "acMarkdown": "### axe-core in CI (NFR35)\n\n1. **Given** the CI pipeline exists (`.github/workflows/ci.yml` from Story 1.1, currently a no-op echo at lines 21-25), **when** `@axe-core/playwright` is integrated, **then** the echo placeholder is replaced by a **real** `playwright test` invocation (browsers installed via `playwright install`), running **after** `vitest` (slower, acceptable post-vitest); **and** when the E2E environment is configured the suite runs on every push to `main` and **the CI build FAILS if any WCAG 2.1 AA violation is detected by axe-core**; **and** when the E2E secrets are absent the step **skips cleanly with a loud log line** (so the pre-secret solo-dev pipeline and fork PRs stay green) — activating the gate is the documented owner-action (Dev Notes → CI gate). The existing `tsc → eslint → vitest` order and the Convex deploy gate are preserved unchanged.\n\n### Playwright E2E infrastructure\n\n2. **Given** axe-core requires a browser context, **when** the Playwright test infrastructure is set up, **then** `@playwright/test` is added to `devDependencies` (pinned, latest stable — see Latest Tech), a `playwright.config.ts` is created (chromium project; `webServer` builds + serves the app; `baseURL` from env), and a minimal E2E suite is created in `e2e/` covering the core flows the axe scans run against: **onboarding, capture (+ correction), browse (+ note detail), digest, settings**; **and** each flow test navigates to the key screens and triggers an `AxeBuilder(...).withTags(['wcag2a','wcag2aa']).analyze()` scan **at stable states** (after content settles), asserting zero violations; **and** the tests authenticate via **`@clerk/testing/playwright`** (programmatic sign-in, no UI typing) and read **seeded** data (a `convex/seed.ts` test fixture), **never** production Convex; **and** `bun.lock` is updated so `bun install --frozen-lockfile` in CI resolves the new deps.\n\n### Keyboard navigation audit (FR55, NFR30)\n\n3. **Given** keyboard navigation is audited across the core flows, **when** a keyboard-only journey is verified, **then** these flows are completable without a mouse (enumerated, live-verified — see Dev Notes → keyboard journeys): Onboarding (Tab cards → Enter select → Tab Continue → Enter); Capture (Tab input → type → Enter send on desktop → Tab chip → Enter → arrows → Enter → Escape close); Browse (Tab filters → Enter → Tab cards → Enter open); Digest (Tab items → Enter expand → Tab nudge buttons); Settings (Tab controls → Enter/Space → Escape cancel); **and** focus is always visible (`--ring`); **and** focus returns to a logical position after overlay/dialog dismissal. Code-side: confirm `focus-visible:ring-ring` is present on interactive elements and that overlay dismissal restores focus (Radix default); the live tab-through is enumerated as owner live-verify.\n\n### ARIA live regions audit (FR56)\n\n4. **Given** ARIA live regions are audited, **when** dynamic content updates, **then** these announcements are verified to exist in code with the correct politeness (evidence in Dev Notes → ARIA audit map; **no rebuild** — these were built in Epics 2–5, this AC confirms them): capture submission `aria-busy`/\"Understanding your thought\"; classification arrival `aria-live=\"polite\"` \"Classified as [category], [confidence] confidence\"; atomic split `aria-live=\"polite\"`; correction `role=\"status\"` \"Category changed to [name]\"; toasts `role=\"status\"`; low-confidence `aria-describedby`. Any genuine missing/incorrect region found during the audit is fixed minimally and documented; the screen-reader *vocalization* itself is owner live-verify (Task 7 checklist).\n\n### Visual accessibility audit (NFR28, NFR29, NFR31)\n\n5. **Given** visual accessibility is audited, **then**: all text meets 4.5:1 (body) / 3:1 (large) contrast in both light and dark modes (NFR29) — **machine-verified by the real-browser axe `color-contrast` rule** (this is what jsdom never could; it closes the deferred AC8 color-contrast item — see Dev Notes); **and** `prefers-reduced-motion` disables the named animations — confirm `app/globals.css:173-183` covers `borderPulse`, `slideUp`/`slideDown`, and the skeleton pulse (verify-only; already present); **and** `prefers-contrast: more` is supported — confirm `app/globals.css:185-209` (verify-only; already present); **and** all text respects font-size up to 200% via `rem`/Tailwind text utilities with no clipping — confirm no hardcoded `px` font sizes block reflow (read-verify + live-smoke). Reduced-motion / 200%-reflow / cross-theme contrast as *rendered* are owner live-verify.\n\n### Touch targets — broad NFR32 sweep (the code debt deferred from 7.3)\n\n6. **Given** touch targets are audited on mobile, **when** all interactive elements are measured, **then** all tappable elements meet **44×44px minimum** (NFR32); **and** the send button meets 48×48px (already `h-12 w-12` — verify-only); **and** capture-thread category chips meet a 44px tap area. **CODE CHANGE:** sweep `components/**` for sub-44px tap targets and raise the genuine mobile ones to ≥44px using the **established convention** (`h-11 w-11` or `min-h-[44px] min-w-[44px]` — already used in `PushPrompt`, `MOCSuggestionCard`, `MOCDetail`, `CategorySuggestionCard`, `DigestCard`, `TabBar`). Concrete known gaps (Dev Notes → NFR32 targets): `ThemeToggleButton` (40px), `SearchTriggerButton` (40px), the `ClassificationCard` \"Note actions\" overflow trigger (~24px), `DesktopSidebar` toggle (40px, desktop). Deterministic class-presence tests cover each fix; the device-pixel measurement is owner live-verify.\n\n### Manual screen-reader verification checklist\n\n7. **Given** a manual screen-reader verification checklist is required, **when** it is authored, **then** a checklist file exists (`_bmad-output/implementation-artifacts/a11y-screen-reader-checklist.md`) enumerating the core-flow checks for **VoiceOver (macOS/iOS)** and **NVDA (Windows)**, to be executed by the owner before public launch; **and** it notes the graph view is post-MVP and must provide a list-based alternative when built. This is a **document deliverable** (the actual SR pass is owner-action).\n\n### Quality gate (regression contract)\n\n8. **Given** the suite is green (**995 passed / 83 files** at baseline `c403a32`), **when** this story's changes land, **then** `tsc --noEmit`, `eslint .`, and `vitest run` all pass with **0 regressions**, and `next build --webpack` still succeeds. New deterministic vitest tests cover the NFR32 class fixes. The Playwright/axe suite is wired and **passes locally against a seeded dev deployment** (or is enumerated as owner live-verify if no local Clerk/Convex test env is available to the dev) — it is **never** marked \"done\" implying the authenticated axe run executed in CI when the gating secrets are not configured."
+        },
+        {
+          "id": "7.5",
+          "epic": 7,
+          "title": "Data Export",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-5-data-export.md",
+          "acCount": 6,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Export page renders with an \"Export All Data\" button + description"
+            },
+            {
+              "id": "AC2",
+              "title": "Tapping \"Export All Data\" runs `exportData` and produces the archive contents"
+            },
+            {
+              "id": "AC3",
+              "title": "Privacy compliance: no internal identifiers, no AI metadata, no audit data (NFR18)"
+            },
+            {
+              "id": "AC4",
+              "title": "Large exports: paginated batches + progress indicator + downloadable ZIP"
+            },
+            {
+              "id": "AC5",
+              "title": "Edge cases: special characters, slugified + de-duplicated filenames"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story 7.5: Data Export` (lines 2154–2197). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**.\n\n**AC1 — Export page renders with an \"Export All Data\" button + description**\n- **Given** the user navigates to **Settings → Export**, **When** the export page renders, **Then** it displays an **\"Export All Data\"** button with the description: **\"Download your entire knowledge base as Markdown files + JSON metadata\"**.\n- (New route `app/(app)/(main)/settings/export/page.tsx` (thin auth-gated client route, mirror `settings/categories/page.tsx`) → new presentational `components/settings/ExportPanel.tsx`. The Settings hub's **Export row must flip from the disabled \"Coming soon\" placeholder to an active `<Link href=\"/settings/export\">`** — trap #1. Show the live note count beside the button when known (`getExportSummary`), e.g. \"Download your entire knowledge base (N notes) as Markdown files + JSON metadata\".)\n\n**AC2 — Tapping \"Export All Data\" runs `exportData` and produces the archive contents**\n- **Given** the user taps \"Export All Data\", **When** the **`exportData` public action** executes, **Then** it generates a downloadable archive containing:\n  - **One Markdown file per note**: `notes/[note-title-slug].md` with the **capture text as content** and **YAML frontmatter** containing: **category name, confidence level, created date, correction count**.\n  - A **`categories.json`** listing all categories with: **name, note count, creation date**.\n  - A **`connections.json`** listing all connections with: **source note title, target note title, connection type, similarity score**.\n  - A **`mocs.json`** listing all MOCs with: **title, note titles (not IDs), status, confidence**.\n- (Architecture realisation — the **logical** archive above is assembled from a paginated server read + a client zip. `exportData` (public **action**) returns notes in **batches** plus, on the final page (`isDone`), the resolved relations (`categories`/`connections`/`mocs`); the **client** builds the Markdown + the three JSON files and zips them — trap #2/#6. The note \"title\" is **not a stored field** — derive it from `content` via a single pure `deriveNoteTitle` (server-side), so the same title is used both for the `.md` filename slug and for the title references inside `connections.json`/`mocs.json` — trap #4. \"Confidence level\" = the existing `confidenceTier` word (high/medium/low/…), `lib/confidence.ts` — reuse, don't reinvent — trap #3.)\n\n**AC3 — Privacy compliance: no internal identifiers, no AI metadata, no audit data (NFR18)**\n- **Given** the export is generated, **When** the content is reviewed for privacy compliance, **Then**:\n  - **NO internal system identifiers** (Convex document IDs) appear anywhere in the export (NFR18).\n  - **NO AI provider metadata** (model names, OpenRouter request IDs) appears in the export.\n  - **NO audit trail data** is included (audit trail is system data, not user knowledge).\n  - **Category names are used instead of category IDs** throughout.\n- (Enforced **structurally**: no `v.id(...)` in any `convex/export.ts` return validator — trap #5. The export reads **only** `notes`/`categories`/`connections`/`mocs` — it **never reads `auditLog`** except the **bounded per-note correction COUNT** (a number derived from `auditLog`, not the audit rows themselves — `details.modelUsed`/`reasoning`/etc. never leave the server). `notes.embedding` (1536 floats) and all `_id`/`userId`/`categoryId`/`parentCaptureId` fields are projected **out**.)\n\n**AC4 — Large exports: paginated batches + progress indicator + downloadable ZIP**\n- **Given** the export file is large (**1000+ notes**), **When** the generation runs, **Then**:\n  - the action **processes notes in paginated batches**;\n  - a progress indicator shows: **\"Exporting [X] of [N] notes...\"**;\n  - the final archive is provided as a **downloadable ZIP file**.\n- (Required by Convex's 8 MiB / 8192-element limits as well as the AC — trap #6. The **client** loops `exportData({ cursor })` (`PAGE_SIZE` 100 — well under 8192), accumulating note records and updating an `aria-live=\"polite\"` status `Exporting ${done} of ${N} notes…` after each page (`N` from `getExportSummary`). ZIP is built **client-side** with **`fflate`** (`zipSync` — pure-JS, ~8 kB, zero-dependency; **dynamic-import** it inside the click handler so it stays out of the initial bundle), wrapped in a `Blob`, and downloaded via a temporary `<a download=\"xynapse-export-YYYY-MM-DD.zip\">` + `URL.createObjectURL` + `revokeObjectURL` — trap #7.)\n\n**AC5 — Edge cases: special characters, slugified + de-duplicated filenames**\n- **Given** the export is evaluated for edge cases, **When** notes with special characters in content are exported, **Then**:\n  - **Markdown files handle special characters correctly** (no broken rendering);\n  - **filenames are slugified** (no spaces, no special characters);\n  - **duplicate slugs get a numeric suffix** (e.g., `my-idea.md`, `my-idea-2.md`).\n- (Pure client helpers in `lib/exportArchive.ts`: `slugify` (lowercase, NFD-strip diacritics, non-alphanumeric runs → `-`, trim, length-cap, empty → `\"note\"`); `dedupeSlug` (global `Set`, append `-2`/`-3`… — trap #8); YAML frontmatter values are **safely quoted/escaped** so a category name containing `:` or `\"` never breaks the block; the capture body is emitted verbatim under the frontmatter (Markdown body needs no escaping — fenced by the `---` delimiter above it). Title/slug truncation is by **code point** (`Array.from`, never split a surrogate pair — mirror `RelatedNotesPanel`'s `articleLabel`). All unit-tested.)\n\n**AC6 — Accessibility**\n- **Given** the export page is evaluated for accessibility, **When** the page is inspected, **Then**:\n  - the export button has **`aria-label=\"Export all data as Markdown and JSON\"`**;\n  - the progress indicator uses **`aria-live=\"polite\"`** for status updates;\n  - the download link (when ready) is **keyboard-accessible and clearly labeled**.\n- (The download fires programmatically (temporary anchor), so there is no persistent focusable \"download link\" to label — instead the **`aria-live` status announces completion** (\"Exported N notes — download started\") which satisfies the screen-reader intent; if a manual \"Download again\" affordance is added it must be a real keyboard-focusable `<button>`/`<a>` with a clear label. Each control keeps `focus-visible:ring-2 focus-visible:ring-ring`. An **axe** pass on the page (jsdom `color-contrast` rule disabled per project convention — deferred-work.md line 14).)"
+        },
+        {
+          "id": "7.6",
+          "epic": 7,
+          "title": "Account & Data Deletion (Right to Erasure)",
+          "status": "done",
+          "file": "D:\\dev\\brain2\\_bmad-output\\implementation-artifacts\\7-6-account-and-data-deletion-right-to-erasure.md",
+          "acCount": 7,
+          "criteria": [
+            {
+              "id": "AC1",
+              "title": "Settings → Account page: export reminder above a clearly-separated, non-inline Delete section"
+            },
+            {
+              "id": "AC2",
+              "title": "\"Delete account\" opens a guarded confirmation dialog (type-email-to-enable)"
+            },
+            {
+              "id": "AC3",
+              "title": "`deleteAllUserData` purges every collection, transactionally; sign-out + redirect + toast"
+            },
+            {
+              "id": "AC4",
+              "title": "Re-sign-in is a clean-slate new user (re-enters onboarding); nothing recoverable"
+            },
+            {
+              "id": "AC5",
+              "title": "Failure is handled: NFR41-safe log, user-facing retry message, rollback/flag"
+            },
+            {
+              "id": "AC6",
+              "title": "Accessibility of the deletion flow"
+            },
+            {
+              "id": "AC7",
+              "title": "Erasure completeness: no dangling jobs/caches reference the deleted user"
+            }
+          ],
+          "acMarkdown": "> Source: `_bmad-output/planning-artifacts/epics.md#Story 7.6: Account & Data Deletion (Right to Erasure)` (lines 2201–2251). Transcribed faithfully; **(parenthetical notes are dev guidance, not new requirements)**.\n\n**AC1 — Settings → Account page: export reminder above a clearly-separated, non-inline Delete section**\n- **Given** the user navigates to **Settings → Account**, **When** the account settings page renders, **Then** it displays an **\"Export your data first\" reminder link** (to Story 7.5 export, `/settings/export`) directly **above** a **\"Delete account\"** section.\n- **And** the \"Delete account\" section uses **`--destructive` color styling** but is **clearly separated from destructive-inline-action patterns** — **not a single primary button**; it **requires a multi-step confirmation**.\n- (New route `app/(app)/(main)/settings/account/page.tsx` (thin `\"use client\"`, mirror `settings/export/page.tsx`) → presentational `components/settings/AccountSettings.tsx`. The Settings hub's **Account row must flip from the disabled \"Coming soon\" placeholder to an active `<Link href=\"/settings/account\">`** — trap #4. \"Multi-step\" = the section's trigger button opens a confirmation **dialog** (step 1 → step 2); the dialog itself gates on a typed-email match (AC2). Use `variant=\"destructive\"` / the `--destructive` token for the delete affordances; keep the section visually distinct (heading + impact copy), never a lone primary CTA.)\n\n**AC2 — \"Delete account\" opens a guarded confirmation dialog (type-email-to-enable)**\n- **Given** the user taps **\"Delete account\"**, **When** the confirmation dialog opens, **Then** it shows: **\"This permanently deletes all your captures, categories, connections, MOCs, digests, and settings. This can't be undone. Have you exported your data?\"**\n- **And** a secondary **\"Export first →\"** link routes to Story 7.5 (`/settings/export`).\n- **And** a **text input requires the user to type their email address** (from the Clerk session) to confirm intent.\n- **And** the **\"Delete everything\" button remains disabled until the typed email matches exactly**.\n- **And** **Cancel is on the left**, **\"Delete everything\" on the right** with `--destructive` color.\n- (Mirror `components/browse/DeleteNoteDialog.tsx`: shadcn `Dialog` + `DialogContent role=\"alertdialog\"` + `aria-describedby` → the impact copy; footer Cancel (`variant=\"secondary\"`, left) / \"Delete everything\" (`variant=\"destructive\"`, right). Email from **`useUser().user?.primaryEmailAddress?.emailAddress`** (Clerk client hook). Match is **trimmed, case-insensitive** (`typed.trim().toLowerCase() === email.trim().toLowerCase()`) — emails are case-insensitive; \"exactly\" means \"their address\", not \"byte-identical\". **Defensive fallback** (trap #8): if the Clerk email is empty/unavailable, gate on the literal word `DELETE` so the flow is never impossible. Extract the match into a **pure `lib/accountDeletion.ts` helper** so it's unit-tested without rendering.)\n\n**AC3 — `deleteAllUserData` purges every collection, transactionally; sign-out + redirect + toast**\n- **Given** the user confirms deletion, **When** the **`deleteAllUserData` public mutation** executes, **Then** all documents belonging to the user (filtered by `userId`) are deleted from: **`notes`, `categories`, `connections`, `mocs`, `digests`, `userSettings`, and `auditLog`** (and — per trap #1 — also `rateLimits`, `nudgeStates`, `categorySuggestions`, `reclassificationJobs`).\n- **And** the deletion is **transactional** — either all collections are purged or none (no partial-state orphans).\n- **And** the user's Clerk account is **signed out**; **optionally (configurable)** the Clerk user record is also deleted via Clerk Backend API `users.deleteUser(userId)`.\n- **And** the user is **redirected to the sign-in page** with a brief toast: **\"Your account and all data have been deleted.\"**\n- (Single `authenticatedMutation` → atomic all-or-nothing for free (trap #2). **NFR14**: `ctx.userId` from the identity, **never an arg** (guidelines.md:182). Sign-out is **client-side** after the mutation resolves: `useClerk().signOut({ redirectUrl: \"/sign-in\" })`. Clerk-record deletion is the env-gated optional path (trap #3) — `process.env.CLERK_SECRET_KEY` present → schedule a V8 `internalAction` that `fetch`-DELETEs `https://api.clerk.com/v1/users/{userId}`; unset → no-op. The toast fires right before sign-out; its survival across the sign-out navigation is a **live-smoke** item (trap #7).)\n\n**AC4 — Re-sign-in is a clean-slate new user (re-enters onboarding); nothing recoverable**\n- **Given** the deletion has completed, **When** the user attempts to sign back in with the same OAuth identity, **Then** they are **treated as a new user** (re-enters onboarding via Story 1.3/1.4).\n- **And** **no data from the previous account remains accessible or recoverable**.\n- (Realized **structurally** by the purge — `userSettings` is gone, so `app/(app)/(main)/layout.tsx:38-42`'s `settings === null → router.push(\"/onboarding\")` gate fires on the next authenticated load, re-entering the Story 1.3 category wizard / 1.4 proactivity onboarding. True even **without** Clerk-record deletion (the same `subject` returns, but with zero Convex data — trap #3). \"Not recoverable\" = the purge is a hard `ctx.db.delete`, no soft-delete/tombstone, no `auditLog` survivor (unlike single-note delete, which **keeps** audit rows — trap #5).)\n\n**AC5 — Failure is handled: NFR41-safe log, user-facing retry message, rollback/flag**\n- **Given** the deletion mutation **fails partway through**, **When** the failure is handled, **Then**:\n  - the error is **logged via `console.error` without exposing user content** (NFR41);\n  - the user sees: **\"Couldn't complete deletion — try again or contact support\"**;\n  - any already-deleted collections are **rolled back if possible**, otherwise the partial state is **flagged for cleanup** (logged with `action: \"deletion_failed\"` in `auditLog` **IF `auditLog` itself hasn't been wiped**).\n- (With the **atomic single-mutation** design, \"rolled back if possible\" is **always** the branch taken — Convex rolls the whole transaction back on any throw, so there is **never** a partial state and the \"otherwise flag in auditLog\" branch is **moot** (you also can't write a `deletion_failed` row inside a transaction that is itself rolling back — that write would roll back too). So: the **client** `try/catch` shows the retry toast; the **server** `console.error`s userId + a non-content error string before re-throwing. The `deletion_failed`-audit branch only becomes relevant if a future scale rewrite adopts the batched non-atomic pattern (trap #2) — note it, don't build it. **NFR41**: never log note `content`, category names, or PII — userId + action + error class only (mirror `classify.ts:645`).)\n\n**AC6 — Accessibility of the deletion flow**\n- **Given** the data deletion flow is evaluated for accessibility, **When** the dialog and input are inspected, **Then**:\n  - the confirmation dialog uses **`role=\"alertdialog\"`** with **`aria-describedby`** linking to the impact description;\n  - **focus is trapped** within the dialog, **initial focus on the email confirmation input**;\n  - **Escape dismisses** (equivalent to Cancel);\n  - the **disabled→enabled state transition** on \"Delete everything\" is **announced via `aria-live=\"polite\"`**: **\"Delete button enabled\"**;\n  - all interactive elements have **visible focus indicators** and meet **4.5:1 contrast** minimum.\n- (Radix `Dialog` (via `components/ui/dialog.tsx`) gives focus-trap + Escape-to-close natively (mirror `DeleteNoteDialog`). **Initial focus on the input**: Radix auto-focuses the first focusable child — force the input with `onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}` (the \"Export first →\" link would otherwise grab it). The **\"Delete button enabled\" announcement**: a `<span aria-live=\"polite\" className=\"sr-only\">` that renders that text only once the match flips false→true. `focus-visible:ring-2 focus-visible:ring-ring` on controls; **axe** pass on the panel + dialog (jsdom `color-contrast` rule disabled per project convention — `deferred-work.md`).)\n\n**AC7 — Erasure completeness: no dangling jobs/caches reference the deleted user**\n- **Given** the deletion satisfies GDPR right to erasure (NFR16), **When** the implementation is verified, **Then**:\n  - **no background jobs, scheduled tasks, or derived caches** reference deleted user data after the mutation completes;\n  - **any in-flight Convex actions scheduled via `scheduler.runAfter` for the deleted user are no-ops** (they **check for user/document existence before executing**).\n- (The purge itself removes the derived caches (`rateLimits`, `nudgeStates`, `categorySuggestions`, `reclassificationJobs`, `mocs`, `digests`) — trap #1. For in-flight scheduled work, the codebase **already** follows the existence-gate pattern: every per-user scheduled function loads its target by id/userId first and no-ops when it's gone — `classifyNote`/`generateEmbedding` (`ctx.db.get(noteId)` → null guard), `reclassifyBatch` (loads the job, which the purge deletes → cancel/no-op), the three crons (`digest`/`cluster`/`categorySuggestions` query user data first, empty → skip). **Verify** each early-returns on a missing target; patch only if a gap is found — trap #6. No explicit job-cancellation API call is needed.)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+"""Coverage for ``loop.qa.discover`` — the QA discovery orchestration.
+
+Pure ``story_gate`` math, plus a full ``run()`` with the agent invocation injected: a fake
+invoker parses the findings path out of the prompt (testing the real contract — "write to
+this absolute path") and writes a verdict file, exactly as the real agent would. No browser,
+no ``claude`` spawned.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from loop.qa.discover import InvokeResult, QaConfig, findings_to_events, run, story_gate
+
+
+def test_story_gate_counts_only_observable():
+    g = story_gate(
+        [{"status": "pass"}, {"status": "fail"}, {"status": "not-observable"}, {"status": "partial"}]
+    )
+    assert g == {
+        "pass": 1,
+        "fail": 2,
+        "total": 3,
+        "green": False,
+        "failingCriteria": ["?", "?"],
+    }
+    # All observable ACs met -> green; not-observable drops out of the denominator.
+    g2 = story_gate([{"status": "pass", "ac": "AC1"}, {"status": "not-observable", "ac": "AC2"}])
+    assert g2["green"] and g2["total"] == 1 and g2["pass"] == 1
+    # No observable ACs at all -> not green (nothing was actually verified).
+    assert story_gate([{"status": "not-observable"}])["green"] is False
+
+
+def test_findings_to_events_shapes():
+    findings = {
+        "epic": 2,
+        "verdicts": [
+            {"story": "2.1", "ac": "AC1", "status": "pass", "evidence": "ok"},
+            {"story": "2.1", "ac": "AC2", "status": "fail", "evidence": "missing send button"},
+        ],
+    }
+    events = findings_to_events(2, findings, cum=1.25, iter_index=1)
+    kinds = [e["event"] for e in events]
+    assert kinds.count("verdict") == 1 and "gate" in kinds and "iter" in kinds
+    verdict = next(e for e in events if e["event"] == "verdict")
+    assert verdict["item"] == "2.1" and verdict["pass"] is False
+    assert verdict["failingCriteria"] == ["AC2"]
+    gate = next(e for e in events if e["event"] == "gate")
+    assert gate["pass"] == 1 and gate["fail"] == 1 and gate["total"] == 2 and gate["green"] is False
+
+
+def _manifest() -> dict:
+    return {
+        "app": "x",
+        "epics": [
+            {
+                "epic": 2,
+                "storyCount": 1,
+                "acCount": 2,
+                "stories": [
+                    {
+                        "id": "2.1",
+                        "title": "Capture",
+                        "status": "done",
+                        "file": "f",
+                        "acCount": 2,
+                        "criteria": [{"id": "AC1", "title": "a"}, {"id": "AC2", "title": "b"}],
+                        "acMarkdown": "**AC1 — a**\n**AC2 — b**",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_run_full_pass_with_fake_agent(tmp_path):
+    mpath = tmp_path / "ac-manifest.json"
+    mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
+    state = tmp_path / "state"
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+
+    events: list[dict] = []
+
+    def fake_invoke(prompt: str, *, timeout_sec: int) -> InvokeResult:
+        # The agent is told to write the findings JSON to an absolute path in backticks.
+        m = re.search(r"absolute path\s*`([^`]+)`", prompt)
+        assert m, "prompt must name the findings path"
+        fp = Path(m.group(1))
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(
+            json.dumps(
+                {
+                    "epic": 2,
+                    "summary": "capture works; send button missing on mobile",
+                    "specFile": "e2e/functional/epic-2.func.e2e.ts",
+                    "verdicts": [
+                        {"story": "2.1", "ac": "AC1", "status": "pass", "evidence": "textarea present",
+                         "severity": "none"},
+                        {"story": "2.1", "ac": "AC2", "status": "fail", "evidence": "no send button",
+                         "severity": "high", "repro": "open /capture on mobile"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return InvokeResult(raw="{}", text="done", cost_usd=0.5)
+
+    rc = run(cfg, state_dir=str(state), invoke=fake_invoke, emit=events.append)
+    assert rc == 0
+
+    kinds = [e["event"] for e in events]
+    for required in ("engine-start", "start", "model", "verdict", "gate", "iter", "stop"):
+        assert required in kinds, f"missing {required}"
+
+    # Aggregated artifacts written.
+    assert (state / "findings.json").exists()
+    report = (state / "report.md").read_text(encoding="utf-8")
+    assert "Epic 2" in report and "send button" in report
+
+    # Cost accumulated into the stop event; epic not green (one failing AC).
+    stop = next(e for e in events if e["event"] == "stop")
+    assert stop["cum"] == 0.5 and stop["green"] is False
+    verdict = next(e for e in events if e["event"] == "verdict")
+    assert verdict["item"] == "2.1" and verdict["pass"] is False
+
+
+def test_run_blocks_epic_when_agent_writes_nothing(tmp_path):
+    mpath = tmp_path / "ac-manifest.json"
+    mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
+    state = tmp_path / "state"
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+
+    events: list[dict] = []
+
+    def silent_invoke(prompt: str, *, timeout_sec: int) -> InvokeResult:
+        return InvokeResult(raw="", text="", cost_usd=0.0, is_error=True, timed_out=True)
+
+    run(cfg, state_dir=str(state), invoke=silent_invoke, emit=events.append)
+    # Every AC is recorded blocked rather than silently passing.
+    acs = [e for e in events if e["event"] == "qa-ac"]
+    assert acs and all(e["status"] == "blocked" for e in acs)
+    verdict = next(e for e in events if e["event"] == "verdict")
+    assert verdict["pass"] is False
