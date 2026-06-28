@@ -105,6 +105,16 @@ class RunStore {
   );
   horizonVisible = $derived(this.horizonFrac >= 0.5);
 
+  // ── scrub-safe cost forecast (pure from reduced state; NO wall-clock) ──
+  // usdRemaining = budget headroom; minsToCeiling = at the current burn, minutes
+  // until the ceiling is hit. ratePerMin<=0 (idle/warming) → null so the UI hides it.
+  usdRemaining = $derived(Math.max(0, this.ceilingUsd - this.state.run.cumUsd));
+  minsToCeiling = $derived.by<number | null>(() => {
+    const rate = this.state.cost.ratePerMin;
+    if (rate <= 0) return null;
+    return this.usdRemaining / rate;
+  });
+
   // quota countdown (seconds remaining toward resumeAt; falls back to waitSec)
   quotaSecondsLeft = $derived.by<number | null>(() => {
     const q = this.state.quota;

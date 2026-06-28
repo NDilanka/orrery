@@ -29,6 +29,7 @@ Ported faithfully from:
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -75,6 +76,9 @@ _REVIEW_COMPLETE_RX = re.compile(r"^.*?REVIEW_COMPLETE:?\s*(.*)$", re.MULTILINE)
 # SMOKE_PASS:/SMOKE_FAIL: verdict line (PS '(SMOKE_(?:PASS|FAIL):[^\r\n]*)').
 _SMOKE_VERDICT_RX = re.compile(r"(SMOKE_(?:PASS|FAIL):[^\r\n]*)")
 _SMOKE_PASS_RX = re.compile(r"SMOKE_PASS")
+# Optional structured per-AC evidence line: 'SMOKE_ACS: {"verified":[...],"deferred":[...]}'.
+# Best-effort — when absent or unparseable the phase falls back to the free-text verdict (parity).
+_SMOKE_ACS_RX = re.compile(r"SMOKE_ACS:\s*(\{.*\})", re.DOTALL)
 
 # Dev-server bound-port patterns: Next-style 'Local: http://localhost:PORT' AND a generic
 # 'http(s)://...:PORT' / 'localhost:PORT' fallback (port is NOT assumed to be 3000).
@@ -138,6 +142,7 @@ def create_story(
     emit: Callable[[dict[str, Any]], None],
     cwd,
     model: str,
+    effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
     max_turns: int = 0,
@@ -160,6 +165,7 @@ def create_story(
         res = runner.run(
             prompt=_CREATE_STORY_PROMPT,
             model=model,
+            effort=effort,
             allowed_tools=list(allowed_tools),
             permission_mode=permission_mode,
             max_turns=max_turns,
@@ -198,9 +204,16 @@ def create_story(
 _DEV_STORY_PROMPT = (
     "You are running HEADLESSLY via 'claude -p' — NON-INTERACTIVE. Do NOT greet or ask what to "
     "work on; IMMEDIATELY invoke the bmad-dev-story skill. Implement the 'ready-for-dev' (or "
-    "resume the 'in-progress') story in sprint-status.yaml using its Tasks/Subtasks with TDD. "
-    "Run continuously to completion; do not stop for milestones. Honor all BMAD HALT "
-    "conditions. On completion set the story to 'review'."
+    "resume the 'in-progress') story in sprint-status.yaml using its Tasks/Subtasks with TDD, "
+    "satisfying EVERY one of the story's Acceptance Criteria. "
+    "Run continuously to completion; do not stop for milestones. Commit your progress with "
+    "descriptive messages as you go. NEVER weaken, skip, or delete a test to make the suite "
+    "pass. Honor all BMAD HALT conditions.\n"
+    "When the implementation is complete and the gate is green — INCLUDING when you RESUMED an "
+    "already-implemented 'in-progress' story and found nothing left to do — you MUST advance this "
+    "story's status to 'review' in sprint-status.yaml before you stop. Do not leave it "
+    "'in-progress': the loop keeps re-selecting and re-running an 'in-progress' story until its "
+    "status changes, so failing to advance it wastes a full re-run."
 )
 
 
@@ -217,6 +230,20 @@ def _stage_ok(gate: dict[str, Any], name: str) -> bool:
     return False
 
 
+def _gate_summary(gate: dict[str, Any]) -> str:
+    """Legacy ``$g.Summary`` line: ``codegen=0 lint=0 test=1  (N pass / N fail)``.
+
+    Shows each stage's EXIT CODE (so the failing stage is obvious) plus pass/fail counts,
+    matching the committed ``bmad-log`` fixtures. Replaces a ``raw[:120]`` slice that
+    truncated inside the first (usually passing) stage and hid the real failing stage.
+    """
+    stages = gate.get("stages") or []
+    parts = " ".join(f"{s.get('name')}={s.get('exit')}" for s in stages)
+    passed = int(gate.get("pass", 0))
+    failed = int(gate.get("fail", 0))
+    return f"{parts}  ({passed} pass / {failed} fail)"
+
+
 def dev_story(
     runner: AgentRunner,
     story: str,
@@ -225,6 +252,7 @@ def dev_story(
     cwd,
     gate_fn: Callable[[], dict[str, Any]],
     model: str,
+    effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
     max_turns: int = 0,
@@ -244,6 +272,7 @@ def dev_story(
     res = runner.run(
         prompt=_DEV_STORY_PROMPT,
         model=model,
+        effort=effort,
         allowed_tools=list(allowed_tools),
         permission_mode=permission_mode,
         max_turns=max_turns,
@@ -289,12 +318,15 @@ def dev_story(
 _CODE_REVIEW_PROMPT_TEMPLATE = (
     "Use the bmad-code-review skill to review story {story} — the changes since its "
     "baseline_commit.\n"
+    "Be RECALL-BIASED: surface EVERY plausible correctness, security, or acceptance-criteria "
+    "violation, including ones you are uncertain about — do NOT pre-filter for importance or "
+    "confidence; a cheap downstream decider will PATCH / DEFER / DISMISS each finding. Verify the "
+    "diff actually SATISFIES each Acceptance Criterion; do not rubber-stamp.\n"
     "You are running NON-INTERACTIVELY. Follow this protocol exactly:\n"
-    "- When you reach a decision point where you would normally ask the user how to handle a "
-    "finding,\n"
-    "  output EXACTLY one line beginning 'QUESTION:' containing the finding and the options, "
-    "then STOP and\n"
-    "  end your turn. Exactly one question per turn. Never ask the same question twice.\n"
+    "- For each finding, output EXACTLY one line beginning 'QUESTION:' that tags the finding's "
+    "severity '[P1]' (blocking bug/security), '[P2]' (should-fix), or '[P3]' (nit), then states "
+    "the finding and the options; then STOP and end your turn. ONE finding per turn, MOST SEVERE "
+    "first. Never ask the same question twice.\n"
     "- When you receive the answer, apply it and continue the review.\n"
     "- When the review is fully complete and the story status is updated, output one line "
     "beginning\n"
@@ -312,7 +344,9 @@ def code_review(
     gate_fn: Callable[[], dict[str, Any]],
     max_turns: int,
     model: str,
+    effort: str = "",
     decider_model: str = "haiku",
+    decider_effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
 ) -> PhaseResult:
@@ -340,6 +374,7 @@ def code_review(
             res = runner.run(
                 prompt=prompt,
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -349,6 +384,7 @@ def code_review(
             res = runner.run(
                 prompt=answer or "",
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -380,7 +416,7 @@ def code_review(
         if q is not None:
             emit(review_question_event(turn=turn, q=q, story=story))
             answer = decider(
-                runner, question=q, story_scope=story, model=decider_model
+                runner, question=q, story_scope=story, model=decider_model, effort=decider_effort
             )
             emit(review_answer_event(turn=turn, a=answer))
             continue
@@ -407,7 +443,7 @@ def _review_finish(
     ok = bool(gate.get("green"))
     return PhaseResult(
         ok=ok,
-        reason=None if ok else f"post-code-review gate red: {gate.get('raw', '')[:120]}",
+        reason=None if ok else f"post-code-review gate red: {_gate_summary(gate)}",
         cost=cost,
         gate=gate,
         extra={"turns": turn, "summary": summary},
@@ -415,12 +451,144 @@ def _review_finish(
 
 
 # ---------------------------------------------------------------------------
+# code-review (single-pass: one warm process, reviewer decides for itself)
+# ---------------------------------------------------------------------------
+
+_CODE_REVIEW_SINGLE_PASS_PROMPT = (
+    "Use the bmad-code-review skill to review story {story} — the changes since its "
+    "baseline_commit.\n"
+    "You are running NON-INTERACTIVELY and AUTONOMOUSLY: there is NO human to answer questions, "
+    "so do NOT emit 'QUESTION:' lines or wait for input — DECIDE every finding yourself and apply "
+    "it, all in this one pass.\n"
+    "Be RECALL-BIASED: find every plausible correctness, security, or acceptance-criteria "
+    "violation, and verify the diff actually SATISFIES each Acceptance Criterion (do not "
+    "rubber-stamp). Decide each finding by these principles:\n"
+    "- PATCH real, in-scope correctness/security bugs with the smallest safe fix.\n"
+    "- DEFER non-blocking improvements (record them as deferred-work; do not implement now).\n"
+    "- DISMISS false positives and out-of-scope items.\n"
+    "- NEVER weaken, skip, or delete a test; stay within this story's scope.\n"
+    "Apply all PATCH decisions and re-run the tests to confirm no regression. Then — this review IS "
+    "the approval gate, and the loop will PR + merge the story next — set THIS story's status to "
+    "'done' in sprint-status.yaml (without it the loop re-selects the same story and re-runs it). "
+    "When the review is fully complete AND the story's status is 'done', output one line beginning "
+    "'REVIEW_COMPLETE:' with a one-line summary, then stop."
+)
+
+
+def code_review_single_pass(
+    runner: AgentRunner,
+    story: str,
+    *,
+    emit: Callable[[dict[str, Any]], None],
+    cwd,
+    gate_fn: Callable[[], dict[str, Any]],
+    model: str,
+    effort: str = "",
+    allowed_tools=BMAD_TOOLS,
+    permission_mode: str = "acceptEdits",
+) -> PhaseResult:
+    """Single-pass autonomous code review — ONE warm process, no QUESTION/decider Q&A loop.
+
+    The Q&A protocol (:func:`code_review`) spawns a fresh COLD ``claude -p`` per finding (the
+    reviewer stops on ``QUESTION:`` -> a separate decider process answers -> the reviewer
+    ``--resume``s as yet another process), each re-loading the whole harness (CLAUDE.md + system +
+    MCP + skills). This mode folds the decider's PATCH/DEFER/DISMISS principles into the reviewer's
+    OWN prompt so it decides AND applies every finding in a single run — the way a human
+    reviews-and-fixes in one interactive session — collapsing ~(2N+1) cold processes to 1 and
+    keeping that one process cache-warm throughout.
+
+    Returns the SAME gate-checked :class:`PhaseResult` shape as :func:`code_review` (the driver's
+    regression-floor + commit handling is identical), so it is a drop-in for the review phase.
+    """
+    res = runner.run(
+        prompt=_CODE_REVIEW_SINGLE_PASS_PROMPT.format(story=story),
+        model=model,
+        effort=effort,
+        allowed_tools=list(allowed_tools),
+        permission_mode=permission_mode,
+        max_turns=0,
+        cwd=cwd,
+    )
+    cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
+        return PhaseResult(
+            ok=False,
+            reason="unparseable code-review output",
+            cost=cost,
+            extra={"turns": 1, "mode": "single-pass"},
+        )
+    text = getattr(res, "text", "") or ""
+    cm = _REVIEW_COMPLETE_RX.search(text)
+    summary = cm.group(1).strip() if cm else "no-marker"
+    emit(review_complete_event(turn=1, summary=summary))
+    result = _review_finish(gate_fn, cost, 1, summary)
+    result.extra["mode"] = "single-pass"
+    return result
+
+
+# ---------------------------------------------------------------------------
 # browser-smoke
 # ---------------------------------------------------------------------------
 
 
-def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
-    """Build the AC-aware smoke prompt (``bmad-loop.ps1`` ~549-579)."""
+def _routes_from_files(files) -> list[str]:
+    """Best-effort URL routes backed by changed Next.js files (app/ or pages/ pages).
+
+    ``app[/(group)]/<segs>/page.tsx`` -> ``/<segs>`` (route-groups dropped, ``[id]`` -> ``:id``);
+    ``pages/<segs>.tsx`` / ``pages/<segs>/index.tsx`` -> ``/<segs>``. Pure, de-duped, order-stable;
+    files that aren't routed pages contribute no route. Imperfect by design — the changed-FILE list
+    is the primary signal; routes are a hint to steer the agent at this story's actual surfaces.
+    """
+    routes: list[str] = []
+    for f in files or []:
+        p = str(f).replace("\\", "/")
+        m = re.match(r"(?:src/)?(?:app|pages)/(.+)", p)
+        if not m:
+            continue
+        rest = re.sub(r"\.[jt]sx?$", "", m.group(1))          # drop extension
+        rest = re.sub(r"/?(page|layout|route)$", "", rest)    # app-router route files
+        rest = re.sub(r"/?index$", "", rest)                  # index -> directory route
+        segs = []
+        for seg in rest.split("/"):
+            if not seg or (seg.startswith("(") and seg.endswith(")")):
+                continue  # empty or a route-group segment -> no URL part
+            segs.append(re.sub(r"^\[\.{0,3}(.+?)\]$", r":\1", seg))  # [id]/[...slug] -> :id/:slug
+        route = "/" + "/".join(segs)
+        if route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _smoke_ac_names(report: Any, key: str) -> list[str] | None:
+    """AC labels from a parsed ``SMOKE_ACS`` report's ``verified``/``deferred`` list.
+
+    Each entry may be a dict (``{"ac": "AC1", ...}``) or a bare string. Returns the labels, or
+    ``None`` when the report isn't a usable dict/list (so the event OMITS the field — parity).
+    """
+    if not isinstance(report, dict):
+        return None
+    items = report.get(key)
+    if not isinstance(items, list):
+        return None
+    names: list[str] = []
+    for it in items:
+        if isinstance(it, dict):
+            label = it.get("ac") or it.get("name") or it.get("id")
+            if label:
+                names.append(str(label))
+        elif it:
+            names.append(str(it))
+    return names
+
+
+def _build_smoke_prompt(url: str, story: str, cwd, acs: str, changed=None) -> str:
+    """Build the AC-aware smoke prompt (``bmad-loop.ps1`` ~549-579).
+
+    When ``changed`` (this story's files changed vs its ``baseline_commit``) is given, a block is
+    injected naming those files + their likely routes so the agent drives THIS story's ACTUAL code
+    instead of a generic health check. ``changed=None`` -> the prompt is identical to before plus
+    the always-on ``SMOKE_ACS:`` evidence ask (which records per-AC verification for observability).
+    """
     if acs:
         ac_block = (
             "This story's ACCEPTANCE CRITERIA (verify each in the browser where it has a UI "
@@ -431,6 +599,16 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
             "(No Acceptance Criteria section found in the story file — fall back to a general "
             "health check.)"
         )
+    if changed:
+        changed_block = (
+            "\n\nTHIS STORY'S CHANGED FILES (the smoke MUST exercise the surfaces these back — do "
+            "NOT settle for a generic health check):\n- " + "\n- ".join(str(f) for f in changed[:40])
+        )
+        routes = _routes_from_files(changed)
+        if routes:
+            changed_block += "\nLikely changed ROUTES to open and drive: " + ", ".join(routes)
+    else:
+        changed_block = ""
     return (
         f"THIS app (Next.js + Convex, repo at {cwd}) is ALREADY RUNNING at exactly {url}.\n"
         f"Use ONLY {url}. Do NOT start, restart, or hunt for the dev server on any other port, "
@@ -438,7 +616,7 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
         "'bun run dev' yourself (it is already running and would block).\n\n"
         f"You are doing STORY-AC-AWARE browser verification of story {story}, not just a health "
         "check.\n\n"
-        f"{ac_block}\n\n"
+        f"{ac_block}{changed_block}\n\n"
         "Auth note: the app uses Clerk. The browser may carry a persisted session (then you "
         "can drive the\n"
         "authenticated flows directly) or be unauthenticated (then '/' and gated routes "
@@ -468,7 +646,14 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str) -> str:
         "Output exactly one line:\n"
         "'SMOKE_PASS:' + which ACs you verified in the browser (and which were deferred to "
         "tests as backend-only), if all UI-verifiable ACs hold and the app is healthy; OR\n"
-        "'SMOKE_FAIL:' + the specific AC or behavior that failed and could not be fixed."
+        "'SMOKE_FAIL:' + the specific AC or behavior that failed and could not be fixed.\n"
+        "Then output ONE more line beginning 'SMOKE_ACS:' followed by compact JSON recording your "
+        "per-AC evidence, e.g.:\n"
+        '  SMOKE_ACS: {"verified":[{"ac":"AC1","how":"clicked Submit on /settings; toast shown",'
+        '"evidence":"snapshot+console"}],"deferred":[{"ac":"AC3","why":"backend-only; covered by '
+        'the test suite"}]}\n'
+        "Cite concrete in-browser evidence (snapshot / DOM node / console / network status) for "
+        "each verified AC; never mark an AC verified without driving it in the browser."
     )
 
 
@@ -484,6 +669,8 @@ def browser_smoke(
     max_iters: int,
     timeout_sec: int,
     model: str,
+    effort: str = "",
+    changed_files=None,
     allowed_tools=SMOKE_TOOLS,
     permission_mode: str = "acceptEdits",
     root_code: int = 200,
@@ -524,13 +711,14 @@ def browser_smoke(
         emit(smoke_server_event(url=url, root_code=root_code))
 
         acs = story_acs(story_text)
-        prompt = _build_smoke_prompt(url, story, cwd, acs)
+        prompt = _build_smoke_prompt(url, story, cwd, acs, changed=changed_files)
 
         for s in range(1, max_iters + 1):
             iters_done = s
             res = runner.run(
                 prompt=prompt,
                 model=model,
+                effort=effort,
                 allowed_tools=list(allowed_tools),
                 permission_mode=permission_mode,
                 max_turns=0,
@@ -556,7 +744,20 @@ def browser_smoke(
             if len(verdict) > 280:
                 verdict = verdict[:280]
             passed = bool(_SMOKE_PASS_RX.search(text))
-            emit(smoke_iter_event(iter_=s, passed=passed, verdict=verdict))
+            am = _SMOKE_ACS_RX.search(text)
+            report = None
+            if am:
+                try:
+                    report = json.loads(am.group(1))
+                except (ValueError, TypeError):
+                    report = None
+            emit(smoke_iter_event(
+                iter_=s,
+                passed=passed,
+                verdict=verdict,
+                verified=_smoke_ac_names(report, "verified"),
+                deferred=_smoke_ac_names(report, "deferred"),
+            ))
 
             if passed:
                 smoke_ok = True
@@ -589,7 +790,7 @@ def browser_smoke(
     ok = bool(gate.get("green"))
     return PhaseResult(
         ok=ok,
-        reason=None if ok else f"post-smoke gate red: {gate.get('raw', '')[:120]}",
+        reason=None if ok else f"post-smoke gate red: {_gate_summary(gate)}",
         cost=total_cost,
         gate=gate,
         extra={"url": url, "iters": iters_done, "timeouts": smoke_timeouts},
@@ -613,8 +814,9 @@ class DevServer:
     URL (or ``None`` if no port appeared in time).
 
     ``stop()`` tree-kills the spawned process (``loop.proc.kill_tree``) and reaps stray
-    dev-server / chrome processes by name (``loop.proc.kill_by_name``) — the cross-platform
-    replacement for the PS ``taskkill /T /F`` + ``Get-NetTCPConnection`` cleanup.
+    dev-server / chrome processes by name (``loop.proc.kill_by_name``), SCOPED to ``cwd`` so
+    it never kills an unrelated same-named process — the cross-platform replacement for the
+    PS ``taskkill /T /F`` + ``Get-NetTCPConnection`` cleanup.
 
     Kept OUT of the unit tests (tests inject a fake ``server_ctl``); only the driver uses it.
     """
@@ -706,7 +908,13 @@ class DevServer:
         return None
 
     def stop(self) -> None:
-        """Tree-kill the dev server and reap stray dev-server/browser processes by name."""
+        """Tree-kill the dev server and reap stray dev-server/browser processes by name.
+
+        The by-name reap is SCOPED to ``self.cwd`` (the project under test) so it can't
+        collateral-kill an unrelated same-named process — notably the Orrery app's own Vite
+        dev server (a ``node`` process) when the loop runs inside Orrery. See
+        ``loop.proc.kill_by_name(within_dir=...)``.
+        """
         if self._proc is not None:
             try:
                 proc.kill_tree(self._proc.pid, include_parent=True)
@@ -714,6 +922,6 @@ class DevServer:
                 pass
         for name in self.stray_names:
             try:
-                proc.kill_by_name(name)
+                proc.kill_by_name(name, within_dir=self.cwd)
             except Exception:
                 pass

@@ -57,6 +57,11 @@
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       void send(q);
+      return;
+    }
+    // Escape blurs the textarea (a side panel must let focus leave — no trap)
+    if (e.key === 'Escape') {
+      (e.currentTarget as HTMLTextAreaElement).blur();
     }
   }
 
@@ -68,11 +73,16 @@
 </script>
 
 {#if pending.length}
-  <div class="qa">
+  <div
+    class="qa"
+    role="region"
+    aria-label="Pending decision"
+    aria-live="assertive"
+  >
     <div class="qhead">
-      <span class="qmote">?</span>
+      <span class="qmote" aria-hidden="true">?</span>
       <span class="qtitle mono">DECISION CHAMBER</span>
-      <span class="qcount mono">{pending.length} pending</span>
+      <span class="qcount mono num">{pending.length} pending</span>
     </div>
 
     {#each pending as q (q.id)}
@@ -172,14 +182,14 @@
     .qmote { animation: none; }
   }
   .qtitle {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.16em;
     color: var(--plasma-cyan);
     flex: 1;
   }
   .qcount {
-    font-size: 10px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
   }
   .qcard {
     display: flex;
@@ -199,7 +209,7 @@
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .kind {
     padding: 2px 7px;
@@ -240,7 +250,7 @@
     padding: 9px 11px;
   }
   .qinput:focus {
-    outline: none;
+    /* keep the global :focus-visible ring — only accent the border */
     border-color: color-mix(in srgb, var(--plasma-cyan) 50%, transparent);
   }
   .qinput:disabled {
@@ -272,8 +282,8 @@
     cursor: default;
   }
   .observe {
-    font-size: 10.5px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     font-style: italic;
     padding: 6px 0;
   }

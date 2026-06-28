@@ -4,6 +4,59 @@ All notable changes to Orrery are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/). While pre-1.0, expect breaking
 changes between minor versions.
 
+## [Unreleased]
+
+### Changed — BMAD driver parity with the original `bmad-loop.ps1`
+- Agent phases **inherit the user's Claude Code default model** (the runner omits `--model`
+  when a phase tier is empty), matching the PowerShell loop, which never pinned a model. Pin
+  per-phase tiers via the loop.json `bmad.models` block if you want them fixed.
+- The gate's test-count parser is **vitest-anchored** (`Tests\s+(\d+)\s+passed`), so the
+  passing-test floor reads the test count — not the "Test Files" count.
+- Restored the dev-story **regression guard** (halt when passing tests drop vs the branch
+  baseline, with `--auto-rollback` to the story's `baseline_commit` as an opt-in), the distinct
+  **codegen P1** halt, and the post-review / post-smoke count-floor checks.
+- Auto-merge is now **verified** (`gh pr view --json state` must be `MERGED`) and `develop` is
+  pulled before the next story, so a merge queued behind branch protection can't strand the next
+  branch on a stale base.
+
+### Fixed
+- The BMAD checkpoint `resume` string carried a literal `loop-bmad --project-root <root>`
+  placeholder that broke Reignite; it now reconstructs the real project-root / state-dir command
+  plus the tuning flags the run actually changed.
+
+### Orrery — run a BMAD sprint live from the app
+- A loop can drive an external project end-to-end from the desktop / LAN app: Ignite / Brake /
+  Reignite spawn and resume the real `loop-bmad` engine, and the Observatory tails its `log.jsonl`.
+- `watch_run` threads an explicit `logFile`; run-control failures **surface in the control bar**
+  instead of failing silently; the loops directory resolves absolutely so control commands find
+  loops regardless of the app's working directory.
+
+### Fixed — the live loop now actually runs (Windows)
+- **Engine**: git/gate subprocess output was decoded as Windows **cp1252**, so a stray byte (a
+  tsc/eslint/vitest glyph, a branch name) crashed the reader thread (`UnicodeDecodeError`) and
+  silently zeroed the gate (baseline 400→0). Both sites now decode UTF-8 with `errors="replace"`.
+- The desktop app silently ran in **replay** mode: `hasTauri()` tested `window.__TAURI__`, which
+  Tauri v2 doesn't inject without `withGlobalTauri`. It now detects `__TAURI_INTERNALS__`.
+- The watcher **died on a not-yet-existent `.loop`** and never re-armed (live UI stayed empty); it
+  now creates the dir before watching. The log default is `log.jsonl` (what the engine writes), and
+  a relative `stateDir` resolves to absolute so the watcher and engine agree on one directory.
+- A stale `STOP` flag braked a fresh run immediately — now cleared on start/resume. `loop-bmad`
+  resolves to the bundled `.venv` so it spawns regardless of how the app was launched.
+- The reducer minted a phantom, text-less Decision-Chamber card on `review`/`retro-complete`
+  ("(awaiting question text…)"); dropped in both reducers (golden regenerated).
+
+### Added — observability & control feedback (Orrery)
+- **Live LOG panel** — a raw event tail (via the `Delta.event` channel, fed across tauri/ws/replay)
+  so a long silent phase still shows a pulse; an `engine-start` heartbeat lands within ~1s of spawn.
+- **Ignite/Reignite feedback** ("igniting…" with a give-up ceiling — no more silent "nothing
+  happened") and a **responsive Brake** (optimistic, symmetric stop/cancel that doesn't wait on the
+  next log line).
+- An honest **LIVE/REPLAY badge** from the mounted transport, a **"no $ metering"** note for
+  subscription runs (cum stays $0), and a fresh-loop **empty-state** prompt.
+- **CREATE/SAVE LOOP** disambiguated from **Ignite** (and you fly into the new System on create);
+  a keyboard / screen-reader work-item list for the click-only canvas; user-created loops are now
+  enterable, not just the static seeds.
+
 ## [0.1.0] — 2026-06-20
 
 First public release: a cross-platform Python loop engine plus the Orrery visualizer.

@@ -103,20 +103,25 @@
 <style>
   .verdict {
     position: absolute;
-    bottom: 230px;
-    right: 18px;
+    /* stack above MetricsPanel: it clears the strip at (strip-h + space-4) and
+       reserves ~200px for its card; sit one gap above that so the two never
+       overlap. On a 700px-tall window this anchors ~352px from the bottom. */
+    bottom: calc(var(--strip-h) + var(--space-4) + var(--metrics-block) + var(--space-3));
+    right: var(--chrome-inset);
     width: 300px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 16px;
+    gap: var(--space-3);
+    padding: var(--space-4);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-left-width: 3px;
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
     z-index: 11;
-    font-size: 12px;
+    font-size: var(--text-sm);
+    /* MetricsPanel's populated card height; keeps the stack math in one place */
+    --metrics-block: 200px;
   }
   .verdict.pass {
     border-left-color: var(--plasma-green);
@@ -131,10 +136,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .vtitle {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.08em;
     color: var(--starlight);
   }
@@ -143,7 +148,7 @@
     border: none;
     color: var(--text-faint);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--text-md);
     line-height: 1;
     padding: 2px 4px;
   }
@@ -153,7 +158,7 @@
   .vbadge {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   .seal {
@@ -171,7 +176,7 @@
     font-weight: 600;
   }
   .model {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-dim);
     padding: 2px 7px;
     border-radius: var(--radius-pill);
@@ -183,10 +188,10 @@
     gap: 5px;
   }
   .blabel {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .crit {
     margin: 0;
@@ -198,30 +203,30 @@
   }
   .crit li {
     color: var(--crimson);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.35;
   }
   .ok {
     color: var(--plasma-green);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .evidence {
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.4;
     white-space: pre-wrap;
     word-break: break-word;
   }
   .next {
     color: var(--starlight);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.4;
   }
   .gate {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-dim);
     border-top: 1px solid var(--hairline);
-    padding-top: 8px;
+    padding-top: var(--space-2);
   }
   .gate.g {
     color: var(--plasma-green);
@@ -231,5 +236,13 @@
   }
   .strikes {
     color: var(--crimson);
+  }
+  /* Tier-1 / phone: full-width bottom sheet so the card never overflows 360px */
+  @media (max-width: 640px) {
+    .verdict {
+      left: var(--space-2);
+      right: var(--space-2);
+      width: auto;
+    }
   }
 </style>

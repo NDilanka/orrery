@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -177,6 +178,12 @@ def main_bmad(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="loop-bmad", description="Run the BMAD epic pipeline.")
     parser.add_argument("--project-root", required=True, help="the BMAD project repo (REQUIRED)")
+    parser.add_argument(
+        "--loop-json",
+        default=None,
+        help="optional loop.json with a `bmad` block (per-phase models/effort, gateStages, "
+        "review/smoke modes); CLI flags stay authoritative for run-location + toggles",
+    )
     parser.add_argument("--merge-base", default="develop", help="base branch for PRs + merge")
     parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP/lock)")
     parser.add_argument("--cwd", default=None, help="override dev-server/gate dir (default project-root)")
@@ -186,6 +193,11 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-merge", action="store_true", help="open PRs but do NOT auto-merge")
     parser.add_argument("--no-retro", action="store_true", help="skip epic retrospectives")
     parser.add_argument("--no-smoke", action="store_true", help="skip the browser-smoke phase")
+    parser.add_argument(
+        "--auto-rollback",
+        action="store_true",
+        help="on a test regression, git reset --hard the story's baseline_commit (else report only)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="sprint scan + gate only; no runner")
     parser.add_argument("--max-stories", type=int, default=None, help="stories-per-launch backstop")
     parser.add_argument("--max-review-turns", type=int, default=None, help="code-review Q&A cap")
@@ -194,11 +206,110 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-retro-turns", type=int, default=None, help="retrospective Q&A cap")
     parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
     parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
+    parser.add_argument(
+        "--merge-wait-sec", type=int, default=None,
+        help="poll a QUEUED PR merge up to N s before halting (0=halt immediately if not MERGED)",
+    )
+    parser.add_argument(
+        "--review-mode",
+        choices=("qa", "single-pass"),
+        default=None,
+        help="code-review: 'qa' (default, decider Q&A loop) or 'single-pass' (one warm process)",
+    )
+    parser.add_argument(
+        "--smoke-mode",
+        choices=("iterative", "single-pass"),
+        default=None,
+        help="browser-smoke: 'iterative' (default, re-spawn on FAIL) or 'single-pass' (one process)",
+    )
+    parser.add_argument(
+        "--retro-mode",
+        choices=("qa", "single-pass"),
+        default=None,
+        help="epic-retro: 'qa' (default, decider Q&A loop) or 'single-pass' (one warm process)",
+    )
     args = parser.parse_args(argv)
 
+    # CLI flags are authoritative for run-location + operational toggles (from_args). An optional
+    # --loop-json `bmad` block supplies the tuning that has NO CLI surface — per-phase `models` /
+    # `effort` / `gate_stages` — plus the phase `review_mode` / `smoke_mode` (a CLI mode flag, if
+    # passed, overrides the file).
     config = driver.BmadConfig.from_args(args)
+    if args.loop_json:
+        data = json.loads(Path(args.loop_json).read_text(encoding="utf-8"))
+        b = data.get("bmad", data) if isinstance(data, dict) else {}
+        b = dict(b) if isinstance(b, dict) else {}
+        b.setdefault("project_root", args.project_root)  # from_loop_json needs a project_root
+        file_config = driver.BmadConfig.from_loop_json({"bmad": b})
+        config.models = file_config.models
+        config.effort = file_config.effort
+        config.gate_stages = file_config.gate_stages
+        config.gate_flaky_retries = file_config.gate_flaky_retries
+        config.gate_flaky_max_fail = file_config.gate_flaky_max_fail
+        if getattr(args, "review_mode", None) is None:
+            config.review_mode = file_config.review_mode
+        if getattr(args, "smoke_mode", None) is None:
+            config.smoke_mode = file_config.smoke_mode
+        if getattr(args, "retro_mode", None) is None:
+            config.retro_mode = file_config.retro_mode
     runner = get_runner(args.runner)
     return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)
+
+
+def main_qa(argv: list[str] | None = None) -> int:
+    """``loop-qa`` entry point — run the AC-driven functional QA discovery pass.
+
+    Drives a headless, pre-authenticated browser (Playwright MCP) through each epic's screens,
+    judging browser-observable acceptance criteria and authoring regression specs. ``--project-root``
+    (the app repo the agent writes specs into) and ``--manifest`` (the AC oracle from
+    :mod:`loop.qa.manifest`) are REQUIRED; an optional ``--loop-json`` ``qa`` block supplies tuning
+    (baseUrl / storageState / specDir / seedSummary / model / effort / timeouts). CLI flags override.
+    """
+    from loop.qa import discover
+
+    parser = argparse.ArgumentParser(prog="loop-qa", description="Run the QA discovery pass.")
+    parser.add_argument("--project-root", required=True, help="app repo under test (REQUIRED)")
+    parser.add_argument("--manifest", required=True, help="ac-manifest.json oracle (REQUIRED)")
+    parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP)")
+    parser.add_argument("--loop-json", default=None, help="optional loop.json with a `qa` block")
+    parser.add_argument("--base-url", default=None, help="base URL of the running app")
+    parser.add_argument("--storage-state", default=None, help="Playwright auth storageState path")
+    parser.add_argument("--spec-dir", default=None, help="where authored specs land (rel to root)")
+    parser.add_argument("--model", default=None, help="agent model ('' inherits the default)")
+    parser.add_argument("--effort", default=None, help="reasoning effort (low|medium|high|xhigh|max)")
+    parser.add_argument(
+        "--epic", action="append", type=int, default=None,
+        help="restrict to epic N (repeatable); default = all epics in the manifest",
+    )
+    parser.add_argument("--timeout-sec", type=int, default=None, help="per-epic wall-clock cap")
+    parser.add_argument("--cost-ceiling", type=float, default=None, help="cumulative USD ceiling")
+    args = parser.parse_args(argv)
+
+    if args.loop_json:
+        data = json.loads(Path(args.loop_json).read_text(encoding="utf-8"))
+        config = discover.QaConfig.from_loop_json(data, project_root=args.project_root)
+    else:
+        config = discover.QaConfig(project_root=args.project_root, manifest_path=args.manifest)
+
+    config.manifest_path = args.manifest  # CLI is authoritative for the oracle location
+    if args.base_url is not None:
+        config.base_url = args.base_url
+    if args.storage_state is not None:
+        config.storage_state = args.storage_state
+    if args.spec_dir is not None:
+        config.spec_dir = args.spec_dir
+    if args.model is not None:
+        config.model = args.model
+    if args.effort is not None:
+        config.effort = args.effort
+    if args.epic is not None:
+        config.epics = args.epic
+    if args.timeout_sec is not None:
+        config.timeout_sec = args.timeout_sec
+    if args.cost_ceiling is not None:
+        config.cost_ceiling_usd = args.cost_ceiling
+
+    return discover.run(config, state_dir=args.state_dir)
 
 
 if __name__ == "__main__":

@@ -13,8 +13,25 @@
 
   import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import DecisionSheet from './DecisionSheet.svelte';
+
+  // answer + observeOnly are threaded from +page so a loop that BLOCKS on a
+  // decision can be answered WITHOUT leaving the ambient Planetarium view.
+  let {
+    answer,
+    observeOnly = false,
+  }: {
+    answer?: (qid: string, text: string) => void | Promise<void>;
+    observeOnly?: boolean;
+  } = $props();
 
   const s = $derived(runStore.state);
+
+  // pending = questions the engine surfaced that nobody has answered yet. When
+  // any exist the loop is blocked on a human; the ambient view must say so LOUD.
+  const pending = $derived(s.questions.filter((q) => q.a == null));
+
+  let showSheet = $state(false);
 
   function fmtUsd(n: number): string {
     return '$' + n.toFixed(2);
@@ -54,12 +71,38 @@
 </script>
 
 <div class="planetarium" class:reduced={uiStore.reducedMotion}>
-  <!-- recessed identity (always, low-contrast) -->
+  <!-- recessed identity + the load-bearing numbers (legible without the HUD) -->
   <div class="ident mono">
     <span class="lid">{s.loopId}</span>
-    <span class="dot">·</span>
-    <span class="cost">{fmtUsd(s.run.cumUsd)}</span>
+    <span class="dot" aria-hidden="true">·</span>
+    <span class="cost num">{fmtUsd(s.run.cumUsd)}</span>
+    {#if s.cost.ratePerMin > 0}
+      <span class="dot" aria-hidden="true">·</span>
+      <span class="rate num">{fmtUsd(s.cost.ratePerMin)}/min</span>
+    {/if}
   </div>
+  {#if s.currentItem}
+    <div class="curitem mono" title={s.currentItem}>→ {s.currentItem}</div>
+  {/if}
+
+  <!-- BLOCKED ON A HUMAN — a loud, real (keyboard/touch) affordance. This is the
+       one place the ambient view raises its voice: a beacon-tier call to act,
+       paired with a glyph + count so it never reads by hue alone. Opens the
+       DecisionSheet in place; we never leave Planetarium. -->
+  {#if pending.length}
+    <button
+      class="needs"
+      class:reduced={uiStore.reducedMotion}
+      onclick={() => (showSheet = true)}
+      aria-haspopup="dialog"
+    >
+      <span class="needs-glyph" aria-hidden="true">◈</span>
+      <span class="needs-text">NEEDS A DECISION</span>
+      {#if pending.length > 1}
+        <span class="needs-n num" aria-label="{pending.length} pending">×{pending.length}</span>
+      {/if}
+    </button>
+  {/if}
 
   <!-- threshold text — appears only when there's something worth saying -->
   {#if threshold}
@@ -74,6 +117,10 @@
   </button>
 </div>
 
+{#if showSheet && pending.length}
+  <DecisionSheet {answer} {observeOnly} onClose={() => (showSheet = false)} />
+{/if}
+
 <style>
   .planetarium {
     position: absolute;
@@ -87,9 +134,9 @@
     left: 0;
     right: 0;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
-    color: var(--text-faint);
+    color: var(--text-meta);
     text-transform: uppercase;
   }
   .ident .lid {
@@ -97,6 +144,24 @@
   }
   .ident .cost {
     color: var(--brass);
+  }
+  .ident .rate {
+    color: var(--text-meta);
+  }
+  /* what the loop is working on right now — the other load-bearing fact */
+  .curitem {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.1em;
+    color: var(--text-meta);
+    padding: 0 var(--space-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* the threshold line sits just below the star (centre), big + readable */
   .threshold {
@@ -131,6 +196,66 @@
   .planetarium.reduced .threshold.loud {
     animation: none;
   }
+  /* the BEACON-tier call to act. Loud is allowed here (per the plan only the
+     beacon + weekly-crystal may be loud). Glyph + label + count so status never
+     rides on hue alone. Urgency reads as a slow TIGHTENING breath, never a
+     blink; reduced-motion drops the animation but keeps the loud styling. */
+  .needs {
+    position: absolute;
+    left: 50%;
+    bottom: 22%;
+    transform: translateX(-50%);
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-grotesk);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--starlight);
+    padding: 12px 22px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--crimson);
+    background: color-mix(in srgb, var(--crimson) 22%, var(--void-3));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--crimson) 40%, transparent),
+      0 0 24px color-mix(in srgb, var(--crimson) 45%, transparent);
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    animation: needsBreath 2.6s var(--ease-standard) infinite;
+  }
+  .needs:hover {
+    background: color-mix(in srgb, var(--crimson) 32%, var(--void-3));
+  }
+  .needs-glyph {
+    color: var(--crimson);
+    font-size: 16px;
+  }
+  .needs-n {
+    color: var(--crimson);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  /* a slow tightening of the glow ring — attention without a blink */
+  @keyframes needsBreath {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--crimson) 40%, transparent),
+        0 0 24px color-mix(in srgb, var(--crimson) 45%, transparent);
+    }
+    50% {
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--crimson) 70%, transparent),
+        0 0 12px color-mix(in srgb, var(--crimson) 60%, transparent);
+    }
+  }
+  .needs.reduced {
+    animation: none;
+  }
+
   .exit {
     position: absolute;
     bottom: 20px;
@@ -152,5 +277,18 @@
   .exit:hover {
     color: var(--starlight);
     border-color: var(--brass);
+  }
+
+  /* phone: the top edge is taken by the (wrapping) navbar + mode toggle, so the
+     load-bearing identity numbers move BELOW the star where they stay readable. */
+  @media (max-width: 640px) {
+    .ident {
+      top: auto;
+      bottom: 32%;
+    }
+    .curitem {
+      top: auto;
+      bottom: calc(32% - 20px);
+    }
   }
 </style>

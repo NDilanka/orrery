@@ -6,12 +6,16 @@
   // ember-red · Sonnet brass-gold · Opus blue-white). A lightweight Canvas 2D
   // drawing on its own rAF, so it's cheap and never touches the Pixi scene.
   //
-  // §F restraint: prefers-reduced-motion freezes the rotation; the lit gear is
-  // still shown (state readable), it just doesn't spin.
+  // §F restraint: reduced-motion (one source: uiStore.reducedMotion) freezes
+  // the rotation; the lit gear is still shown (state readable), it just doesn't
+  // spin. When idle (stopped + eased values settled, or reduced-motion) the rAF
+  // stops entirely — a top-level $effect re-arms it when the run state changes,
+  // so we never busy-spin a clear+redraw every frame.
 
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { runStore } from '../stores/run.svelte';
+  import { uiStore } from '../stores/ui.svelte';
   import type { SixPhase } from '../types';
 
   let canvas: HTMLCanvasElement;
@@ -32,17 +36,19 @@
     return '#c9a24b'; // sonnet / default
   }
 
+  // settle epsilon for the eased lit/emit values — once everything is within this
+  // of its target we can stop drawing (one final frame) and park the rAF.
+  const SETTLE_EPS = 0.004;
+
+  // exposed so the top-level $effect can re-arm the loop when run state changes.
+  let arm: (() => void) | null = null;
+
   onMount(() => {
     if (!browser) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     let raf = 0;
     let destroyed = false;
-
-    const rmQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let reduced = rmQuery.matches;
-    const onRm = () => (reduced = rmQuery.matches);
-    rmQuery.addEventListener?.('change', onRm);
 
     // eased lit-intensity per phase (so the active gear lights/dims smoothly)
     const litEased = new Array(PHASES.length).fill(0);
@@ -76,16 +82,19 @@
       canvas.width = Math.max(1, Math.round(rect.width * dpr));
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // a static resize still needs a redraw — re-arm so the new size paints.
+      arm?.();
     }
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
 
-    const draw = () => {
-      if (destroyed) return;
+    // one drawing pass; returns whether the scene has settled (no more motion).
+    const drawFrame = (): boolean => {
       const s = runStore.state;
       const running = s.run.status === 'running';
-      if (!reduced) t += 0.016;
+      const reduced = uiStore.reducedMotion;
+      if (!reduced && running) t += 0.016;
 
       const target = hexToRgb(modelHex(runStore.model));
       emitCol.r = lerp(emitCol.r, target.r, 0.06);
@@ -97,10 +106,15 @@
       const w = rect.width || 200;
       const h = rect.height || 200;
       ctx!.clearRect(0, 0, w, h);
+
       const cx = w / 2;
-      const cy = h / 2;
-      const ringR = Math.min(w, h) * 0.33;
       const gearR = Math.min(w, h) * 0.12;
+      // Reserve room for the bottom gear-row LABELS (drawn at gy + gearR + 9):
+      // shrink the ring and bias the center upward so the lowest gear + its label
+      // clear the canvas edge with margin instead of clipping.
+      const labelPad = 14; // label baseline + descenders below the lowest gear
+      const ringR = (Math.min(w, h) - gearR * 2 - labelPad * 2) / 2;
+      const cy = h / 2 - labelPad / 2;
 
       const activeIdx = PHASES.findIndex((p) => p.key === s.phase.sixPhase);
 
@@ -123,12 +137,16 @@
       ctx!.fill();
       ctx!.globalAlpha = 1;
 
+      let settled = true; // becomes false if any eased value is still moving
+
       for (let i = 0; i < PHASES.length; i++) {
         const ang = (i / PHASES.length) * Math.PI * 2 - Math.PI / 2;
         const gx = cx + Math.cos(ang) * ringR;
         const gy = cy + Math.sin(ang) * ringR;
         const isActive = i === activeIdx;
-        litEased[i] = lerp(litEased[i], isActive && running ? 1 : 0, 0.1);
+        const litTarget = isActive && running ? 1 : 0;
+        litEased[i] = lerp(litEased[i], litTarget, 0.1);
+        if (Math.abs(litEased[i] - litTarget) > SETTLE_EPS) settled = false;
         const lit = litEased[i];
 
         // gear teeth — active gear meshes (rotates), others idle
@@ -162,32 +180,91 @@
         ctx!.fillText(PHASES[i].label, gx, gy + gearR + 9);
       }
 
-      raf = requestAnimationFrame(draw);
+      // emit color still drifting toward its target?
+      const dr = Math.abs(emitCol.r - target.r);
+      const dg = Math.abs(emitCol.g - target.g);
+      const db = Math.abs(emitCol.b - target.b);
+      if (dr + dg + db > 1) settled = false;
+
+      return settled;
     };
-    raf = requestAnimationFrame(draw);
+
+    const tick = () => {
+      if (destroyed) return;
+      const settled = drawFrame();
+      const running = runStore.state.run.status === 'running';
+      // Spin only while there is genuine motion: a running, non-reduced loop, or
+      // eased values still resolving. Otherwise draw the final frame and park.
+      if ((running && !uiStore.reducedMotion) || !settled) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        raf = 0;
+      }
+    };
+
+    // (re)start the loop if it isn't already running.
+    arm = () => {
+      if (destroyed || raf) return;
+      raf = requestAnimationFrame(tick);
+    };
+    arm();
 
     return () => {
       destroyed = true;
+      arm = null;
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
-      rmQuery.removeEventListener?.('change', onRm);
     };
+  });
+
+  // Re-arm the rAF whenever the inputs that drive the drawing change — run status
+  // (start/stop), active model, six-phase, and reduced-motion. When the loop has
+  // parked itself this restarts it; while it's already spinning this is a no-op.
+  $effect(() => {
+    // touch the reactive deps so the effect re-runs on any change
+    void runStore.state.run.status;
+    void runStore.model;
+    void runStore.state.phase.sixPhase;
+    void uiStore.reducedMotion;
+    arm?.();
   });
 </script>
 
-<div class="mechanism">
+<div class="mechanism" class:phone={uiStore.isPhone}>
   <canvas bind:this={canvas} aria-hidden="true"></canvas>
 </div>
 
 <style>
   .mechanism {
     position: absolute;
-    bottom: 134px;
-    right: 18px;
+    /* dock above the cost/quota strip with a clear gutter so the bottom gear
+       row + its labels never tuck under the strip. */
+    bottom: calc(var(--strip-h) + var(--space-4));
+    right: var(--chrome-inset);
     width: 190px;
     height: 190px;
     pointer-events: none;
     opacity: 0.96;
+  }
+  /* phone (Tier-1): shrink so it doesn't crowd the ambient view */
+  .mechanism.phone {
+    width: 150px;
+    height: 150px;
+  }
+  /* Short viewport: shrink so the stacked MetricsPanel above still fits without
+     pushing off-screen (MetricsPanel mirrors this 150px in its own offset). */
+  @media (max-height: 760px) {
+    .mechanism {
+      width: 150px;
+      height: 150px;
+    }
+  }
+  /* Very short viewport: drop the Mechanism entirely so RUN QUALITY stays
+     readable (MetricsPanel re-docks above the cost strip at this height). */
+  @media (max-height: 600px) {
+    .mechanism {
+      display: none;
+    }
   }
   .mechanism canvas {
     width: 100%;

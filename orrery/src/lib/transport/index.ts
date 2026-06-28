@@ -11,6 +11,8 @@ import { TauriTransport, type TauriConfig } from './tauri';
 import { WsTransport, type WsConfig } from './ws';
 
 export interface Transport {
+  /** Which transport actually mounted — the single source of truth for the LIVE/REPLAY badge. */
+  readonly kind: 'tauri' | 'ws' | 'replay';
   start(): Promise<void>;
   stop(): void;
   control(action: string): Promise<void>;
@@ -23,7 +25,13 @@ export interface TransportOpts {
 }
 
 export function hasTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI__' in window;
+  // Tauri v2 only injects `window.__TAURI__` when `withGlobalTauri` is enabled
+  // (it isn't, by default). But `__TAURI_INTERNALS__` — the IPC bridge that
+  // `invoke` rides — is ALWAYS present inside a Tauri webview. Detect on that so
+  // the desktop app picks the live transport; otherwise it silently falls back
+  // to dev replay, where every control verb (start/stop/reignite) is a no-op.
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
 }
 
 /**
@@ -58,6 +66,7 @@ export interface LoopChoice {
   theme: string;
   adapter: 'generic' | 'bmad';
   stateDir: string; // for Tauri watch_run
+  logFile?: string; // log filename within stateDir (defaults per adapter when omitted)
   fixtureUrl: string; // for dev replay
   checkpointUrl?: string;
   rateMs?: number;
@@ -74,6 +83,7 @@ export function createTransport(choice: LoopChoice, opts: CreateTransportOpts): 
       stateDir: choice.stateDir,
       adapter: choice.adapter,
       loopId: choice.id,
+      logFile: choice.logFile,
     };
     return new TauriTransport(cfg, opts);
   }
@@ -112,10 +122,14 @@ export const LOOPS: LoopChoice[] = [
   },
   {
     id: 'bmad',
-    name: 'BMAD — demo-project sprint',
+    name: 'BMAD — brain2 (xynapsis) sprint',
     theme: 'plasma',
     adapter: 'bmad',
-    stateDir: '.loop',
+    // Live (Tauri/LAN): watch the real loop's state dir + log written by `loop-bmad`
+    // (orrery/loops/bmad/loop.json). Absolute so the watcher + the spawn agree regardless
+    // of the app's cwd. The fixtureUrl below is ONLY used by the pure `vite dev` replay.
+    stateDir: 'D:/dev/loop/orrery/loops/bmad/.loop',
+    logFile: 'log.jsonl',
     fixtureUrl: 'fixtures/bmad-log.jsonl',
     checkpointUrl: 'fixtures/checkpoint.json',
     rateMs: 90,

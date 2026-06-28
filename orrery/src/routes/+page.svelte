@@ -14,6 +14,7 @@
   // `browser` guard); this shell only orchestrates view state + the transport.
 
   import '$lib/render/tokens.css';
+  import '$lib/fonts'; // self-hosted Space Grotesk + JetBrains Mono (offline-safe)
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { base } from '$app/paths';
@@ -33,8 +34,11 @@
   import StaleBadge from '$lib/panels/StaleBadge.svelte';
   import QAConsole from '$lib/panels/QAConsole.svelte';
   import PlanetariumOverlay from '$lib/panels/PlanetariumOverlay.svelte';
+  import LogPanel from '$lib/panels/LogPanel.svelte';
+  import HelpOverlay from '$lib/panels/HelpOverlay.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
+  import { logStore } from '$lib/stores/log.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import {
@@ -53,7 +57,24 @@
   let view = $state<View>('cosmos');
   let activeLoop = $state<string | null>(null);
   let bodyKey = $state<string | null>(null);
+  let showHelp = $state(false); // the keyboard-shortcut legend overlay
   let mode = $state<'live' | 'replay'>('replay');
+  // The kind of the transport that ACTUALLY mounted for the active System (single source of
+  // truth for the badge) — vs `mode`, which is only the environment's capability at the Cosmos.
+  let transportKind = $state<'tauri' | 'ws' | 'replay' | null>(null);
+  const isLiveTransport = $derived(transportKind === 'tauri' || transportKind === 'ws');
+  // A live loop that has never emitted an event: guide the user to Ignite instead of showing
+  // a silent, pre-populated $0.00/IDLE instrument that reads as "broken".
+  const liveAndEmpty = $derived(isLiveTransport && runStore.state.events === 0);
+  const badgeLabel = $derived(
+    transportKind === 'tauri'
+      ? 'LIVE · desktop'
+      : transportKind === 'ws'
+        ? 'LIVE · LAN'
+        : transportKind === 'replay'
+          ? 'REPLAY · fixture'
+          : mode,
+  );
 
   let transport: Transport | null = null;
   let playback = $state<PlaybackTransport | null>(null);
@@ -86,19 +107,44 @@
     };
   }
 
+  // Build a LIVE loop choice from a loop's loop.json — for loops that exist on disk (and so
+  // are listed by the Cosmos) but are NOT in the static seed LOOPS table (e.g. user-created
+  // ones). fixtureUrl is empty because dynamic loops have no replay fixture; the Tauri/LAN
+  // transports don't use it. Returns null if the def can't be read.
+  async function loopChoiceFromDef(id: string): Promise<LoopChoice | null> {
+    const def = await cosmosStore.loadLoopDef(id);
+    if (!def) return null;
+    const adapter = def.adapter === 'bmad' ? 'bmad' : 'generic';
+    const stateDir = (def.stateDir ?? def.state_dir) as string | undefined;
+    if (!stateDir) return null;
+    return {
+      id: String(def.id ?? id),
+      name: String(def.name ?? id),
+      theme: String(def.theme ?? 'plasma'),
+      adapter,
+      stateDir,
+      logFile: typeof def.logFile === 'string' ? def.logFile : undefined,
+      fixtureUrl: '',
+    };
+  }
+
   // ── mount a loop's System view via the existing transport/replay ───────────
   async function mountLoop(id: string) {
     if (!browser) return;
     transport?.stop();
     runStore.reset();
+    logStore.clear();
     playback = null;
     wsStatus = null;
-    const choice = LOOPS.find((l) => l.id === id);
+    // Seed loops come from the static LOOPS table (they carry replay fixtures); any other
+    // loop on disk is resolved live from its loop.json so created loops are enterable too.
+    const choice = LOOPS.find((l) => l.id === id) ?? (await loopChoiceFromDef(id));
     if (!choice) return;
     transport = createTransport(withBase(choice), {
       onState: (s) => runStore.set(s),
       onWsStatus: (st) => (wsStatus = st),
     });
+    transportKind = transport.kind;
     if (isPlayback(transport)) {
       playback = transport;
       transport.onPlayback((p) => (playbackState = p));
@@ -112,9 +158,11 @@
   function unmountLoop() {
     transport?.stop();
     transport = null;
+    transportKind = null;
     playback = null;
     wsStatus = null;
     runStore.reset();
+    logStore.clear();
   }
 
   async function control(action: string) {
@@ -150,24 +198,54 @@
     void cosmosStore.load(); // refresh Tier-1 summaries on return
   }
 
+  // ── app-wide keyboard shortcuts (guarded vs text entry + open dialogs) ──
+  //   ?  toggle the shortcut legend · Esc  close help / leave a Body
+  //   i  ignite · b  brake(phase) · r  reignite   (only inside a System/Body)
+  function onKeydown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (
+      t &&
+      (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')
+    )
+      return;
+    if (cosmosStore.console) return; // the Tuning Console owns its own keys while open
+    if (e.key === '?') {
+      showHelp = !showHelp;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (showHelp) showHelp = false;
+      else if (view === 'body') backToSystem();
+      else return;
+      e.preventDefault();
+      return;
+    }
+    if (view === 'cosmos') return; // run controls only make sense inside a run
+    const k = e.key.toLowerCase();
+    if (k === 'i') void control('start');
+    else if (k === 'b') void control('stop:phase');
+    else if (k === 'r') void control('resume');
+    else return;
+    e.preventDefault();
+  }
+
   onMount(() => {
     mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
     const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
     void cosmosStore.load();
+    window.addEventListener('keydown', onKeydown);
     return () => {
       teardownUi();
       transport?.stop();
+      window.removeEventListener('keydown', onKeydown);
     };
   });
 </script>
 
 <svelte:head>
   <title>Orrery — {view === 'cosmos' ? 'cosmos' : activeLoop ?? view}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet"
-  />
+  <!-- fonts are self-hosted via $lib/fonts (no runtime CDN; works offline in Tauri) -->
 </svelte:head>
 
 <main class="stage">
@@ -185,9 +263,30 @@
         <!-- the canvas always renders; it consults uiStore for the tier/mode -->
         <Observatory />
 
+        <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
+             Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
+             hidden until focused (skip-link style), so it never crowds the instrument. -->
+        {#if view === 'system' && runStore.orbits.length}
+          <nav class="items-a11y" aria-label="work items">
+            <ul>
+              {#each runStore.orbits as o (o.key)}
+                <li>
+                  <button onclick={() => { runStore.selectItem(o.key); enterBody(o.key); }}
+                    >{o.key} — {o.status}</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          </nav>
+        {/if}
+
+        <!-- chrome only at the System altitude — a Body dossier suppresses the whole
+             instrument (not just dims it) so panels never bleed behind the card. -->
+        {#if view === 'system'}
         {#if uiStore.ambient}
-          <!-- PLANETARIUM: ambient Tier-1; only threshold text, recessed exit. -->
-          <PlanetariumOverlay />
+          <!-- PLANETARIUM: ambient Tier-1; threshold text + a loud decision affordance
+               (answer a blocking question without leaving ambient). -->
+          <PlanetariumOverlay {answer} {observeOnly} />
         {:else}
           <!-- OBSERVATORY / REWIND chrome (the full instrument). The gear
                Mechanism is Tier-2 → hidden on a phone (uiStore.tierOne). -->
@@ -195,43 +294,58 @@
             <Mechanism />
           {/if}
           <CostQuotaStrip />
+          {#if !uiStore.tierOne}
+            <LogPanel />
+          {/if}
           <Hud />
           <MetricsPanel />
           <VerdictPanel />
           <QAConsole {answer} {observeOnly} />
-          {#if playback}
-            <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
-          {/if}
-          <RunControlBar {control} />
+          <!-- bottom-dock: one flex column above the cost strip — replaces the old
+               per-component magic bottom offsets so the centre stack never collides
+               on short windows (hint on top, controls, then transport nearest the strip). -->
+          <div class="bottom-dock">
+            {#if view === 'system' && liveAndEmpty}
+              <div class="empty-hint" role="status">
+                <p class="eh-title">This loop hasn't run yet</p>
+                <p class="eh-sub">
+                  Press <strong>✦ Ignite</strong> below to start it — events stream in here live.
+                </p>
+              </div>
+            {/if}
+            <RunControlBar {control} />
+            {#if playback}
+              <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+            {/if}
+          </div>
         {/if}
 
-        <!-- mode toggle + ws freshness badge sit above every mode -->
-        {#if view === 'system'}
-          <ModeBar canRewind={!!playback} />
-        {/if}
+        <!-- mode toggle + ws freshness badge (System altitude only) -->
+        <ModeBar canRewind={!!playback} />
         <StaleBadge status={wsStatus} />
+        {/if}
       </div>
     {/if}
 
     <!-- ── BODY (one work-item dossier) ────────────────────────────────────── -->
     {#if view === 'body' && bodyKey}
       <div class="layer body-layer in">
-        <BodyView itemKey={bodyKey} />
+        <BodyView itemKey={bodyKey} onBack={backToSystem} />
       </div>
     {/if}
 
     <!-- ── nav shell: brand + breadcrumbs + actions ────────────────────────── -->
-    <nav class="navbar">
+    <nav class="navbar" aria-label="primary">
       <div class="crumbs">
         <button
           class="crumb {view === 'cosmos' ? 'active' : ''}"
           onclick={backToCosmos}
           disabled={view === 'cosmos'}
         >
-          ✦ COSMOS
+          <span aria-hidden="true">✦</span> COSMOS
         </button>
         {#if view !== 'cosmos'}
-          <span class="sep">←</span>
+          <span class="sep" aria-hidden="true">›</span>
           <button
             class="crumb {view === 'system' ? 'active' : ''}"
             onclick={backToSystem}
@@ -241,7 +355,7 @@
           </button>
         {/if}
         {#if view === 'body' && bodyKey}
-          <span class="sep">←</span>
+          <span class="sep" aria-hidden="true">›</span>
           <span class="crumb active body">{bodyKey}</span>
         {/if}
       </div>
@@ -253,25 +367,30 @@
             <button class="nbtn body" onclick={() => enterBody(sel)}>fly into body →</button>
           {/if}
         {/if}
-        <span class="mode mono">{mode}</span>
+        <span
+          class="mode mono"
+          class:islive={view !== 'cosmos' && isLiveTransport}
+          class:isreplay={view !== 'cosmos' && transportKind === 'replay'}
+          title={view !== 'cosmos' && transportKind === 'replay'
+            ? 'Watching a recorded fixture — controls (Ignite/Reignite) are inert here.'
+            : isLiveTransport
+              ? 'Driving the real loop — Ignite/Reignite spawn the engine.'
+              : ''}>{badgeLabel}</span
+        >
       </div>
     </nav>
 
-    <!-- ✦ ignite-new-loop + ✎ edit affordances (only at the Cosmos altitude) -->
+    <!-- ✦ ignite-new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
+         now lives in the Cosmos roster — the single home for enter + edit. -->
     {#if view === 'cosmos'}
       <button class="ignite-fab" onclick={() => cosmosStore.igniteNew()}>
-        ✦ ignite new loop
+        <span aria-hidden="true">✦</span> ignite new loop
       </button>
-      {#if cosmosStore.loops.length}
-        <div class="edit-rail">
-          <span class="rail-label mono">recalibrate</span>
-          {#each cosmosStore.loops as l (l.id)}
-            <button class="edit-chip mono" onclick={() => cosmosStore.editLoop(l.id)} title="edit {l.name}">
-              ✎ {l.id}
-            </button>
-          {/each}
-        </div>
-      {/if}
+    {/if}
+
+    <!-- keyboard-shortcut legend (toggled with ?) -->
+    {#if showHelp}
+      <HelpOverlay onClose={() => (showHelp = false)} />
     {/if}
 
     <!-- A5: the Tuning Console (create / edit a loop) -->
@@ -280,9 +399,13 @@
         mode={cosmosStore.console.mode}
         editId={cosmosStore.console.editId}
         onClose={() => cosmosStore.dismissIgnite()}
-        onCreated={(id) => {
+        onCreated={(id, ctx) => {
           void cosmosStore.load();
-          void id;
+          // Follow through ONLY for a NEW loop that was actually persisted: fly into its System,
+          // where the run is started with ✦ Ignite (disambiguating "create a loop" from "start a
+          // run"). A SAVE (edit) or a dev-mode no-op create stays at the Cosmos rather than
+          // dead-mounting a transport-less System.
+          if (id && ctx.mode === 'create' && ctx.persisted) void enterSystem(id);
         }}
       />
     {/if}
@@ -301,7 +424,8 @@
   .layer {
     position: absolute;
     inset: 0;
-    transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--dur-zoom) var(--ease-standard),
+      transform var(--dur-zoom) var(--ease-out);
     transform-origin: center center;
   }
   .layer.in {
@@ -418,6 +542,112 @@
     color: var(--text-dim);
     letter-spacing: 0.1em;
     text-transform: uppercase;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  /* honest live/replay badge: green when driving a real loop, amber when watching a fixture */
+  .mode.islive {
+    color: var(--plasma-green);
+    border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
+    background: color-mix(in srgb, var(--plasma-green) 8%, transparent);
+  }
+  .mode.isreplay {
+    color: var(--amber);
+    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+    background: color-mix(in srgb, var(--amber) 8%, transparent);
+  }
+
+  /* accessible work-item list: visually hidden until a child is focused (skip-link pattern),
+     giving keyboard + screen-reader users a way to reach bodies the aria-hidden canvas can't. */
+  .items-a11y {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    z-index: 30;
+  }
+  .items-a11y:focus-within {
+    width: auto;
+    height: auto;
+    clip: auto;
+    white-space: normal;
+    margin: 14px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius);
+    backdrop-filter: blur(8px);
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .items-a11y ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .items-a11y button {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--void-3);
+    color: var(--starlight);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 4px 9px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+  }
+  .items-a11y button:focus-visible {
+    outline: 2px solid var(--plasma-cyan);
+    outline-offset: 1px;
+  }
+
+  /* the centred bottom stack — anchored once, above the cost/quota strip */
+  .bottom-dock {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--strip-h) + var(--space-3));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    pointer-events: none;
+    z-index: 14;
+  }
+  .bottom-dock > :global(*) {
+    pointer-events: auto;
+  }
+
+  /* empty-state hint for a freshly-entered live loop (sits atop the control bar) */
+  .empty-hint {
+    text-align: center;
+    pointer-events: none;
+    max-width: 420px;
+  }
+  .eh-title {
+    font-family: var(--font-grotesk);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--starlight);
+    margin: 0 0 4px;
+  }
+  .eh-sub {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin: 0;
+  }
+  .eh-sub strong {
+    color: var(--amber);
+    font-weight: 600;
   }
 
   /* ignite affordance */
@@ -444,38 +674,4 @@
     background: color-mix(in srgb, var(--amber) 16%, transparent);
   }
 
-  /* A5: per-loop "recalibrate" (edit) rail along the bottom-left */
-  .edit-rail {
-    position: absolute;
-    bottom: 18px;
-    left: 18px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    flex-wrap: wrap;
-    max-width: 40vw;
-    z-index: 20;
-  }
-  .rail-label {
-    font-size: 9px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-  .edit-chip {
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    padding: 5px 11px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--panel);
-    color: var(--text-dim);
-    cursor: pointer;
-    backdrop-filter: blur(8px);
-    transition: border-color 0.18s, color 0.18s;
-  }
-  .edit-chip:hover {
-    border-color: var(--brass);
-    color: var(--brass);
-  }
 </style>

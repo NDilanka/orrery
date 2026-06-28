@@ -64,12 +64,13 @@ class CodexRunner(AgentRunner):
         timeout_sec: int = 0,
         resume_session: str | None = None,
         output_format: str = "json",
+        effort: str = "",
     ) -> AgentResult:
         # NOTE: the Codex CLI surface is evolving; these flags ('exec', '--full-auto',
         # '--model') may need adjustment as the CLI stabilizes. We parse TEXT output here, so
         # we deliberately do NOT pass '--json' (would only be added together with JSON parsing).
-        # allowed_tools / permission_mode / resume_session / max_turns / output_format have no
-        # Codex equivalent we drive — accepted and ignored on purpose.
+        # allowed_tools / permission_mode / resume_session / max_turns / output_format / effort
+        # have no Codex equivalent we drive — accepted and ignored on purpose.
         argv = [
             "codex",
             "exec",

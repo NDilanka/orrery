@@ -398,6 +398,13 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
     }
 
     // ─── BMAD superset ─────────────────────────────────────────────────────
+    case 'engine-start': {
+      // Heartbeat emitted before the slow preflight so the UI shows life immediately. Just mark
+      // running; the per-run cost reset + target wiring happen on the subsequent `start`.
+      // Mirrors reducer.rs on_engine_start.
+      state.run.status = 'running';
+      break;
+    }
     case 'start': {
       // A new run begins. Per-run running-max → reset the high-water mark so the final cumUsd
       // reflects the *current* run (matches checkpoint.cumUsd). Mirrors reducer.rs on_start
@@ -490,9 +497,11 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       break;
     }
     case 'review-complete': {
-      upsertQa(state, 'review', num(ev.turn) ?? 0, undefined, (qa) => {
-        qa.summary = typeof ev.summary === 'string' ? ev.summary : qa.summary;
-      });
+      // A concluded review is NOT an open decision. The completion event's `turn` is
+      // one past the last Q&A turn, so upserting here minted a phantom unanswered
+      // question (empty `q`, `a == null`) that the Decision Chamber then rendered
+      // forever as "(awaiting question text…)". The carried `summary` is not rendered
+      // anywhere, so we drop it entirely. (mirrors reducer.rs on_review_complete)
       break;
     }
     case 'retro-start': {
@@ -517,14 +526,14 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       break;
     }
     case 'retro-complete': {
-      // Rust sets the group's retroStatus → done before upserting the QA.
+      // Mark the epic's retro done. Do NOT upsert a QA here: the completion `turn` is
+      // past the last retro question, so it would mint a phantom unanswered card (same
+      // bug as review-complete above). The carried `summary` is unused. (mirrors
+      // reducer.rs on_retro_complete)
       if (typeof ev.epic === 'string') {
         const g = state.groups[ev.epic];
         if (g) g.retroStatus = 'done';
       }
-      upsertQa(state, 'retro', num(ev.turn) ?? 0, ev.epic, (qa) => {
-        qa.summary = typeof ev.summary === 'string' ? ev.summary : qa.summary;
-      });
       break;
     }
     case 'smoke-server': {

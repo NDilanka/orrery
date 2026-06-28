@@ -22,6 +22,12 @@ def _git(args: list[str], cwd) -> subprocess.CompletedProcess:
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        # Decode as UTF-8 and tolerate stray bytes. Git output can carry non-cp1252
+        # bytes (branch names, file paths, commit text); the Windows default text
+        # decode (cp1252) raises UnicodeDecodeError in the reader thread and kills
+        # the call. Mirrors proc.run_with_timeout / gate._run_command.
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -62,3 +68,23 @@ def commit(cwd, message: str) -> None:
 def reset_hard(cwd, commit_sha: str) -> None:
     """Hard-reset the work tree to ``commit_sha`` (``git reset --hard <sha>``)."""
     _git(["reset", "--hard", commit_sha], cwd)
+
+
+def diff_name_only(cwd, base: str, *, max_files: int = 40) -> list[str]:
+    """Files changed on this branch vs ``base`` (e.g. a story's ``baseline_commit``), capped.
+
+    Prefers the three-dot ``base...HEAD`` form (changes introduced ON this branch since it diverged
+    from ``base``); falls back to a plain ``base`` diff if that errors. Returns at most ``max_files``
+    repo-relative paths; ``[]`` on any git failure or a falsy ``base``. Never raises (like
+    :func:`_git`). Used to tell the browser-smoke agent WHICH surfaces this story actually changed,
+    so it drives the story's real code instead of a generic health check.
+    """
+    if not base:
+        return []
+    r = _git(["diff", "--name-only", f"{base}...HEAD"], cwd)
+    if r.returncode != 0:
+        r = _git(["diff", "--name-only", base], cwd)
+    if r.returncode != 0:
+        return []
+    files = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+    return files[:max_files]

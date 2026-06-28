@@ -70,32 +70,35 @@
 <style>
   .metrics {
     position: absolute;
-    bottom: 18px;
-    right: 18px;
+    /* Stack ABOVE the Mechanism gear cluster (which docks at
+       strip-h + space-4 and is 190px tall on desktop) so the two bottom-right
+       widgets never overlap. Offset = strip + gutter + mechanism box + a gap. */
+    bottom: calc(var(--strip-h) + var(--space-4) + 190px + var(--space-3));
+    right: var(--chrome-inset);
     width: 248px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 16px;
+    gap: var(--space-3);
+    padding: var(--space-4);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
     z-index: 10;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .mhead {
     margin: 0;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 9px 12px;
+    gap: var(--space-2) var(--space-3);
   }
   .cell {
     display: flex;
@@ -103,13 +106,13 @@
     gap: 3px;
   }
   .mlabel {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .mval {
-    font-size: 15px;
+    font-size: var(--text-lg);
     font-weight: 600;
     color: var(--starlight);
     line-height: 1;
@@ -118,7 +121,8 @@
     font-family: var(--num, var(--font-mono));
   }
   .mval.warn {
-    color: var(--amber);
+    /* warning is ONE hue across System view; --amber is reserved elsewhere */
+    color: var(--horizon-rose);
   }
   .cell.good .mval {
     color: var(--plasma-green);
@@ -127,14 +131,14 @@
     color: var(--crimson);
   }
   .foot {
-    font-size: 10.5px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     border-top: 1px solid var(--hairline);
-    padding-top: 8px;
+    padding-top: var(--space-2);
   }
   .placeholder {
-    font-size: 11px;
-    color: var(--text-faint);
+    font-size: var(--text-xs);
+    color: var(--text-meta);
     line-height: 1.4;
     margin: 0;
   }
@@ -142,6 +146,30 @@
   @media (prefers-reduced-motion: reduce) {
     .metrics {
       backdrop-filter: none;
+    }
+  }
+  /* Short viewport: the Mechanism shrinks to 150px (see Mechanism.svelte), so
+     re-derive the panel's stack offset to match and keep them from touching. */
+  @media (max-height: 760px) {
+    .metrics {
+      bottom: calc(var(--strip-h) + var(--space-4) + 150px + var(--space-3));
+    }
+  }
+  /* Very short viewport: the Mechanism is hidden (see Mechanism.svelte) so the
+     report card drops back to docking directly above the cost strip. */
+  @media (max-height: 600px) {
+    .metrics {
+      bottom: calc(var(--strip-h) + var(--space-4));
+    }
+  }
+  /* Tier-1 / phone: become a full-width bottom sheet instead of a fixed card.
+     Placed last so it wins over the height rules on small phones — and the
+     Mechanism is already phone-shrunk + Tier-1, so the two never fight here. */
+  @media (max-width: 640px) {
+    .metrics {
+      left: var(--space-2);
+      right: var(--space-2);
+      width: auto;
     }
   }
 </style>

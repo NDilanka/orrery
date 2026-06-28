@@ -136,7 +136,7 @@ them. (First launch compiles the Rust core, so it takes a few minutes; needs Nod
 ```bash
 cd orrery
 npm install
-npm run tauri dev      # dev window with HMR (replays bundled fixtures with no backend)
+npm run tauri dev      # desktop window (HMR) — drives loops LIVE (spawns + tails the engine)
 npm run tauri build    # release bundle/installer
 ```
 

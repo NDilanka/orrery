@@ -1,0 +1,42 @@
+{
+  "id": "brain2-regression",
+  "name": "brain2 — functional regression (Playwright e2e)",
+  "theme": "ember",
+  "kind": "generic",
+  "adapter": "generic",
+  "stateDir": "D:/dev/loop/orrery/loops/brain2-regression/.loop",
+  "logFile": "log.jsonl",
+  "stopFlag": "D:/dev/loop/orrery/loops/brain2-regression/.loop/STOP",
+  "checkpoint": "D:/dev/loop/orrery/loops/brain2-regression/.loop/checkpoint.json",
+  "start": {
+    "program": "loop",
+    "args": [
+      "--loop-json", "D:/dev/loop/orrery/loops/brain2-regression/loop.json",
+      "--cwd", "D:/dev/brain2",
+      "--state-dir", "D:/dev/loop/orrery/loops/brain2-regression/.loop"
+    ]
+  },
+  "engine": {
+    "task": "D:/dev/loop/orrery/loops/brain2-regression/TASK.md",
+    "models": { "discover": "haiku", "execute": "sonnet", "judge": "haiku", "hard": "opus" },
+    "maxTurns": 30,
+    "allowedTools": ["Read", "Edit", "Write", "Grep", "Glob", "Bash(npx playwright test:*)", "Bash(bun run:*)"],
+    "permissionMode": "acceptEdits",
+    "gate": {
+      "stages": [
+        {
+          "name": "e2e",
+          "command": "npx playwright test e2e/functional",
+          "passPattern": "(\\d+) passed",
+          "failPattern": "(\\d+) failed",
+          "lockGlobs": ["e2e/**"]
+        }
+      ],
+      "greenWhen": "exit==0",
+      "lockGlobs": ["e2e/**"]
+    },
+    "cost": { "ceilingUsd": 2.0, "alertPct": [50, 80, 100] },
+    "stop": { "maxIters": 10, "stagnationLimit": 2, "plateauLimit": 3, "regressLimit": 3, "gracefulAtPhase": true },
+    "verify": { "judgeModel": "haiku", "contract": [] }
+  }
+}

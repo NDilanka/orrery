@@ -12,7 +12,7 @@ import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
 // file is owned by a parallel agent):
 //   - Cosmos canvas .......... PixiJS <canvas> appended under `.cosmos .field`
 //   - Cosmos→System nav ...... the DOM legend `<button class="chip">` carrying
-//                              each loop id (Cosmos.svelte `.legend .chip .lid`)
+//                              each loop id (Cosmos.svelte `.station .enter .lid`)
 //   - HUD .................... `.hud` block with "cum spend" + a status pill
 //                              (Hud.svelte) and a "<n> events" meta readout
 //   - TransportBar ........... play/pause `[aria-label="play|pause"]`, restart
@@ -55,7 +55,7 @@ test.describe('orrery — browser replay smoke', () => {
     await expectLiveCanvas(page); // Cosmos PixiJS field renders
 
     // the always-visible loop legend confirms the Cosmos store loaded fixtures
-    await expect(page.locator('.legend .chip').first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.station .enter').first()).toBeVisible({ timeout: 20_000 });
 
     expect(pageErrors, `uncaught page errors: ${pageErrors.map((e) => e.message).join(' | ')}`).toEqual(
       [],
@@ -73,7 +73,7 @@ test.describe('orrery — browser replay smoke', () => {
     // glyph hit-areas aren't DOM-locatable, but Cosmos.svelte renders a parallel
     // DOM legend of <button.chip> whose `.lid` is the loop id — that's the
     // accessible affordance we drive.
-    const demoChip = page.locator('.legend .chip', { hasText: 'demo' });
+    const demoChip = page.locator('.station .enter', { hasText: 'demo' });
     await expect(demoChip).toBeVisible({ timeout: 20_000 });
     await demoChip.click();
 
@@ -96,7 +96,7 @@ test.describe('orrery — browser replay smoke', () => {
 
     // enter the "bmad" system: its fixture is large and animates fast (rateMs 90)
     // so the events readout visibly advances within the test window.
-    const bmadChip = page.locator('.legend .chip', { hasText: 'bmad' });
+    const bmadChip = page.locator('.station .enter', { hasText: 'bmad' });
     await expect(bmadChip).toBeVisible({ timeout: 20_000 });
     await bmadChip.click();
 
@@ -137,6 +137,50 @@ test.describe('orrery — browser replay smoke', () => {
     await expect
       .poll(cursorOf, { timeout: 5_000, message: 'scrub to 0 should reset the cursor readout' })
       .toBe(0);
+
+    expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
+  });
+
+  test('4 · ? opens the keyboard HelpOverlay; Esc closes it', async ({ page }) => {
+    const { pageErrors } = collectErrors(page);
+
+    await page.goto('/');
+    await expectLiveCanvas(page);
+    // enter a System so we're in instrument context (shortcuts are guarded elsewhere)
+    await page.locator('.station .enter').first().click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
+
+    const help = page.locator('[role="dialog"]', { hasText: 'KEYBOARD' });
+    await expect(help).toHaveCount(0); // closed by default
+    await page.keyboard.press('Shift+Slash'); // "?"
+    await expect(help).toBeVisible({ timeout: 5_000 });
+    await page.keyboard.press('Escape');
+    await expect(help).toHaveCount(0);
+
+    expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
+  });
+
+  test('5 · Body view: in-card back returns to the System', async ({ page }) => {
+    const { pageErrors } = collectErrors(page);
+
+    await page.goto('/');
+    await expectLiveCanvas(page);
+    const bmad = page.locator('.station .enter', { hasText: 'bmad' });
+    await expect(bmad).toBeVisible({ timeout: 20_000 });
+    await bmad.click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
+
+    // fly into the current item's Body dossier
+    const fly = page.locator('.nbtn.body');
+    await expect(fly).toBeVisible({ timeout: 20_000 });
+    await fly.click();
+
+    // the dossier's in-card back control returns to the System (HUD chrome returns)
+    const back = page.locator('button.back', { hasText: 'system' });
+    await expect(back).toBeVisible({ timeout: 10_000 });
+    await back.click();
+    await expect(page.locator('.hud')).toBeVisible({ timeout: 10_000 });
+    await expect(back).toHaveCount(0);
 
     expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
   });

@@ -109,6 +109,24 @@ pub fn reduce_all_pub(state_dir: &Path, adapter: &str, log_file: Option<&str>) -
     reduce_all(state_dir, adapter, log_file)
 }
 
+/// Overlay value: read the STOP brake flag at `<state_dir>/STOP` → a `StopPending`.
+/// `reduce_all` replays only the event log + checkpoint + sprint-status, never the STOP file,
+/// so `run.stopPending` would be `null` on a fresh snapshot even when a brake is banked on
+/// disk — making a UI reload silently drop the pending brake (the engine still honors the file,
+/// which is why a second Brake click "works"). The snapshot/state builders overlay this so a
+/// banked brake is DURABLE across a reload. Kept OUT of the pure reducer / `reduce_all` so the
+/// cross-language parity goldens (built from the event stream only) stay untouched.
+fn stop_pending_at(state_dir: &Path) -> Option<crate::model::StopPending> {
+    use crate::model::StopPending;
+    let text = std::fs::read_to_string(state_dir.join("STOP")).ok()?;
+    Some(match text.trim().to_lowercase().as_str() {
+        "story" => StopPending::Story,
+        "now" => StopPending::Now,
+        // "phase", empty, or anything else → phase (parity with read_stop_flag's default)
+        _ => StopPending::Phase,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -120,7 +138,9 @@ pub fn load_run(
     log_file: Option<String>,
 ) -> Result<RunState, String> {
     let dir = PathBuf::from(&state_dir);
-    Ok(reduce_all(&dir, &adapter, log_file.as_deref()))
+    let mut state = reduce_all(&dir, &adapter, log_file.as_deref());
+    state.run.stop_pending = stop_pending_at(&dir); // durable brake across reload
+    Ok(state)
 }
 
 #[tauri::command]
@@ -133,8 +153,10 @@ pub fn watch_run(
     let dir = PathBuf::from(&state_dir);
     let lp = log_path(&dir, &adapter, log_file.as_deref());
 
-    // Emit the initial full snapshot synchronously.
-    let initial = reduce_all(&dir, &adapter, log_file.as_deref());
+    // Emit the initial full snapshot synchronously. Overlay the on-disk STOP brake so a banked
+    // brake survives a UI reload/reconnect (reduce_all never reads the STOP file).
+    let mut initial = reduce_all(&dir, &adapter, log_file.as_deref());
+    initial.run.stop_pending = stop_pending_at(&dir);
     channel
         .send(Delta::Snapshot { state: initial })
         .map_err(|e| e.to_string())?;
@@ -149,9 +171,20 @@ pub fn watch_run(
     std::thread::spawn(move || {
         // We re-reduce the whole file on each notification; this keeps the wire model a full
         // RunState (frontend always has complete state) and is robust against partial/keyed events.
-        let on_event = move |_ev: &Value| {
-            let state = reduce_all(&dir, &adapter2, log_file2.as_deref());
-            // ignore send errors (channel closed => frontend navigated away)
+        let on_events = move |evs: &[Value]| {
+            // Live LOG feed: stream the raw events, but cap to the last 300 of a batch. The
+            // watcher's first drain replays the WHOLE existing log, which on a long-running loop
+            // could be thousands of lines — without the cap that would flood the Channel on every
+            // System mount (the frontend logStore caps at 300 too). Live batches are tiny, so this
+            // never trims them.
+            let start = evs.len().saturating_sub(300);
+            for ev in &evs[start..] {
+                let _ = channel.send(Delta::Event { event: ev.clone() });
+            }
+            // Reduce ONCE per batch (not per line) → O(N) on mount instead of O(N^2), and one
+            // authoritative State delta. ignore send errors (channel closed => navigated away).
+            let mut state = reduce_all(&dir, &adapter2, log_file2.as_deref());
+            state.run.stop_pending = stop_pending_at(&dir); // keep the banked brake live
             let _ = channel.send(Delta::State { state });
         };
 
@@ -159,7 +192,7 @@ pub fn watch_run(
 
         // state_dir for watching == parent dir of the log file
         let watch_dir = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-        let _ = watcher::watch_loop(&watch_dir, &lp, on_event, should_stop);
+        let _ = watcher::watch_loop(&watch_dir, &lp, on_events, should_stop);
     });
 
     // NOTE: the thread runs until the process exits; the stop flag is reserved for a future
@@ -184,7 +217,17 @@ pub fn list_loops(loops_dir: String) -> Result<Vec<LoopDef>, String> {
         let loop_json = path.join("loop.json");
         if let Ok(text) = std::fs::read_to_string(&loop_json) {
             match serde_json::from_str::<LoopDef>(&text) {
-                Ok(def) => out.push(def),
+                Ok(mut def) => {
+                    // Resolve a relative stateDir against the loop's own dir so the frontend
+                    // (watch_run / load_run) and the engine agree on ONE absolute path. The
+                    // Tuning Console's default stateDir is the relative ".loop"; without this it
+                    // would be watched relative to the app's cwd while the engine writes it
+                    // relative to the loop dir → the live UI would never update for that loop.
+                    def.state_dir = resolve_under(&path, &def.state_dir)
+                        .to_string_lossy()
+                        .into_owned();
+                    out.push(def);
+                }
                 Err(e) => return Err(format!("parse {:?}: {}", loop_json, e)),
             }
         }
@@ -465,6 +508,30 @@ fn find_running_pid(tokens: &[String]) -> Option<u32> {
     None
 }
 
+/// Resolve a loop's start `program` to an absolute path when it is a bare command name (e.g.
+/// `loop-bmad`) that lives in the repo's bundled virtualenv. The app may be launched without
+/// `.venv/Scripts` (Windows) / `.venv/bin` (POSIX) on PATH, in which case a bare `Command::new`
+/// fails with "program not found". We walk up from the loop's base dir looking for a `.venv`
+/// that contains the program, and use that absolute path. Falls back to the bare name (ambient
+/// PATH lookup) when nothing is found, and passes through anything already path-qualified.
+fn resolve_program(program: &str, base_dir: &Path) -> String {
+    let p = Path::new(program);
+    if p.is_absolute() || program.contains('/') || program.contains('\\') {
+        return program.to_string();
+    }
+    #[cfg(windows)]
+    let rel = format!("Scripts/{program}.exe");
+    #[cfg(not(windows))]
+    let rel = format!("bin/{program}");
+    for ancestor in base_dir.ancestors() {
+        let cand = ancestor.join(".venv").join(&rel);
+        if cand.is_file() {
+            return cand.to_string_lossy().into_owned();
+        }
+    }
+    program.to_string()
+}
+
 /// Spawn `program` + `args` as a DETACHED child, redirecting stdout+stderr to
 /// `<stateDir>/run.out` so the existing tailer can read the transcript. We do NOT wait on
 /// the child. Returns its PID.
@@ -519,7 +586,15 @@ fn start_with_spec(
         return Err("AlreadyRunning".to_string());
     }
     let state_dir = state_dir_of(def, base_dir);
-    let pid = spawn_detached(&state_dir, &spec.program, &spec.args)?;
+    // Resolve the engine to the bundled venv when invoked by bare name, so the spawn works
+    // regardless of whether the app was launched with `.venv/Scripts` on PATH.
+    let program = resolve_program(&spec.program, base_dir);
+    let pid = spawn_detached(&state_dir, &program, &spec.args)?;
+    // The spawn SUCCEEDED — only now clear any leftover brake. A fresh start/resume must not
+    // inherit a STOP flag from a previous run (it would make the engine cooperative-stop at its
+    // first checkpoint, reading as "the loop won't start"), but a FAILED spawn (above, via `?`)
+    // must leave the user's banked brake intact rather than silently discarding it.
+    let _ = std::fs::remove_file(stop_flag_path(def, base_dir));
     if let Some(pids) = pids {
         if let Ok(mut map) = pids.0.lock() {
             map.insert(loop_id.to_string(), pid);
@@ -874,7 +949,10 @@ mod tests {
         let defs = list_loops(loops_dir.clone()).expect("list_loops ok");
         let found = defs.iter().find(|d| d.id == "mytest").expect("listed");
         assert_eq!(found.name, "My test loop — fix until green");
-        assert_eq!(found.state_dir, ".loop");
+        // list_loops now resolves a relative stateDir to an absolute path (so the watcher and
+        // the engine agree on one location); the on-disk loop.json keeps the relative form.
+        let want_state = tmp.path().join("mytest").join(".loop");
+        assert_eq!(found.state_dir, want_state.to_string_lossy());
 
         // duplicate create is refused
         let dup = serde_json::json!({ "id": "mytest", "name": "x", "adapter": "generic", "stateDir": "." });

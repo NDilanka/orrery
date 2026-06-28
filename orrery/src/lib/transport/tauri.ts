@@ -4,22 +4,28 @@
 // runs inside Tauri (window.__TAURI__ present); the dev replay path is separate.
 
 import type { Delta, RawEvent, RunState } from '../types';
-import { apply, finalize, initialState } from '../reduce';
-import { normalizeAll } from '../adapters';
+import { initialState } from '../reduce';
+import { logStore } from '../stores/log.svelte';
 import type { Transport, TransportOpts } from './index';
 
 // Absolute path to the loops/ registry. A5 (loop library) will source this from
 // config / list_loops; until then the control commands resolve it from here.
-const DEFAULT_LOOPS_DIR = 'orrery/loops';
+// Absolute so control commands find loops regardless of the app's working directory
+// (the launcher runs from orrery/, cargo from orrery/src-tauri — a relative 'orrery/loops'
+// resolves against neither). LOCAL override; a packaged build should resolve this via a
+// Tauri path API instead. Matches cosmos.svelte.ts DEFAULT_LOOPS_DIR.
+const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
 export interface TauriConfig {
   stateDir: string;
   adapter: string;
   loopId: string;
   loopsDir?: string;
+  logFile?: string;
 }
 
 export class TauriTransport implements Transport {
+  readonly kind = 'tauri' as const;
   private cfg: TauriConfig;
   private onState: (s: RunState) => void;
   private state: RunState;
@@ -39,6 +45,7 @@ export class TauriTransport implements Transport {
     await invoke('watch_run', {
       stateDir: this.cfg.stateDir,
       adapter: this.cfg.adapter,
+      logFile: this.cfg.logFile,
       channel,
     });
     // Channel has no explicit close in the surface; track for symmetry.
@@ -48,20 +55,14 @@ export class TauriTransport implements Transport {
   }
 
   private onDelta(delta: Delta) {
-    switch (delta.kind) {
-      case 'snapshot':
-      case 'state':
-        this.state = delta.state;
-        break;
-      case 'event': {
-        const [ev] = normalizeAll(this.cfg.adapter, [delta.event as RawEvent]);
-        if (ev) {
-          apply(this.state, ev, Date.now());
-          finalize(this.state);
-        }
-        break;
-      }
+    if (delta.kind === 'event') {
+      // raw event → live LOG feed only; the authoritative reduced RunState arrives via the
+      // matching `state` delta (the watcher sends Event then State per log line).
+      logStore.push(delta.event as RawEvent);
+      return;
     }
+    // snapshot | state: the full reduced RunState from the Rust watcher.
+    this.state = delta.state;
     // hand a fresh reference so the runes store registers the change
     this.onState({ ...this.state });
   }

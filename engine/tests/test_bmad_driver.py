@@ -121,15 +121,23 @@ def _patch_externals(monkeypatch, *, pr_calls: dict):
         pr_calls.setdefault("merge", []).append({"branch": branch, "base": base})
         return "merged"
 
+    def fake_state(*, branch, cwd):
+        pr_calls.setdefault("state", []).append({"branch": branch})
+        return "MERGED"
+
     monkeypatch.setattr(pr, "create_pr", fake_create)
     monkeypatch.setattr(pr, "merge_pr", fake_merge)
+    monkeypatch.setattr(pr, "pr_state", fake_state)
     # Neutralize the real `git push` so the temp repo (no remote) doesn't error/stall.
     from loop.bmad import driver as drv
 
     real_git = drv.gitutil._git
 
     def guard_git(args, cwd):
-        if args and args[0] == "push":
+        # Neutralize network git (push/pull) so the temp repo (no remote) doesn't error/stall.
+        if args and args[0] in ("push", "pull"):
+            pr_calls.setdefault("git", []).append(list(args))
+
             class _R:
                 returncode = 0
                 stdout = ""
@@ -250,6 +258,51 @@ def test_done_but_unmerged_resumes_at_smoke_and_merge(tmp_path, monkeypatch):
     assert "review-complete" not in kinds
     # exactly one runner call (smoke) — create/dev/review were skipped
     assert len(runner.calls) == 1
+    assert pr_calls.get("merge")
+
+
+def test_resume_reuses_existing_pr_when_create_says_already_exists(tmp_path, monkeypatch):
+    # A prior run opened the PR then died before merge landed. On the resume tail, `gh pr
+    # create` errors ("a pull request already exists"); the driver must reuse the open PR
+    # (pr.pr_url) and proceed to merge instead of stalling at PR-create.
+    root = _init_project(tmp_path, ONE_DONE)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    def boom_create(*, branch, base, title, body, cwd):
+        pr_calls.setdefault("create", []).append({"branch": branch})
+        raise pr.PrError(
+            "gh pr create failed (exit 1): a pull request for branch already exists"
+        )
+
+    def existing_url(*, branch, cwd):
+        pr_calls.setdefault("url", []).append({"branch": branch})
+        return f"https://example.test/pr/{branch}/11"
+
+    monkeypatch.setattr(pr, "create_pr", boom_create)
+    monkeypatch.setattr(pr, "pr_url", existing_url)
+
+    seen = {"n": 0}
+
+    def predicate_factory(**kw):
+        def predicate(story):
+            seen["n"] += 1
+            return seen["n"] == 1
+
+        return predicate
+
+    monkeypatch.setattr(recovery, "unmerged_done_predicate", predicate_factory)
+
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: verified.", cost_usd=0.5)])
+    cfg = _config(root)  # merge ON
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-created" in kinds  # emitted with the REUSED PR url
+    assert "pr-merged" in kinds  # proceeded to merge instead of stalling at create
+    assert pr_calls.get("url")  # the existing-PR fallback was exercised
     assert pr_calls.get("merge")
 
 
@@ -381,6 +434,290 @@ def test_resilient_runner_survives_quota_then_completes(tmp_path):
     assert "quota-resume" in kinds
 
 
+# ---------------------------------------------------------------------------
+# cost-aware model tiers + per-phase token/cache telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_default_models_are_cost_aware_tiers():
+    """The BMAD defaults route cheap phases off the (expensive, inherited) Opus tier.
+
+    Only ``dev`` inherits the user's default (``""`` -> the runner omits ``--model``); the
+    deciders run on ``haiku`` and the mechanical phases on ``sonnet`` — the fix for the
+    'one story per 5-hour window' burn.
+    """
+    cfg = driver.BmadConfig(project_root="/p")
+    assert cfg.model_for("decider") == "haiku"
+    assert cfg.model_for("create") == "sonnet"
+    assert cfg.model_for("review") == "sonnet"
+    assert cfg.model_for("smoke") == "sonnet"
+    assert cfg.model_for("retro") == "sonnet"
+    assert cfg.model_for("dev") == ""  # inherit (the one phase to spend Opus on)
+
+
+def test_resilient_runner_emits_token_usage_tagged_by_phase():
+    """Every productive run emits a ``token-usage`` event from the result's ``usage`` block.
+
+    Tokens are the Max-plan meter (USD is not), and the data is already in claude's JSON — so
+    this surfaces WHICH phase + model ate the window with zero extra token cost.
+    """
+    events: list[dict] = []
+    base = MockRunner(
+        [
+            AgentResult(
+                raw="",
+                text="ok",
+                cost_usd=0.5,
+                usage={
+                    "input_tokens": 1000,
+                    "output_tokens": 200,
+                    "cache_read_input_tokens": 9000,
+                    "cache_creation_input_tokens": 500,
+                },
+            )
+        ]
+    )
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    resilient.set_context("dev-story", "3-4")
+    resilient.run(
+        prompt="x", model="opus", allowed_tools=[], permission_mode="acceptEdits",
+        max_turns=0, cwd=None,
+    )
+    tu = [e for e in events if e["event"] == "token-usage"]
+    assert len(tu) == 1
+    e = tu[0]
+    assert e["phase"] == "dev-story"
+    assert e["story"] == "3-4"
+    assert e["model"] == "opus"
+    assert e["input"] == 1000
+    assert e["output"] == 200
+    assert e["cacheRead"] == 9000
+    assert e["cacheCreation"] == 500
+    assert e["hitRatio"] == 0.9  # 9000 / (9000 + 1000)
+    assert e["warm"] is True
+    # cumulative counters carry the running token draw (the real meter)
+    assert e["cumInput"] == 1000
+    assert e["cumOutput"] == 200
+    assert e["cumCacheRead"] == 9000
+
+
+def test_resilient_runner_accumulates_tokens_and_inherit_label():
+    """Cumulative token counters sum across calls; an empty model tier shows as '(inherit)'."""
+    events: list[dict] = []
+    base = MockRunner(
+        [
+            AgentResult(raw="", text="a", usage={"input_tokens": 100, "cache_read_input_tokens": 0}),
+            AgentResult(raw="", text="b", usage={"input_tokens": 50, "cache_read_input_tokens": 900}),
+        ]
+    )
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    for _ in range(2):
+        resilient.run(
+            prompt="x", model="", allowed_tools=[], permission_mode="acceptEdits",
+            max_turns=0, cwd=None,
+        )
+    tu = [e for e in events if e["event"] == "token-usage"]
+    assert len(tu) == 2
+    assert tu[0]["model"] == "(inherit)"  # "" -> surfaced as inherit
+    assert tu[0]["warm"] is False  # no cache reads on the first call
+    assert tu[1]["warm"] is True
+    assert tu[1]["cumInput"] == 150  # 100 + 50
+    assert tu[1]["cumCacheRead"] == 900
+    # a decider/non-story call omits the story key
+    assert "story" not in tu[0]
+
+
+def test_resilient_runner_no_usage_emits_no_token_event():
+    """A result with no usage telemetry (mock/text-format) emits nothing — keeps logs clean."""
+    events: list[dict] = []
+    base = MockRunner([AgentResult(raw="", text="done", cost_usd=1.0)])  # usage=None
+    resilient = driver.ResilientRunner(base, emit=events.append, sleep=lambda s: None)
+    resilient.run(
+        prompt="x", model="sonnet", allowed_tools=[], permission_mode="acceptEdits",
+        max_turns=0, cwd=None,
+    )
+    assert [e for e in events if e["event"] == "token-usage"] == []
+
+
+# ---------------------------------------------------------------------------
+# single-pass review / smoke modes (collapse the cold-start fan-out)
+# ---------------------------------------------------------------------------
+
+
+def test_phase_modes_roundtrip_loop_json_and_resume():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {
+            "projectRoot": "/p", "reviewMode": "single-pass",
+            "smokeMode": "single-pass", "retroMode": "single-pass",
+        }}
+    )
+    assert cfg.review_mode == "single-pass"
+    assert cfg.smoke_mode == "single-pass"
+    assert cfg.retro_mode == "single-pass"
+    # non-default modes ride the resume command so a Reignite preserves them
+    cmd = driver._resume_command(cfg, "/state")
+    assert "--review-mode single-pass" in cmd
+    assert "--smoke-mode single-pass" in cmd
+    assert "--retro-mode single-pass" in cmd
+    # defaults stay OFF the resume command (and are the parity defaults)
+    default = driver.BmadConfig(project_root="/p")
+    assert default.review_mode == "qa"
+    assert default.smoke_mode == "iterative"
+    assert default.retro_mode == "qa"
+    cmd2 = driver._resume_command(default, "/state")
+    assert "--review-mode" not in cmd2
+    assert "--smoke-mode" not in cmd2
+    assert "--retro-mode" not in cmd2
+
+
+def test_loop_json_path_roundtrips_into_resume_command():
+    """A Reignite must re-point at --loop-json to restore per-phase models/effort (no CLI flag)."""
+    from types import SimpleNamespace
+
+    cfg = driver.BmadConfig.from_args(
+        SimpleNamespace(project_root="/p", loop_json="D:/cfg/bmad engine.json")
+    )
+    assert cfg.loop_json == "D:/cfg/bmad engine.json"
+    cmd = driver._resume_command(cfg, "/state")
+    assert '--loop-json "D:/cfg/bmad engine.json"' in cmd  # quoted: path contains a space
+    # a run with no --loop-json keeps the flag OFF the resume command (parity default)
+    assert "--loop-json" not in driver._resume_command(driver.BmadConfig(project_root="/p"), "/state")
+
+
+def test_run_retro_single_pass_one_process():
+    """single-pass retro: ONE warm facilitator process, no QUESTION/decider Q&A round-trips."""
+    events: list[dict] = []
+    runner = MockRunner(
+        [AgentResult(raw="", text="RETRO_COMPLETE: solid epic; carry TDD forward.", cost_usd=0.5)]
+    )
+    cfg = driver.BmadConfig(project_root="/p", retro_mode="single-pass")
+    ok, cost = driver._run_retro(cfg, runner, "2", emit=events.append, cwd="/repo")
+    assert ok is True
+    assert cost == 0.5
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["max_turns"] == 0
+    kinds = [e["event"] for e in events]
+    assert kinds == ["retro-complete"]
+    assert "retro-question" not in kinds
+    # the decider stance is folded into the facilitator's own prompt (no separate decider)
+    assert "DECIDE every point yourself" in runner.calls[0]["prompt"]
+
+
+def test_merge_wait_config_roundtrip():
+    cfg = driver.BmadConfig.from_loop_json({"bmad": {"projectRoot": "/p", "mergeWaitSec": 120}})
+    assert cfg.merge_wait_sec == 120
+    assert "--merge-wait-sec 120" in driver._resume_command(cfg, "/state")
+    # default 0 stays off the resume command (parity)
+    assert driver.BmadConfig(project_root="/p").merge_wait_sec == 0
+    assert "--merge-wait-sec" not in driver._resume_command(driver.BmadConfig(project_root="/p"), "/state")
+
+
+def test_merge_wait_sec_polls_queued_merge_then_continues(tmp_path, monkeypatch):
+    """A QUEUED merge (branch protection) is polled until MERGED instead of halting immediately."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(driver.time, "sleep", lambda s: None)  # no real sleep
+    seq = iter(["QUEUED", "QUEUED", "MERGED"])  # lands on the 3rd poll
+    monkeypatch.setattr(pr, "pr_state", lambda *, branch, cwd: next(seq, "MERGED"))
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    driver.run(_config(root, no_merge=False, merge_wait_sec=120), runner=runner, state_dir=str(state))
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-merged" in kinds  # polled to MERGED rather than the immediate "did not complete" halt
+
+
+def test_after_story_stop_honored_right_after_merge(tmp_path, monkeypatch):
+    """A stop requested mid-story is honored at the new post-merge boundary (story completed)."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    # Request a stop DURING the merge (so the top-of-loop between-stories check hadn't seen it yet).
+    def merge_then_request_stop(*, branch, base, cwd):
+        (state / "STOP").write_text("story", encoding="utf-8")
+        pr_calls.setdefault("merge", []).append({"branch": branch})
+        return "merged"
+
+    monkeypatch.setattr(pr, "merge_pr", merge_then_request_stop)
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "pr-merged" in kinds  # the story DID complete + merge first
+    coop = [e for e in _events(state) if e["event"] == "cooperative-stop"]
+    assert coop and coop[-1]["stage"].startswith("story-merged")
+
+
+def test_spin_guard_halts_on_no_progress_reselection(tmp_path, monkeypatch):
+    """A story re-selected at the same status (a phase didn't advance it) halts, never spins."""
+    root = _init_project(tmp_path, ONE_READY)  # 2-1-capture stays ready-for-dev (mock never writes)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    runner = MockRunner([
+        AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+        AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
+        AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
+    ])
+    # story 1 "merges" (mock), returns None -> iteration 2 re-selects the SAME ready story -> halt.
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "WITHOUT advancing" in stop["reason"]
+    assert "2-1-capture" in stop["reason"]
+
+
+def test_effort_config_from_loop_json_and_defaults():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"projectRoot": "/p", "effort": {"dev": "xhigh", "review": "xhigh", "decider": "low"}}}
+    )
+    assert cfg.effort_for("dev") == "xhigh"
+    assert cfg.effort_for("review") == "xhigh"
+    assert cfg.effort_for("decider") == "low"
+    assert cfg.effort_for("smoke") == ""  # unset -> inherit
+    # engine default is all-inherit (byte-parity: no --effort emitted)
+    assert driver.BmadConfig(project_root="/p").effort_for("dev") == ""
+
+
+def test_review_and_smoke_single_pass_end_to_end(tmp_path, monkeypatch):
+    """single-pass review + smoke run the story with NO Q&A fan-out and NO smoke re-spawn."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: decided + applied; green.", cost_usd=0.4),
+            AgentResult(raw="", text="SMOKE_PASS: verified ACs.", cost_usd=0.3),
+        ]
+    )
+    cfg = _config(root, no_merge=True, review_mode="single-pass", smoke_mode="single-pass")
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    # single-pass review: completes WITHOUT any QUESTION/answer round-trip
+    assert "review-complete" in kinds
+    assert "review-question" not in kinds
+    assert "review-answer" not in kinds
+    assert "pr-created" in kinds
+    # exactly THREE agent processes for the whole story: dev + review(1) + smoke(1).
+    # The default Q&A + iterative path would spawn extra decider/re-spawn processes.
+    assert len(runner.calls) == 3
+
+
 def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
     """End-to-end: a dev-story run that is quota_limited once still completes the phase."""
     root = _init_project(tmp_path, ONE_READY)
@@ -506,17 +843,63 @@ def test_pending_epic_retro_runs_then_backlog_complete(tmp_path, monkeypatch):
     monkeypatch.setattr(
         recovery, "unmerged_done_predicate", lambda **kw: (lambda story: False)
     )
-    runner = MockRunner(
-        [AgentResult(raw="", text="RETRO_COMPLETE: good epic.", cost_usd=0.4)]
-    )
-    rc = driver.run(_config(root), runner=runner, state_dir=str(state))
+    # Simulate the bmad-retrospective skill: when invoked it flips the flag to 'done' on disk
+    # (its Step 11) and emits RETRO_COMPLETE — the real contract the driver depends on.
+    status_path = root / "_bmad-output" / "implementation-artifacts" / "sprint-status.yaml"
+
+    class RetroRunner(AgentRunner):
+        name = "retro-mock"
+        supports_sessions = True
+
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def run(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            status_path.write_text(
+                status_path.read_text(encoding="utf-8").replace(
+                    "epic-2-retrospective: optional", "epic-2-retrospective: done"
+                ),
+                encoding="utf-8",
+            )
+            return AgentResult(raw="", text="RETRO_COMPLETE: good epic.", cost_usd=0.4)
+
+    rc = driver.run(_config(root), runner=RetroRunner(), state_dir=str(state))
     assert rc == 0
     kinds = [e["event"] for e in _events(state)]
     assert "retro-start" in kinds
     assert "retro-complete" in kinds
+    # fired exactly once — the flipped flag stops it re-triggering on the next scan
+    assert sum(1 for k in kinds if k == "retro-start") == 1
+    # the retro commit is PUSHED to the merge base (bmad-loop.ps1 parity; not left local)
+    assert ["push", "origin", "develop"] in pr_calls.get("git", [])
     # after the retro the loop re-scans; nothing else actionable -> backlog complete (ok)
     stop = [e for e in _events(state) if e["event"] == "stop"][-1]
     assert stop["ok"] is True
+
+
+def test_retro_halts_if_skill_did_not_mark_done(tmp_path, monkeypatch):
+    # The retro reports complete (RETRO_COMPLETE) but the skill failed to flip the flag. The
+    # driver must HALT with an actionable message rather than silently re-running the same retro
+    # every iteration up to --max-stories.
+    root = _init_project(tmp_path, EPIC_DONE_RETRO_PENDING)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(
+        recovery, "unmerged_done_predicate", lambda **kw: (lambda story: False)
+    )
+    runner = MockRunner(
+        [AgentResult(raw="", text="RETRO_COMPLETE: claimed, but flag not written", cost_usd=0.1)]
+    )
+    rc = driver.run(_config(root, max_stories=3), runner=runner, state_dir=str(state))
+    assert rc == 1
+    kinds = [e["event"] for e in _events(state)]
+    # ran the retro exactly once, then halted (did NOT spin to the max-stories backstop)
+    assert sum(1 for k in kinds if k == "retro-start") == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "still 'optional'" in stop["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -541,9 +924,248 @@ def test_bmadconfig_from_loop_json_camel_and_snake(tmp_path):
     assert cfg.max_stories == 7
     assert cfg.no_merge is True
     assert cfg.model_for("dev") == "opus"
-    assert cfg.model_for("decider") == "haiku"  # default preserved
+    # decider now defaults to the cheap haiku tier (was "" = silently inherit Opus, which
+    # overrode decider.py's own haiku default — the cost bug this fix closes).
+    assert cfg.model_for("decider") == "haiku"
 
 
 def test_bmadconfig_requires_project_root():
     with pytest.raises(TypeError):
         driver.BmadConfig()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# fidelity restorations (PS parity): merge-verify, dev regression, resume flags
+# ---------------------------------------------------------------------------
+
+
+def test_auto_merge_not_completed_halts(tmp_path, monkeypatch):
+    """gh reports the PR still OPEN after merge (queued behind branch protection) -> halt."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    monkeypatch.setattr(pr, "pr_state", lambda *, branch, cwd: "OPEN")
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=False), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "did not complete" in stop["reason"]
+
+
+def test_dev_story_regression_halts(tmp_path, monkeypatch):
+    """A drop in passing tests vs the branch baseline halts (report-only by default)."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    counter = {"n": 0}
+
+    def shrinking_test():
+        counter["n"] += 1
+        return ("10 pass 0 fail", 0) if counter["n"] == 1 else ("8 pass 0 fail", 0)
+
+    stages = [
+        {"name": "codegen", "command": lambda: ("", 0)},
+        {"name": "lint", "command": lambda: ("", 0)},
+        {"name": "test", "command": shrinking_test, "pass_pattern": r"(\d+)\s+pass", "fail_pattern": r"(\d+)\s+fail"},
+    ]
+    runner = MockRunner([AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0)])
+    rc = driver.run(_config(root, no_merge=False, gate_stages=stages), runner=runner, state_dir=str(state))
+    assert rc == 1
+    stop = [e for e in _events(state) if e["event"] == "stop"][-1]
+    assert stop["ok"] is False
+    assert "regression" in stop["reason"].lower()
+    assert "10->8" in stop["reason"]
+
+
+def test_resume_command_roundtrips_tuning_flags():
+    """The checkpoint resume string carries the real paths + the knobs the user changed (#5)."""
+    cfg = driver.BmadConfig(
+        project_root="D:/p",
+        merge_base="develop",
+        max_stories=5,
+        max_review_turns=3,
+        auto_rollback=True,
+        no_merge=True,
+    )
+    cmd = driver._resume_command(cfg, "D:/state")
+    assert cmd.startswith("loop-bmad --project-root D:/p --state-dir D:/state --merge-base develop")
+    assert "--no-merge" in cmd
+    assert "--auto-rollback" in cmd
+    assert "--max-stories 5" in cmd
+    assert "--max-review-turns 3" in cmd
+    # unchanged knobs stay out of the command
+    assert "--max-smoke-iters" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# mid-pipeline resume: a paused story re-enters at the PHASE its Status implies
+# (in-progress -> dev, review -> review, done-but-unmerged -> smoke+merge). The
+# last is already pinned by test_done_but_unmerged_resumes_at_smoke_and_merge.
+# ---------------------------------------------------------------------------
+
+
+def _set_story_status(root: Path, story_key: str, status: str) -> None:
+    """Rewrite a story file's `Status:` line on `develop` (the durable resume signal the
+    driver reads after checking out the merge base)."""
+    _git(root, "checkout", "develop")
+    f = root / "_bmad-output" / "implementation-artifacts" / f"{story_key}.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("Status: ready-for-dev", f"Status: {status}"), encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", f"set {story_key} -> {status}")
+
+
+def test_in_progress_story_reenters_dev_not_create(tmp_path, monkeypatch):
+    """A paused 'in-progress' story resumes at dev-story — create-story is NOT re-run."""
+    sprint = "development_status:\n  epic-2: in-progress\n  2-1-capture: in-progress\n"
+    root = _init_project(tmp_path, sprint)
+    _set_story_status(root, "2-1-capture", "in-progress")
+    state = tmp_path / "state"
+    _patch_externals(monkeypatch, pr_calls={})
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),  # dev-story
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),  # smoke
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=True), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "dev-gate" in kinds  # dev-story ran -> re-entered at dev
+    # the FIRST agent call is dev-story, not create-story (no create on resume)
+    first_prompt = runner.calls[0].get("prompt", "")
+    assert "bmad-dev-story" in first_prompt
+    assert "bmad-create-story" not in first_prompt
+
+
+def test_review_story_reenters_review_skips_dev(tmp_path, monkeypatch):
+    """A paused 'review' story resumes at code-review — dev-story is SKIPPED."""
+    sprint = "development_status:\n  epic-2: in-progress\n  2-1-capture: review\n"
+    root = _init_project(tmp_path, sprint)
+    _set_story_status(root, "2-1-capture", "review")
+    state = tmp_path / "state"
+    _patch_externals(monkeypatch, pr_calls={})
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),  # smoke
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=True), runner=runner, state_dir=str(state))
+    assert rc == 0
+    kinds = [e["event"] for e in _events(state)]
+    assert "review-complete" in kinds
+    assert "dev-gate" not in kinds  # dev-story skipped -> re-entered at review
+    first_prompt = runner.calls[0].get("prompt", "")
+    assert "bmad-code-review" in first_prompt
+
+
+# ---------------------------------------------------------------------------
+# Flaky-test tolerance: a single flaky `test` failure must NOT terminally stop
+# the loop. `_run_gate` re-runs a flaky-SHAPED red gate; a deterministic failure
+# (codegen/lint red, or many failures) still fails fast. (regression guard for the
+# "post-code-review gate red: ... test=1" terminal stops seen on real runs.)
+# ---------------------------------------------------------------------------
+
+
+def _fake_gate(green, fail, *, codegen_ok=True, lint_ok=True, test_ok=None):
+    """Build a run_gate-style result dict with per-stage ok flags."""
+    if test_ok is None:
+        test_ok = fail == 0
+    return {
+        "green": green,
+        "pass": 1098,
+        "fail": fail,
+        "total": 1098 + fail,
+        "stages": [
+            {"name": "codegen", "ok": codegen_ok, "exit": 0 if codegen_ok else 1},
+            {"name": "lint", "ok": lint_ok, "exit": 0 if lint_ok else 1},
+            {"name": "test", "ok": test_ok, "exit": 0 if test_ok else 1},
+        ],
+        "raw": "",
+    }
+
+
+def test_is_flaky_shape_classification():
+    f = driver._is_flaky_shape
+    # the recurring signature: codegen+lint green, 1 failing test
+    assert f(_fake_gate(False, 1), 2) is True
+    assert f(_fake_gate(False, 2), 2) is True
+    # NOT flaky: too many failures (a real regression)
+    assert f(_fake_gate(False, 3), 2) is False
+    # NOT flaky: a deterministic codegen / lint failure
+    assert f(_fake_gate(False, 1, codegen_ok=False), 2) is False
+    assert f(_fake_gate(False, 1, lint_ok=False), 2) is False
+    # NOT flaky: red with no failing-test count (fail==0) â€” not the test signature
+    assert f(_fake_gate(False, 0, test_ok=False), 2) is False
+    # a green gate is never "flaky red"
+    assert f(_fake_gate(True, 0), 2) is False
+
+
+def _patch_run_gate(monkeypatch, results):
+    """Stub loop.gate.run_gate to yield `results` in order (repeating the last)."""
+    calls = {"n": 0}
+
+    def fake(stages, cwd):
+        idx = min(calls["n"], len(results) - 1)
+        calls["n"] += 1
+        return results[idx]
+
+    monkeypatch.setattr("loop.gate.run_gate", fake)
+    return calls
+
+
+def test_run_gate_retries_flaky_then_passes(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(
+        project_root=str(tmp_path), gate_flaky_retries=2, gate_flaky_max_fail=2
+    )
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1), _fake_gate(True, 0)])
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is True  # the retry confirmed it was flaky
+    assert calls["n"] == 2  # initial + one retry
+    assert [e["event"] for e in emitted] == ["gate-retry"]
+    assert emitted[0]["attempt"] == 1 and emitted[0]["fail"] == 1
+
+
+def test_run_gate_does_not_retry_deterministic_failure(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(project_root=str(tmp_path), gate_flaky_retries=2)
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1, lint_ok=False)])
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is False
+    assert calls["n"] == 1  # failed fast â€” no retry
+    assert emitted == []
+
+
+def test_run_gate_gives_up_after_exhausting_retries(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(
+        project_root=str(tmp_path), gate_flaky_retries=2, gate_flaky_max_fail=2
+    )
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1)])  # always red
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is False  # persistently red => a real failure, reported
+    assert calls["n"] == 3  # initial + 2 retries
+    assert len(emitted) == 2  # one gate-retry per retry attempt
+
+
+def test_loop_json_can_tune_flaky_knobs():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"project_root": "x", "gateFlakyRetries": 5, "gateFlakyMaxFail": 3}}
+    )
+    assert cfg.gate_flaky_retries == 5
+    assert cfg.gate_flaky_max_fail == 3

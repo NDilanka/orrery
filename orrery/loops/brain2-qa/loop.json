@@ -1,0 +1,20 @@
+{
+  "id": "brain2-qa",
+  "name": "brain2 — functional QA (all 7 epics)",
+  "theme": "aurora",
+  "kind": "external",
+  "adapter": "generic",
+  "stateDir": "D:/dev/loop/orrery/loops/brain2-qa/.loop",
+  "logFile": "log.jsonl",
+  "stopFlag": "D:/dev/loop/orrery/loops/brain2-qa/.loop/STOP",
+  "checkpoint": "D:/dev/loop/orrery/loops/brain2-qa/.loop/checkpoint.json",
+  "start": {
+    "program": "loop-qa",
+    "args": [
+      "--project-root", "D:/dev/brain2",
+      "--manifest", "D:/dev/loop/orrery/loops/brain2-qa/ac-manifest.json",
+      "--state-dir", "D:/dev/loop/orrery/loops/brain2-qa/.loop",
+      "--loop-json", "D:/dev/loop/orrery/loops/brain2-qa/qa-engine.json"
+    ]
+  }
+}

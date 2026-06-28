@@ -18,10 +18,31 @@
 
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
-  import { runStore, STAR_R0, STAR_K } from '../stores/run.svelte';
+  import { runStore, STAR_R0, STAR_K, RING_BASE } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import ObservatoryLabels from './ObservatoryLabels.svelte';
 
   let host: HTMLDivElement;
+
+  // ── on-canvas label overlay state ──────────────────────────────────────────
+  // The rAF resolves star + planet screen coords in host CSS px; it publishes a
+  // THROTTLED snapshot here (every ~6th frame / on meaningful change) so the
+  // Svelte overlay (<ObservatoryLabels/>) can annotate the scene without making
+  // the 60fps loop reactive. Values are in host CSS px (overlay shares the box).
+  type Labels = {
+    cumUsd: number;
+    ratePerMin: number;
+    star: { x: number; y: number };
+    active: { name: string; x: number; y: number } | null;
+    horizonPct: number | null;
+  };
+  let labels = $state<Labels>({
+    cumUsd: 0,
+    ratePerMin: 0,
+    star: { x: 0, y: 0 },
+    active: null,
+    horizonPct: null,
+  });
 
   // palette (kept in sync with tokens.css; Pixi needs numbers)
   const C = {
@@ -89,11 +110,7 @@
     let raf = 0;
     let cleanupResize: (() => void) | null = null;
 
-    // honor prefers-reduced-motion as a first-class mode (§F)
-    const rmQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let reduced = rmQuery.matches;
-    const onRm = () => (reduced = rmQuery.matches);
-    rmQuery.addEventListener?.('change', onRm);
+    // reduced-motion comes from the single uiStore source (read per-frame in tick)
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -272,6 +289,11 @@
       let sweepProg = 1; // 1 = idle (no sweep)
       let lastAuditKey: string | null = null;
 
+      // hover (set by the mousemove listener; consumed by the planet draw)
+      let hoveredKey: string | null = null;
+      // throttle for publishing the label snapshot out of the rAF
+      let labelFrame = 0;
+
       function lerp(a: number, b: number, k: number) {
         return a + (b - a) * k;
       }
@@ -300,9 +322,10 @@
       const ro = new ResizeObserver(onResize);
       ro.observe(host);
 
-      // ── click-to-inspect: pick the nearest planet → open its VerdictPanel ──
+      // ── click / touch / hover: pick the nearest planet → its VerdictPanel ──
       const lastPpos = new Map<string, { x: number; y: number; r: number }>();
-      const onClick = (e: MouseEvent) => {
+      // nearest planet under the pointer (null if none within the hit radius)
+      const pickAt = (e: { clientX: number; clientY: number }): string | null => {
         const rect = app.canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
@@ -315,19 +338,42 @@
             best = key;
           }
         }
-        runStore.selectItem(best);
+        return best;
+      };
+      const onClick = (e: MouseEvent) => runStore.selectItem(pickAt(e));
+      // touch: same selection path as click (Observatory owns no nav)
+      const onPointerDown = (e: PointerEvent) => {
+        if (e.pointerType === 'touch') runStore.selectItem(pickAt(e));
+      };
+      // hover: cursor → pointer over a planet; the rAF draws a hover ring on it
+      const onMove = (e: MouseEvent) => {
+        const k = pickAt(e);
+        hoveredKey = k;
+        app.canvas.style.cursor = k ? 'pointer' : 'default';
+      };
+      const onLeave = () => {
+        hoveredKey = null;
+        app.canvas.style.cursor = 'default';
       };
       app.canvas.style.pointerEvents = 'auto';
       app.canvas.addEventListener('click', onClick);
+      app.canvas.addEventListener('pointerdown', onPointerDown);
+      app.canvas.addEventListener('mousemove', onMove);
+      app.canvas.addEventListener('mouseleave', onLeave);
       cleanupResize = () => {
         ro.disconnect();
         app.canvas.removeEventListener('click', onClick);
+        app.canvas.removeEventListener('pointerdown', onPointerDown);
+        app.canvas.removeEventListener('mousemove', onMove);
+        app.canvas.removeEventListener('mouseleave', onLeave);
       };
 
       // ── render loop ──────────────────────────────────────────────────────
       const PXPER = 1; // geometry units → px (rings already in px-ish units)
       const tick = () => {
         if (destroyed) return;
+        // single reduced-motion source (uiStore); read fresh each frame
+        const reduced = uiStore.reducedMotion;
         const s = runStore.state;
         const cx = w / 2;
         const cy = h / 2;
@@ -378,13 +424,20 @@
         // ── resolve every planet's eased screen position ONCE (shared by the
         //   beam, ghost, snapback shimmer & the planet draw below) ──────────
         const spin = vis.t * 0.06; // global slow orbital advance
+        // fit all rings/orbits inside the viewport AND the cost-horizon: one shared
+        // scale so the fixed RING_BASE/GAP geometry never overflows a small/short
+        // window or a many-group run (planets, rings & ghost all consult it).
+        let maxOrbitR = RING_BASE;
+        for (const o of runStore.orbits) if (o.ringRadius > maxOrbitR) maxOrbitR = o.ringRadius;
+        for (const ring of runStore.rings) if (ring.radius > maxOrbitR) maxOrbitR = ring.radius;
+        const fitScale = PXPER * Math.min(1, (Math.min(w, h) * 0.42) / Math.max(1, maxOrbitR));
         const ppos = new Map<string, { x: number; y: number; r: number; o: any }>();
         for (const o of runStore.orbits) {
           const target = o.angle + (running && !reduced ? spin : 0);
           const prev = planetAngle.get(o.key);
           const a = prev === undefined ? target : lerp(prev, target, 0.06);
           planetAngle.set(o.key, a);
-          const r = o.ringRadius * PXPER;
+          const r = o.ringRadius * fitScale;
           ppos.set(o.key, { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, r, o });
         }
 
@@ -441,7 +494,7 @@
         ringsG.clear();
         if (!tierOne) {
           for (const ring of runStore.rings) {
-            const r = ring.radius * PXPER;
+            const r = ring.radius * fitScale;
             ringsG
               .circle(cx, cy, r)
               .stroke({ width: ring.status === 'in-progress' ? 1.6 : 1, color: ringColor(ring.status), alpha: 0.5 });
@@ -511,8 +564,11 @@
         // planet is claimed-green-not-certified (something to audit); sweeps a
         // beam to that planet. PASS → the planet seals itself (handled below);
         // FAIL/refute → the beam snaps Crimson on the failing criterion.
-        const lhx = Math.max(60, w * 0.13);
-        const lhy = Math.max(56, h * 0.16);
+        // off-plane auditor: anchored top-RIGHT, clear of the HUD (top-left) and
+        // below the navbar, so its sweep cone never originates under a panel (the
+        // old top-left anchor drew the cone under the HUD → a stray dark wedge).
+        const lhx = w - Math.max(96, w * 0.12);
+        const lhy = Math.max(108, h * 0.2);
         const auditKey = runStore.auditTargetKey;
         // start a sweep when the audit target changes (a new claimed green appears)
         if (auditKey && auditKey !== lastAuditKey) {
@@ -543,17 +599,19 @@
           const ey = lerp(lhy, tp.y, prog);
           const beamA = (isRefute ? 0.5 : 0.16 + vis.lhWake * 0.16) *
             (isRefute ? 0.4 + (refuteFx.get(refuteKey!) ?? 0) * 0.6 : 1);
-          // a soft cone: two edges + a bright core line
+          // a soft cone: two edges + a bright core line. Kept a subtle directional
+          // hint, not a swath — narrow spread + low fill alpha so it never reads as
+          // a gray triangle dominating the scene.
           const ang = Math.atan2(ey - lhy, ex - lhx);
-          const spread = 0.05 + (1 - prog) * 0.02;
+          const spread = 0.03 + (1 - prog) * 0.012;
           const len = Math.hypot(ex - lhx, ey - lhy);
           beamG
             .moveTo(lhx, lhy)
             .lineTo(lhx + Math.cos(ang - spread) * len, lhy + Math.sin(ang - spread) * len)
             .lineTo(lhx + Math.cos(ang + spread) * len, lhy + Math.sin(ang + spread) * len)
             .closePath()
-            .fill({ color: beamCol, alpha: beamA * 0.28 });
-          beamG.moveTo(lhx, lhy).lineTo(ex, ey).stroke({ width: isRefute ? 2 : 1.2, color: beamCol, alpha: beamA });
+            .fill({ color: beamCol, alpha: beamA * 0.1 });
+          beamG.moveTo(lhx, lhy).lineTo(ex, ey).stroke({ width: isRefute ? 1.4 : 1, color: beamCol, alpha: beamA * 0.7 });
           if (isRefute) {
             // snap a crimson burst on the failing criterion (the AC star)
             const fx = refuteFx.get(refuteKey!) ?? 0;
@@ -636,12 +694,14 @@
         const bloom = 1 + vis.burn * 1.4;
         // corona is suppressed for the cold frost state (it should read "cold")
         const coronaAlpha = rest === 'quota-frost' ? 0.4 : 1;
-        for (let i = 5; i >= 1; i--) {
+        // layer count scales with burn so a quiet/idle loop is cheaper to draw
+        const coronaLayers = rest ? 4 : Math.max(2, Math.round(2 + vis.burn * 3));
+        for (let i = coronaLayers; i >= 1; i--) {
           corona
             .circle(cx, cy, coronaR + i * 6 * bloom)
             .fill({
               color: vis.starColor,
-              alpha: 0.05 * (6 - i) * 0.4 * (0.6 + vis.burn * 0.7) * coronaAlpha,
+              alpha: 0.05 * (coronaLayers + 1 - i) * 0.4 * (0.6 + vis.burn * 0.7) * coronaAlpha,
             });
         }
 
@@ -777,6 +837,18 @@
 
           g.circle(px, py, pr).fill({ color: col, alpha: 0.95 });
 
+          // selection ring — the planet whose VerdictPanel/dossier is open (mouse
+          // click or the keyboard work-item list both set runStore.selectedItem)
+          if (o.key === runStore.selectedItem) {
+            g.circle(px, py, pr + 6).stroke({ width: 1.5, color: C.cyan, alpha: 0.9 });
+          }
+
+          // hover highlight — a subtle ring on the planet under the pointer (kept
+          // dimmer than the selection ring so the two never read as the same).
+          if (o.key === hoveredKey && o.key !== runStore.selectedItem) {
+            g.circle(px, py, pr + 5).stroke({ width: 1, color: C.cyan, alpha: 0.4 });
+          }
+
           // A2: CERTIFIED green (sealed) — a solid brass certification ring; calm.
           if (o.certified) {
             g.circle(px, py, pr + 3).stroke({ width: 1.4, color: C.brass, alpha: 0.9 });
@@ -840,6 +912,23 @@
           }
         }
 
+        // ── publish the THROTTLED label snapshot (every ~6th frame) ──────────
+        // Annotations don't need 60fps; updating reactive $state every frame
+        // would thrash. Positions are already eased, so a 6-frame cadence reads
+        // smooth (the overlay also eases its own CSS transitions).
+        labelFrame = (labelFrame + 1) % 6;
+        if (labelFrame === 0) {
+          const cp = cur ? ppos.get(cur.key) : null;
+          const hf = runStore.horizonFrac;
+          labels = {
+            cumUsd: s.run.cumUsd,
+            ratePerMin: s.run.status === 'running' ? s.cost.ratePerMin : 0,
+            star: { x: cx, y: cy + vis.starR * pulse },
+            active: cur && cp ? { name: cur.key, x: cp.x, y: cp.y } : null,
+            horizonPct: hf >= 0.5 ? Math.round(hf * 100) : null,
+          };
+        }
+
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -849,7 +938,6 @@
       destroyed = true;
       if (raf) cancelAnimationFrame(raf);
       cleanupResize?.();
-      rmQuery.removeEventListener?.('change', onRm);
       if (app) {
         try {
           app.destroy(true, { children: true });
@@ -862,7 +950,18 @@
   });
 </script>
 
-<div bind:this={host} class="observatory" aria-hidden="true"></div>
+<!-- outer box owns layout/background; the inner .ofield is the SOLE parent of the
+     Pixi-appended <canvas>, so the canvas and the Svelte label overlay never fight
+     over one element's children. -->
+<div class="observatory">
+  <div bind:this={host} class="ofield" aria-hidden="true"></div>
+  <!-- the on-canvas labels are the Observatory's legibility layer; in ambient
+       Planetarium the PlanetariumOverlay owns the load-bearing numbers, so we
+       don't double them (and avoid a label floating where a Tier-1 planet isn't). -->
+  {#if !uiStore.ambient}
+    <ObservatoryLabels {labels} reduced={uiStore.reducedMotion} />
+  {/if}
+</div>
 
 <style>
   .observatory {
@@ -871,6 +970,10 @@
     width: 100%;
     height: 100%;
     background: var(--void);
+  }
+  .ofield {
+    position: absolute;
+    inset: 0;
   }
   .observatory :global(canvas) {
     display: block;

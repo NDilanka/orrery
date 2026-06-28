@@ -11,7 +11,7 @@
   import { runStore } from '../stores/run.svelte';
   import type { WorkItem } from '../types';
 
-  let { itemKey }: { itemKey: string } = $props();
+  let { itemKey, onBack }: { itemKey: string; onBack?: () => void } = $props();
 
   const s = $derived(runStore.state);
   const item = $derived<WorkItem | null>(s.items[itemKey] ?? null);
@@ -23,6 +23,11 @@
 </script>
 
 <div class="body">
+  {#if onBack}
+    <button class="back" type="button" onclick={() => onBack?.()}>
+      <span class="back-glyph" aria-hidden="true">←</span> system
+    </button>
+  {/if}
   {#if !item}
     <div class="empty mono">no such body · {itemKey}</div>
   {:else}
@@ -149,8 +154,8 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 22px 26px;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-5);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
@@ -161,26 +166,52 @@
     color: var(--text-dim);
     text-align: center;
   }
+  .back {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-3);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-meta);
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease-standard),
+      border-color var(--dur-fast) var(--ease-standard);
+  }
+  .back:hover {
+    color: var(--starlight);
+    border-color: var(--panel-edge);
+  }
+  .back-glyph {
+    font-size: var(--text-md);
+    line-height: 1;
+  }
   .bhead {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-2);
     flex-wrap: wrap;
     border-bottom: 1px solid var(--hairline);
-    padding-bottom: 12px;
+    padding-bottom: var(--space-3);
   }
   .bkey {
-    font-size: 15px;
+    font-size: var(--text-lg);
     letter-spacing: 0.04em;
     color: var(--starlight);
   }
   .bstatus {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    padding: 3px 9px;
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-pill);
-    color: var(--text-dim);
+    color: var(--text-meta);
     border: 1px solid var(--hairline);
   }
   .bstatus.done {
@@ -199,25 +230,25 @@
   }
   .seal {
     color: var(--brass);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
   }
   .claimed {
     color: var(--amber);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
   }
   .block {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: var(--space-2);
   }
   .blabel {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.16em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .crit {
     margin: 0;
@@ -225,12 +256,12 @@
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: var(--space-1);
   }
   .crit li {
     display: flex;
-    gap: 8px;
-    font-size: 12.5px;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
     line-height: 1.4;
   }
   .crit li .mark {
@@ -243,7 +274,9 @@
     color: var(--crimson);
   }
   .gate {
-    font-size: 13px;
+    font-size: var(--text-md);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
   .gate.g,
   .g {
@@ -254,18 +287,18 @@
     color: var(--crimson);
   }
   .dim {
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .airlock {
     display: flex;
-    gap: 6px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   .chamber {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    padding: 3px 9px;
+    padding: var(--space-1) var(--space-2);
     border-radius: 6px;
     border: 1px solid var(--hairline);
     font-family: var(--font-mono);
@@ -280,7 +313,7 @@
     background: color-mix(in srgb, var(--crimson) 8%, transparent);
   }
   .vbadge {
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.04em;
   }
@@ -292,19 +325,19 @@
   }
   .evidence {
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
   }
   .next {
     color: var(--starlight);
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .strikes {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
   }
   .notch {
     width: 16px;
@@ -316,25 +349,27 @@
     background: var(--crimson);
   }
   .pr {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-dim);
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .prlink {
     color: var(--plasma-cyan);
     text-decoration: none;
     word-break: break-all;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .prlink:hover {
     text-decoration: underline;
   }
   .bfoot {
-    font-size: 10.5px;
-    color: var(--text-faint);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     border-top: 1px solid var(--hairline);
-    padding-top: 10px;
+    padding-top: var(--space-3);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 </style>

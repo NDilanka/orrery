@@ -227,6 +227,7 @@ export type EventName =
   | 'quota-wait'
   | 'quota-resume'
   // bmad superset
+  | 'engine-start'
   | 'start'
   | 'story-start'
   | 'dev-gate'

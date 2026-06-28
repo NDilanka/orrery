@@ -34,8 +34,26 @@
     return `${ss}s`;
   }
 
+  function fmtMins(n: number): string {
+    // ~Ym to ceiling; switch to h:mm once it's long enough to be unwieldy in minutes.
+    const m = Math.round(n);
+    if (m >= 100) return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+    return `${m}m`;
+  }
+
   const quotaLeft = $derived(runStore.quotaSecondsLeft);
   const horizonPct = $derived(Math.round(runStore.horizonFrac * 100));
+
+  // scrub-safe forecast: only when actively burning toward a meaningful ceiling
+  const minsToCeiling = $derived(runStore.minsToCeiling);
+  const showForecast = $derived(minsToCeiling != null && runStore.ceilingUsd > 0);
+
+  // model spectral chip (always paired with the text label, never hue-only)
+  const model = $derived(s.phase.model);
+
+  // cache activity (hide entirely when cold + no hits)
+  const cacheActive = $derived(s.cache.hitRatio > 0 || s.cache.warm);
+  const cachePct = $derived(Math.round(s.cache.hitRatio * 100));
 </script>
 
 <div class="hud">
@@ -45,6 +63,9 @@
     </span>
     {#if s.phase.sixPhase}
       <span class="phase mono">{s.phase.sixPhase}{s.phase.label ? ' · ' + s.phase.label : ''}</span>
+    {/if}
+    {#if model}
+      <span class="model-chip {model}">{model}</span>
     {/if}
   </div>
 
@@ -57,6 +78,15 @@
       </span>
     {/if}
   </div>
+
+  {#if showForecast}
+    <div class="forecast">
+      <span class="num">{fmtUsd(runStore.usdRemaining)}</span>
+      <span>left · ~</span>
+      <span class="num">{fmtMins(minsToCeiling!)}</span>
+      <span>to ceiling</span>
+    </div>
+  {/if}
 
   {#if s.currentItem}
     <div class="current">
@@ -78,6 +108,9 @@
     <div class="quota">
       <span class="label">{s.quota.resetType === 'weekly' ? 'polar night' : 'dusk'} · resumes in</span>
       <span class="num">{fmtCountdown(quotaLeft)}</span>
+      {#if s.quota.probe > 0}
+        <span class="probe num">probe #{s.quota.probe}</span>
+      {/if}
     </div>
   {/if}
 
@@ -90,6 +123,10 @@
     {#if s.cost.ratePerMin > 0}
       <span>·</span>
       <span>{fmtUsd(s.cost.ratePerMin)}/min</span>
+    {/if}
+    {#if cacheActive}
+      <span>·</span>
+      <span class="cache">↻ cache <span class="num">{cachePct}%</span>{#if s.cache.warm}<span class="warm" title="warm">•</span>{/if}</span>
     {/if}
   </div>
 </div>
@@ -156,22 +193,53 @@
   }
   .pill.beacon {
     color: var(--crimson);
-    border-color: color-mix(in srgb, var(--crimson) 50%, transparent);
-    background: color-mix(in srgb, var(--crimson) 12%, transparent);
-    animation: beaconPulse 1.6s ease-in-out infinite;
+    /* the loudest state. Urgency reads as a slow breathing GLOW, never an opacity
+       blink; the static border+shadow stays high-contrast so reduced-motion
+       (which freezes the animation) never makes the state disappear. */
+    border-color: var(--crimson);
+    background: color-mix(in srgb, var(--crimson) 16%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 45%, transparent);
+    animation: beaconBreathe 2.2s ease-in-out infinite;
   }
   .pill.idle {
     color: var(--text-dim);
     border-color: var(--hairline);
   }
-  @keyframes beaconPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
+  @keyframes beaconBreathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 35%, transparent),
+        0 0 6px color-mix(in srgb, var(--crimson) 18%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 65%, transparent),
+        0 0 14px color-mix(in srgb, var(--crimson) 45%, transparent);
+    }
   }
   .phase {
     font-size: 11px;
     color: var(--text-dim);
     letter-spacing: 0.04em;
+  }
+  /* model spectral chip — heat color is decorative; the text label always carries
+     the meaning (status never by hue alone). */
+  .model-chip {
+    font-size: var(--text-2xs);
+    text-transform: lowercase;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    border: 1px solid currentColor;
+    line-height: 1.4;
+  }
+  .model-chip.haiku {
+    color: var(--spectral-haiku);
+  }
+  .model-chip.sonnet {
+    color: var(--spectral-sonnet);
+  }
+  .model-chip.opus {
+    color: var(--spectral-opus);
   }
   .cost {
     display: flex;
@@ -186,10 +254,10 @@
     line-height: 1;
   }
   .label {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-faint);
+    color: var(--text-meta);
   }
   .horizon {
     font-size: 11px;
@@ -198,6 +266,20 @@
   }
   .horizon.warn { color: var(--horizon-rose); }
   .horizon.crit { color: var(--crimson); }
+  /* calm cost forecast — a quiet readout, not an alarm */
+  .forecast {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    color: var(--text-meta);
+    margin-top: -4px;
+  }
+  .forecast .num {
+    color: var(--text-dim);
+    font-size: var(--text-xs);
+  }
   .current,
   .quota {
     display: flex;
@@ -214,11 +296,52 @@
   .gate.red { color: var(--crimson); }
   .seal { color: var(--brass); font-size: 11px; }
   .quota .num { color: var(--frost); }
+  .probe.num {
+    color: var(--text-meta);
+    font-size: var(--text-2xs);
+  }
+  .cache {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    color: var(--cache-teal);
+  }
+  .cache .num {
+    color: var(--cache-teal);
+    font-size: var(--text-2xs);
+  }
+  .cache .warm {
+    color: var(--cache-teal);
+    margin-left: 1px;
+  }
   .meta {
     display: flex;
-    gap: 6px;
-    font-size: 10.5px;
-    color: var(--text-faint);
+    gap: var(--space-1);
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
     flex-wrap: wrap;
+  }
+
+  /* phone / tier-1: a compact HUD that fits a 360px width and doesn't crowd the
+     canvas — drop the meta row, shrink the headline, span the top edge. */
+  @media (max-width: 640px) {
+    .hud {
+      left: var(--space-2);
+      right: var(--space-2);
+      min-width: 0;
+      padding: var(--space-3);
+      gap: var(--space-2);
+    }
+    .big {
+      font-size: var(--text-xl);
+    }
+    .meta {
+      display: none;
+    }
+    /* the forecast is an at-a-glance desktop nicety; drop it so the compact
+       phone HUD never overflows (cache badge already rides in the hidden meta). */
+    .forecast {
+      display: none;
+    }
   }
 </style>

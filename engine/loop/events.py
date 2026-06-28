@@ -171,6 +171,27 @@ def gate_event(
     return o
 
 
+def gate_retry_event(
+    attempt: int,
+    retries: int,
+    fail: int,
+    max_fail: int,
+) -> dict[str, Any]:
+    """A flaky-SHAPED red gate (codegen+lint green, a small ``test`` fail count) is being re-run.
+
+    Emitted before each confirm-red retry so flakiness is VISIBLE in the log instead of being
+    silently absorbed. ``attempt`` is 1-based; ``retries`` is the configured cap, ``maxFail`` the
+    flaky-fail threshold the failure was under.
+    """
+    return {
+        "event": "gate-retry",
+        "attempt": attempt,
+        "retries": retries,
+        "fail": fail,
+        "maxFail": max_fail,
+    }
+
+
 def model_event(
     phase: str,
     model: str,
@@ -397,6 +418,16 @@ def new_checkpoint(
 # ---------------------------------------------------------------------------
 
 
+def engine_start_event(merge_base: str | None = None) -> dict[str, Any]:
+    """Heartbeat written as the VERY FIRST log line — before the slow preflight (git checkout of
+    the merge-base + the baseline gate) — so a watcher/UI sees the run is alive within ~1s instead
+    of staring at an empty log through the whole cold start. The reducer treats it as 'running'."""
+    o: dict[str, Any] = {"event": "engine-start"}
+    if merge_base is not None:
+        o["mergeBase"] = merge_base
+    return o
+
+
 def start_event(target: str, branch: str, baseline_pass: int) -> dict[str, Any]:
     """BMAD ``start`` event — ``Write-BLog @{ event="start"; target=...; branch=...;
     baselinePass=... }``."""
@@ -503,6 +534,8 @@ def smoke_iter_event(
     passed: bool,
     verdict: str,
     timed_out: bool | None = None,
+    verified: list[str] | None = None,
+    deferred: list[str] | None = None,
 ) -> dict[str, Any]:
     """BMAD ``smoke-iter`` event. Wire keys: ``iter`` (from ``iter_``), ``timedOut``.
 
@@ -510,6 +543,11 @@ def smoke_iter_event(
     (``@{ event='smoke-iter'; iter=..; timedOut=$true }``, no ``passed``/``verdict``) OR
     a result line (``@{ ...; passed=..; verdict=.. }``, no ``timedOut``). This builder
     keeps ``passed``/``verdict`` always present and only adds ``timedOut`` when supplied.
+
+    ``verifiedAcs`` / ``deferredAcs`` (the ACs the agent drove in-browser vs deferred to the test
+    suite, parsed from the optional ``SMOKE_ACS:`` evidence line) are likewise OMITTED when
+    ``None`` — additive observability, so the golden corpus / gen_golden.ps1 are untouched (same
+    omit-when-absent contract as ``timedOut``).
     """
     o: dict[str, Any] = {
         "event": "smoke-iter",
@@ -519,6 +557,10 @@ def smoke_iter_event(
     }
     if timed_out is not None:
         o["timedOut"] = timed_out
+    if verified is not None:
+        o["verifiedAcs"] = list(verified)
+    if deferred is not None:
+        o["deferredAcs"] = list(deferred)
     return o
 
 
@@ -546,3 +588,55 @@ def bmad_stop_event(ok: bool, reason: str, cum: float) -> dict[str, Any]:
     adapter's ``stop`` carries ``ok`` and NO ``green``/``iter``/``bestPass``.
     """
     return {"event": "stop", "ok": ok, "reason": reason, "cum": cum}
+
+
+def token_usage_event(
+    phase: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int,
+    cache_creation: int,
+    hit_ratio: float,
+    warm: bool,
+    cost_usd: float,
+    cum_input: int,
+    cum_output: int,
+    cum_cache_read: int,
+    cum_cache_creation: int,
+    story: str | None = None,
+) -> dict[str, Any]:
+    """Additive ``token-usage`` event — per-call token + cache telemetry for one agent run.
+
+    NEW (no PowerShell equivalent): NOT part of the golden corpus and NOT added to
+    ``gen_golden.ps1``; the reducer logs-but-ignores unknown events, so this is
+    backward-compatible (same contract as :func:`metrics_event`).
+
+    Rationale: on a Max **subscription** the binding constraint is TOKENS against the 5-hour /
+    weekly windows, NOT dollars — and cache *reads* are far cheaper against that budget than
+    fresh input. ``cum*`` is the USD ``cum`` field's missing counterpart: the running token draw
+    so a watcher can see WHICH phase + WHICH model ate the window (the data is already in
+    claude's ``--output-format json`` ``usage`` block; emitting it costs zero extra tokens).
+
+    ``model`` is the resolved tier the run used (``""``/inherit is surfaced as ``"(inherit)"``).
+    ``story`` is OMITTED when falsy (deciders / non-story calls).
+    """
+    o: dict[str, Any] = {
+        "event": "token-usage",
+        "phase": phase,
+        "model": model or "(inherit)",
+        "input": int(input_tokens),
+        "output": int(output_tokens),
+        "cacheRead": int(cache_read),
+        "cacheCreation": int(cache_creation),
+        "hitRatio": round(float(hit_ratio), 4),
+        "warm": bool(warm),
+        "costUsd": round(float(cost_usd), 6),
+        "cumInput": int(cum_input),
+        "cumOutput": int(cum_output),
+        "cumCacheRead": int(cum_cache_read),
+        "cumCacheCreation": int(cum_cache_creation),
+    }
+    if story:
+        o["story"] = story
+    return o
