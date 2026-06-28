@@ -244,6 +244,8 @@ def main_bmad(argv: list[str] | None = None) -> int:
         config.models = file_config.models
         config.effort = file_config.effort
         config.gate_stages = file_config.gate_stages
+        config.gate_flaky_retries = file_config.gate_flaky_retries
+        config.gate_flaky_max_fail = file_config.gate_flaky_max_fail
         if getattr(args, "review_mode", None) is None:
             config.review_mode = file_config.review_mode
         if getattr(args, "smoke_mode", None) is None:

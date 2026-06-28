@@ -55,6 +55,7 @@ from loop.events import (
     bmad_stop_event,
     cooperative_stop_event,
     engine_start_event,
+    gate_retry_event,
     new_checkpoint,
     pr_created_event,
     pr_merged_event,
@@ -170,6 +171,14 @@ class BmadConfig:
     gate_stages: list[dict[str, Any]] = field(
         default_factory=lambda: [dict(s) for s in DEFAULT_GATE_STAGES]
     )
+    # Flaky-test tolerance for the external gate. A RED gate whose only failing stage is `test`,
+    # with codegen+lint green and a SMALL nonzero fail count, is the signature of a flaky /
+    # timing-sensitive test (it passes on a clean re-run) â€” NOT a real regression. `_run_gate`
+    # re-runs such a gate up to `gate_flaky_retries` times (first green wins); a deterministic
+    # failure (codegen/lint red, or fail > gate_flaky_max_fail) is reported at once, no retry.
+    # This stops one flaky test from turning an otherwise-green run into a hard terminal stop.
+    gate_flaky_retries: int = 2
+    gate_flaky_max_fail: int = 2
     dev_server_argv: tuple[str, ...] = DEFAULT_DEV_SERVER_ARGV
     models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
     effort: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_EFFORTS))
@@ -271,6 +280,8 @@ class BmadConfig:
             ("review_mode", "reviewMode"),
             ("smoke_mode", "smokeMode"),
             ("retro_mode", "retroMode"),
+            ("gate_flaky_retries", "gateFlakyRetries"),
+            ("gate_flaky_max_fail", "gateFlakyMaxFail"),
         ):
             if snake in b:
                 kwargs[snake] = b[snake]
@@ -722,15 +733,58 @@ def _dry_run(config: BmadConfig, project_root: Path, repo: Path) -> int:
     return 0
 
 
-def _run_gate(config: BmadConfig, repo: Path) -> dict[str, Any]:
-    """Run the configured gate stages from ``repo``.
+def _is_flaky_shape(gate: dict[str, Any], max_fail: int) -> bool:
+    """True when a RED gate looks like a flaky ``test`` failure rather than a real regression.
+
+    The flaky signature is: ``codegen`` and ``lint`` both green, the ``test`` stage is the one
+    that failed, and the fail count is small + nonzero (``0 < fail <= max_fail``). A deterministic
+    failure (codegen/lint red, or a large fail count = a genuine regression) returns ``False`` so
+    the gate fails FAST instead of wasting retries. A stage that isn't present is treated as ok
+    (so a gate configured without codegen/lint still works).
+    """
+    stages = {s.get("name"): s for s in gate.get("stages", [])}
+    codegen_ok = stages.get("codegen", {}).get("ok", True)
+    lint_ok = stages.get("lint", {}).get("ok", True)
+    test_ok = stages.get("test", {}).get("ok", True)
+    fail = int(gate.get("fail", 0))
+    return bool(codegen_ok and lint_ok and not test_ok and 0 < fail <= max_fail)
+
+
+def _run_gate(
+    config: BmadConfig,
+    repo: Path,
+    emit: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Run the configured gate stages from ``repo``, with flaky-test tolerance.
 
     ``run_gate`` honors ``cwd`` for string-command stages, so the repo is passed straight
     through (no shell ``cd`` wrapper). Callable hooks (tests) ignore ``cwd``.
+
+    A red gate whose shape matches :func:`_is_flaky_shape` (a small flaky-looking ``test`` failure
+    with codegen+lint green) is RE-RUN up to ``config.gate_flaky_retries`` times â€” the first green
+    result wins. This stops a single flaky/timing-sensitive test from turning an otherwise-green
+    run into a hard terminal stop (the recurring failure mode), while a real regression
+    (deterministic, or many failures) still fails immediately. Re-running is idempotent (codegen
+    regenerates the same files; lint/test are read-only); the only cost is time on a RED gate.
+    Each retry emits a ``gate-retry`` event (when ``emit`` is given) so the flakiness is visible.
     """
     from loop.gate import run_gate
 
-    return run_gate(config.gate_stages, str(repo))
+    g = run_gate(config.gate_stages, str(repo))
+    for attempt in range(1, max(0, config.gate_flaky_retries) + 1):
+        if g.get("green") or not _is_flaky_shape(g, config.gate_flaky_max_fail):
+            return g
+        if emit is not None:
+            emit(
+                gate_retry_event(
+                    attempt=attempt,
+                    retries=config.gate_flaky_retries,
+                    fail=int(g.get("fail", 0)),
+                    max_fail=config.gate_flaky_max_fail,
+                )
+            )
+        g = run_gate(config.gate_stages, str(repo))
+    return g
 
 
 def _run_inner(
@@ -756,7 +810,7 @@ def _run_inner(
     )
 
     def gate_fn() -> dict[str, Any]:
-        return _run_gate(config, repo)
+        return _run_gate(config, repo, emit)
 
     def smoke_server():
         return phases.DevServer(config.dev_server_argv, cwd=str(repo))
