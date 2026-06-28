@@ -1071,3 +1071,101 @@ def test_review_story_reenters_review_skips_dev(tmp_path, monkeypatch):
     assert "dev-gate" not in kinds  # dev-story skipped -> re-entered at review
     first_prompt = runner.calls[0].get("prompt", "")
     assert "bmad-code-review" in first_prompt
+
+
+# ---------------------------------------------------------------------------
+# Flaky-test tolerance: a single flaky `test` failure must NOT terminally stop
+# the loop. `_run_gate` re-runs a flaky-SHAPED red gate; a deterministic failure
+# (codegen/lint red, or many failures) still fails fast. (regression guard for the
+# "post-code-review gate red: ... test=1" terminal stops seen on real runs.)
+# ---------------------------------------------------------------------------
+
+
+def _fake_gate(green, fail, *, codegen_ok=True, lint_ok=True, test_ok=None):
+    """Build a run_gate-style result dict with per-stage ok flags."""
+    if test_ok is None:
+        test_ok = fail == 0
+    return {
+        "green": green,
+        "pass": 1098,
+        "fail": fail,
+        "total": 1098 + fail,
+        "stages": [
+            {"name": "codegen", "ok": codegen_ok, "exit": 0 if codegen_ok else 1},
+            {"name": "lint", "ok": lint_ok, "exit": 0 if lint_ok else 1},
+            {"name": "test", "ok": test_ok, "exit": 0 if test_ok else 1},
+        ],
+        "raw": "",
+    }
+
+
+def test_is_flaky_shape_classification():
+    f = driver._is_flaky_shape
+    # the recurring signature: codegen+lint green, 1 failing test
+    assert f(_fake_gate(False, 1), 2) is True
+    assert f(_fake_gate(False, 2), 2) is True
+    # NOT flaky: too many failures (a real regression)
+    assert f(_fake_gate(False, 3), 2) is False
+    # NOT flaky: a deterministic codegen / lint failure
+    assert f(_fake_gate(False, 1, codegen_ok=False), 2) is False
+    assert f(_fake_gate(False, 1, lint_ok=False), 2) is False
+    # NOT flaky: red with no failing-test count (fail==0) â€” not the test signature
+    assert f(_fake_gate(False, 0, test_ok=False), 2) is False
+    # a green gate is never "flaky red"
+    assert f(_fake_gate(True, 0), 2) is False
+
+
+def _patch_run_gate(monkeypatch, results):
+    """Stub loop.gate.run_gate to yield `results` in order (repeating the last)."""
+    calls = {"n": 0}
+
+    def fake(stages, cwd):
+        idx = min(calls["n"], len(results) - 1)
+        calls["n"] += 1
+        return results[idx]
+
+    monkeypatch.setattr("loop.gate.run_gate", fake)
+    return calls
+
+
+def test_run_gate_retries_flaky_then_passes(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(
+        project_root=str(tmp_path), gate_flaky_retries=2, gate_flaky_max_fail=2
+    )
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1), _fake_gate(True, 0)])
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is True  # the retry confirmed it was flaky
+    assert calls["n"] == 2  # initial + one retry
+    assert [e["event"] for e in emitted] == ["gate-retry"]
+    assert emitted[0]["attempt"] == 1 and emitted[0]["fail"] == 1
+
+
+def test_run_gate_does_not_retry_deterministic_failure(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(project_root=str(tmp_path), gate_flaky_retries=2)
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1, lint_ok=False)])
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is False
+    assert calls["n"] == 1  # failed fast â€” no retry
+    assert emitted == []
+
+
+def test_run_gate_gives_up_after_exhausting_retries(tmp_path, monkeypatch):
+    cfg = driver.BmadConfig(
+        project_root=str(tmp_path), gate_flaky_retries=2, gate_flaky_max_fail=2
+    )
+    calls = _patch_run_gate(monkeypatch, [_fake_gate(False, 1)])  # always red
+    emitted = []
+    g = driver._run_gate(cfg, tmp_path, emitted.append)
+    assert g["green"] is False  # persistently red => a real failure, reported
+    assert calls["n"] == 3  # initial + 2 retries
+    assert len(emitted) == 2  # one gate-retry per retry attempt
+
+
+def test_loop_json_can_tune_flaky_knobs():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"project_root": "x", "gateFlakyRetries": 5, "gateFlakyMaxFail": 3}}
+    )
+    assert cfg.gate_flaky_retries == 5
+    assert cfg.gate_flaky_max_fail == 3

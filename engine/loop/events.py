@@ -171,6 +171,27 @@ def gate_event(
     return o
 
 
+def gate_retry_event(
+    attempt: int,
+    retries: int,
+    fail: int,
+    max_fail: int,
+) -> dict[str, Any]:
+    """A flaky-SHAPED red gate (codegen+lint green, a small ``test`` fail count) is being re-run.
+
+    Emitted before each confirm-red retry so flakiness is VISIBLE in the log instead of being
+    silently absorbed. ``attempt`` is 1-based; ``retries`` is the configured cap, ``maxFail`` the
+    flaky-fail threshold the failure was under.
+    """
+    return {
+        "event": "gate-retry",
+        "attempt": attempt,
+        "retries": retries,
+        "fail": fail,
+        "maxFail": max_fail,
+    }
+
+
 def model_event(
     phase: str,
     model: str,

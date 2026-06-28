@@ -79,6 +79,7 @@ fully backward-compatible.
 { "event":"story-start",      "story": string, "status": string, "epic"?: string, "index"?: int }
 { "event":"dev-gate",         "story": string, "cum": float, "green": bool, "pass": int, "fail": int,
   "total": int, "baselinePass": int, "status": string, "codegenOk": bool, "lintOk": bool, "testOk": bool }
+{ "event":"gate-retry",       "attempt": int, "retries": int, "fail": int, "maxFail": int }  // flaky-SHAPED red gate (codegen+lint green, â‰¤maxFail failing tests) being re-run before it's trusted
 { "event":"review-question",  "turn": int, "q": string, "story"?: string }
 { "event":"review-answer",    "turn": int, "a": string }
 { "event":"review-complete",  "turn": int, "summary": string }
