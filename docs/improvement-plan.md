@@ -88,9 +88,13 @@ protocol doc (PROTOCOL.md) that no longer matches shipped code.
    color-map copies; remove unused `@xyflow/svelte`.
 
 ### Phase A4 — OSS readiness (deferred until you want it)
-Relative/portable loop paths, POSIX process-group detachment, shell-dialect caveats for gate
-commands, third-party adapter guide, `RunState` schema made adapter-neutral (today it is BMAD's
-shape with optional fields).
+Relative/portable loop paths (the `bmad`/`brain2-qa`/`brain2-regression` seeds), POSIX
+process-group detachment (`control.rs::spawn_detached`'s `#[cfg(unix)]` arm), and shell-dialect
+caveats for gate commands (engine/README.md) are DONE; a third-party adapter guide remains open
+(partially covered by README's "Writing a new loop driver" section). `RunState` schema made
+adapter-neutral (today it is BMAD's shape with optional fields) is explicitly DEFERRED — those
+optional fields are harmless until a third adapter shape actually needs a conflicting meaning for
+one of them.
 
 ---
 

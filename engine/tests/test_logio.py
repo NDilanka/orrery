@@ -47,6 +47,32 @@ def test_append_event_creates_parent_dir(tmp_path):
     assert log.exists()
 
 
+def test_append_event_stamps_t_when_absent(tmp_path):
+    """A caller that doesn't set ``_t`` gets one stamped from the injected clock (ms)."""
+    log = tmp_path / "log.jsonl"
+    ticks = iter([1000.0, 1000.25])  # seconds; monotonic-ish
+    append_event(log, {"event": "a"}, now_ms=lambda: next(ticks))
+    append_event(log, {"event": "b"}, now_ms=lambda: next(ticks))
+
+    recs = [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines()]
+    assert recs[0]["_t"] == 1_000_000
+    assert recs[1]["_t"] == 1_000_250
+    assert recs[1]["_t"] >= recs[0]["_t"]
+
+
+def test_append_event_explicit_t_passes_through(tmp_path):
+    """A caller-supplied ``_t`` is written as-is; the injected clock is never consulted."""
+    log = tmp_path / "log.jsonl"
+
+    def _boom():
+        raise AssertionError("now_ms should not be called when _t is already set")
+
+    append_event(log, {"event": "a", "_t": 42}, now_ms=_boom)
+
+    rec = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["_t"] == 42
+
+
 def test_checkpoint_round_trips(tmp_path):
     """A checkpoint written by write_checkpoint reloads via json.load identically."""
     path = tmp_path / "checkpoint.json"

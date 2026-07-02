@@ -700,6 +700,16 @@ fn spawn_detached(
         cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
 
+    // POSIX (Linux/macOS): the same detachment, idiomatically. `process_group(0)` puts the
+    // child in a NEW process group led by itself (the `setpgid(0, 0)` convention — stabilized
+    // on `CommandExt` since Rust 1.64), so a signal sent to the parent's process group (a
+    // terminal's Ctrl-C, or SIGHUP/SIGINT on app exit) does not propagate to the detached loop.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     let child = cmd
         .spawn()
         .map_err(|e| format!("spawn {program} {args:?}: {e}"))?;
@@ -1452,6 +1462,26 @@ mod tests {
         let hello = defs.iter().find(|d| d.id == "hello").unwrap();
         assert_eq!(hello.adapter, "generic");
         assert_eq!(hello.log_file.as_deref(), Some("log.jsonl"));
+    }
+
+    #[test]
+    fn list_loops_resolves_portable_seeds_under_their_own_dir() {
+        // A4 Task 3: bmad/brain2-qa/brain2-regression now ship a RELATIVE `stateDir` (".loop")
+        // instead of a machine-specific `D:/dev/loop/...` absolute path, same as the `hello`
+        // seed. `list_loops` must still resolve each to an absolute path under that loop's own
+        // dir — proving the seed edit didn't silently break on-disk-relative -> resolved-absolute
+        // wiring the watcher/engine both depend on (`state_dir_of` / `resolve_under`).
+        let loops_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../loops"));
+        let defs = list_loops(loops_dir.to_string_lossy().to_string()).unwrap();
+        for id in ["bmad", "brain2-qa", "brain2-regression"] {
+            let def = defs.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("{id} seed missing"));
+            let want = loops_dir.join(id).join(".loop");
+            assert_eq!(
+                PathBuf::from(&def.state_dir),
+                want,
+                "{id}: relative seed stateDir must resolve under its own loop dir"
+            );
+        }
     }
 
     // ----- A6 live-control tests (no real claude loop is ever spawned) -----

@@ -207,3 +207,21 @@ def test_seed_qa_engine_json_still_parses_deprecated_but_working():
     cfg = QaConfig.from_loop_json(data, project_root="/p")
     assert cfg.app == "brain2"
     assert cfg.effort == "high"
+
+
+def test_seed_brain2_qa_loop_json_intra_loop_paths_are_relative():
+    """A4 Task 3: stateDir/stopFlag/checkpoint + the --state-dir/--manifest/--loop-json args are
+    RELATIVE (portable); --project-root (the external brain2 repo) stays absolute, and
+    qa.storageState stays absolute too — it's consumed by a Playwright subprocess whose cwd is
+    `project_root`, a DIFFERENT directory than this loop's own dir, so a relative value there
+    would resolve against the wrong repo."""
+    data = json.loads(Path("orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8"))
+    assert data["stateDir"] == ".loop"
+    assert data["stopFlag"] == ".loop/STOP"
+    assert data["checkpoint"] == ".loop/checkpoint.json"
+    args = data["start"]["args"]
+    assert args[args.index("--state-dir") + 1] == ".loop"
+    assert args[args.index("--manifest") + 1] == "ac-manifest.json"
+    assert args[args.index("--loop-json") + 1] == "loop.json"
+    assert args[args.index("--project-root") + 1] == "D:/dev/brain2"
+    assert data["qa"]["storageState"].startswith("D:/dev/loop/orrery/loops/brain2-qa/.auth/")

@@ -4,16 +4,16 @@
   "theme": "ember",
   "kind": "generic",
   "adapter": "generic",
-  "stateDir": "D:/dev/loop/orrery/loops/brain2-regression/.loop",
+  "stateDir": ".loop",
   "logFile": "log.jsonl",
-  "stopFlag": "D:/dev/loop/orrery/loops/brain2-regression/.loop/STOP",
-  "checkpoint": "D:/dev/loop/orrery/loops/brain2-regression/.loop/checkpoint.json",
+  "stopFlag": ".loop/STOP",
+  "checkpoint": ".loop/checkpoint.json",
   "start": {
     "program": "loop",
     "args": [
-      "--loop-json", "D:/dev/loop/orrery/loops/brain2-regression/loop.json",
+      "--loop-json", "loop.json",
       "--cwd", "D:/dev/brain2",
-      "--state-dir", "D:/dev/loop/orrery/loops/brain2-regression/.loop"
+      "--state-dir", ".loop"
     ]
   },
   "engine": {
