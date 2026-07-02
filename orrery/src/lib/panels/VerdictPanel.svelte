@@ -98,12 +98,24 @@
       </div>
     {/if}
   </div>
+{:else}
+  <!-- M1.5: subtle skeleton-shimmer placeholder instead of rendering nothing, so the
+       right rail reads as one continuous instrument even before a body is selected.
+       Decorative only — the sr-only text below carries the actual state to a11y tools. -->
+  <div class="verdict empty" aria-hidden="true">
+    <div class="skel-bar skel-title"></div>
+    <div class="skel-bar skel-line"></div>
+    <div class="skel-bar skel-line short"></div>
+  </div>
+  <span class="sr-only">no body selected — click one to see its verdict</span>
 {/if}
 
 <style>
   .verdict {
     /* wave U2 Task 1: docked in the right rail below MetricsPanel — normal flow in
-       a flex column, not a hand-computed offset off MetricsPanel's height. */
+       a flex column, not a hand-computed offset off MetricsPanel's height.
+       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
+       border (no shadow, no glass on docked rails per plan §1.6). */
     width: 100%;
     flex: none;
     box-sizing: border-box;
@@ -111,21 +123,25 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    background: var(--surface-panel);
+    border: 1px solid var(--hairline);
     border-left-width: var(--accent-border-w);
     border-radius: var(--radius);
-    backdrop-filter: blur(8px);
     font-size: var(--text-sm);
   }
+  /* left-border accent is a small element → the two-tier system's -core */
   .verdict.pass {
-    border-left-color: var(--plasma-green);
+    border-left-color: var(--status-ok-core);
   }
   .verdict.fail {
-    border-left-color: var(--crimson);
+    border-left-color: var(--status-err-core);
   }
   .verdict.pending {
-    border-left-color: var(--amber);
+    border-left-color: var(--status-warn-core);
+  }
+  .verdict.empty {
+    border-left-color: var(--hairline);
+    gap: var(--space-2);
   }
   .vhead {
     display: flex;
@@ -141,14 +157,23 @@
   .vclose {
     background: transparent;
     border: none;
+    border-radius: var(--radius-sm);
     color: var(--text-faint);
     cursor: pointer;
     font-size: var(--text-md);
     line-height: 1;
     padding: 2px 4px;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .vclose:hover {
+    /* +1 surface step on hover (plan §M1.4) */
     color: var(--starlight);
+    background: var(--n3);
+  }
+  .vclose:active {
+    background: var(--n4);
   }
   .vbadge {
     display: flex;
@@ -157,17 +182,18 @@
     flex-wrap: wrap;
   }
   .seal {
+    /* brass = identity/certification accent (plan §1), not a status hue — kept as-is */
     color: var(--brass);
     font-weight: 600;
     letter-spacing: 0.04em;
   }
   .refuted {
-    color: var(--crimson);
+    color: var(--status-err-core);
     font-weight: 600;
     letter-spacing: 0.04em;
   }
   .claimed {
-    color: var(--amber);
+    color: var(--status-warn-core);
     font-weight: 600;
   }
   .model {
@@ -197,12 +223,12 @@
     gap: 4px;
   }
   .crit li {
-    color: var(--crimson);
+    color: var(--status-err-core);
     font-size: var(--text-sm);
     line-height: 1.35;
   }
   .ok {
-    color: var(--plasma-green);
+    color: var(--status-ok-core);
     font-size: var(--text-xs);
   }
   .evidence {
@@ -224,12 +250,52 @@
     padding-top: var(--space-2);
   }
   .gate.g {
-    color: var(--plasma-green);
+    color: var(--status-ok-core);
   }
   .gate.r {
-    color: var(--crimson);
+    color: var(--status-err-core);
   }
   .strikes {
-    color: var(--crimson);
+    color: var(--status-err-core);
+  }
+
+  /* ── M1.5 empty-state skeleton shimmer ── reduced motion is handled globally
+     (tokens.css freezes all animation-duration to ~0, leaving a static bar). */
+  .skel-bar {
+    border-radius: var(--radius-sm);
+    background: linear-gradient(90deg, var(--n3) 25%, var(--n4) 50%, var(--n3) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  .skel-title {
+    width: 40%;
+    height: 12px;
+  }
+  .skel-line {
+    width: 90%;
+    height: 10px;
+  }
+  .skel-line.short {
+    width: 60%;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

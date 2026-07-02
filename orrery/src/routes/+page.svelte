@@ -218,6 +218,9 @@
     <div class="layer cosmos-layer {view === 'cosmos' ? 'in' : 'out-far'}">
       {#if view === 'cosmos'}
         <Cosmos onEnter={enterSystem} />
+        <!-- M2.3 grain (CSS part): static, full-bleed over the Cosmos canvas only — this
+             layer IS the canvas at this altitude, no rails to avoid. -->
+        <div class="grain" aria-hidden="true"></div>
       {/if}
     </div>
 
@@ -258,6 +261,13 @@
             <!-- the canvas always renders; it consults uiStore for the tier/mode -->
             <Observatory />
 
+            <!-- M2.3 grain (CSS part): static, full-bleed over the canvas only — bounded to
+                 this grid cell (position:relative on .g-center is the containing block), so it
+                 structurally cannot bleed onto the rails/bottom-dock in sibling grid areas. No
+                 explicit z-index: it paints above the canvas by DOM order alone and stays below
+                 .items-a11y (var(--z-a11y)) without adding another magic number. -->
+            <div class="grain" aria-hidden="true"></div>
+
             <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
                  Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
                  hidden until focused (skip-link style), so it never crowds the instrument. -->
@@ -287,10 +297,14 @@
             <!-- bottom dock: run controls (+ the transport scrubber in replay) -->
             <div class="g-bottom">
               {#if liveAndEmpty}
+                <!-- plan's empty-state pattern (§M3.2): dim glyph + one-line explanation +
+                     the action, named inline since the actual button (RunControlBar) is the
+                     very next element down — no separate CTA needed here. -->
                 <div class="empty-hint" role="status">
-                  <p class="eh-title">This loop hasn't run yet</p>
-                  <p class="eh-sub">
-                    Press <strong>✦ Start</strong> below to start it — events stream in here live.
+                  <span class="eh-glyph" aria-hidden="true">✦</span>
+                  <p class="eh-line">
+                    This loop hasn't run yet — press <strong>Start</strong> below to begin, events
+                    stream in here live.
                   </p>
                 </div>
               {/if}
@@ -461,6 +475,23 @@
     z-index: var(--z-layer-body);
   }
 
+  /* ══ M2.3 grain overlay — a static, tiny (128px) grayscale-noise SVG tile (feTurbulence,
+     generated once, inlined as a data-URI so it costs one paint and zero network/deps) laid
+     over the canvas regions only (Cosmos layer + the System dock's canvas cell). opacity is
+     intentionally tiny (0.03) and mix-blend-mode:overlay so it reads as "the scene has grain"
+     rather than "there's noise on my screen"; never animated (plan §1 "motion is honest" —
+     this is a finish, not an effect), so it needs no reduced-motion guard. */
+  .grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.03;
+    mix-blend-mode: overlay;
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'128'%20height%3D'128'%3E%20%3Cfilter%20id%3D'n'%3E%20%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'0.9'%20numOctaves%3D'2'%20stitchTiles%3D'stitch'%20result%3D't'%2F%3E%20%3CfeColorMatrix%20in%3D't'%20type%3D'matrix'%20values%3D'0%200%200%200%201%200%200%200%200%201%200%200%200%200%201%200%200%200%201%200'%2F%3E%20%3C%2Ffilter%3E%20%3Crect%20width%3D'100%25'%20height%3D'100%25'%20filter%3D'url(%23n)'%2F%3E%20%3C%2Fsvg%3E");
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .layer {
       transition: opacity 0.25s linear;
@@ -485,7 +516,7 @@
   }
   .crumb {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     padding: 4px 9px;
@@ -494,7 +525,8 @@
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
-    transition: color 0.18s, border-color 0.18s;
+    transition: color var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .crumb:hover:not(:disabled) {
     color: var(--starlight);
@@ -512,7 +544,7 @@
   }
   .sep {
     color: var(--text-faint);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .navactions {
     display: flex;
@@ -521,7 +553,7 @@
   }
   .nbtn {
     font-family: var(--font-grotesk);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
     padding: 6px 13px;
@@ -530,7 +562,8 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color 0.18s, transform 0.1s;
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      transform var(--dur-feedback) var(--ease-standard);
   }
   .nbtn:hover {
     border-color: var(--brass);
@@ -540,8 +573,10 @@
     color: var(--plasma-cyan);
     border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
   }
+  /* was 9px — below the scale's floor; nearest step is --text-2xs (10px, see plan
+     §M1.1 "round to nearest step") */
   .mode {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     padding: 2px 7px;
     border-radius: var(--radius-pill);
     background: var(--void-3);
@@ -600,11 +635,11 @@
   }
   .items-a11y button {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     background: var(--void-3);
     color: var(--starlight);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 4px 9px;
     cursor: pointer;
     text-align: left;
@@ -774,35 +809,42 @@
     }
   }
 
-  /* empty-state hint for a freshly-entered live loop (sits atop the control bar) */
+  /* empty-state hint for a freshly-entered live loop (sits atop the control bar) —
+     the plan's dim-glyph + one-line pattern (§M3.2), reused here for M1. */
   .empty-hint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
     text-align: center;
     pointer-events: none;
     max-width: 420px;
   }
-  .eh-title {
-    font-family: var(--font-grotesk);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--starlight);
-    margin: 0 0 4px;
+  .eh-glyph {
+    font-size: var(--text-xl);
+    line-height: 1;
+    color: var(--text-faint);
   }
-  .eh-sub {
+  .eh-line {
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    /* was 11.5px — an exact tie between --text-xs (11) and --text-sm (12); this file's
+       other mono meta text (crumbs/nbtn) sits on --text-xs, so this follows that lead */
+    font-size: var(--text-xs);
     color: var(--text-dim);
     margin: 0;
   }
-  .eh-sub strong {
+  .eh-line strong {
     color: var(--amber);
     font-weight: 600;
   }
 
-  /* ignite affordance — .pill (primitives.css) supplies the shared position/shape/blur/z-index */
+  /* ignite affordance — .pill (primitives.css) supplies the shared position/shape/blur/z-index.
+     Same chrome family as .navbar (hairline-family border, amber is the identity accent earning
+     its saturated tint here per plan §1 "chroma budget by area" — small chip, allowed to be loud). */
   .ignite-fab {
     left: 18px;
     font-family: var(--font-grotesk);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.06em;
     padding: 9px 16px;
@@ -810,11 +852,15 @@
     background: color-mix(in srgb, var(--amber) 9%, transparent);
     color: var(--amber);
     cursor: pointer;
-    transition: transform 0.12s, background 0.18s;
+    transition: transform var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard);
   }
   .ignite-fab:hover {
     transform: translateY(-1px);
     background: color-mix(in srgb, var(--amber) 16%, transparent);
+  }
+  .ignite-fab:active {
+    transform: translateY(0);
   }
 
 </style>

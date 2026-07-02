@@ -71,7 +71,7 @@
   }
   .glyph {
     flex: none;
-    font-size: 15px;
+    font-size: var(--text-lg);
     color: var(--crimson);
   }
   .bar.quota .glyph {
@@ -100,7 +100,7 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color var(--dur-fast) var(--ease-standard);
+    transition: border-color var(--dur-feedback) var(--ease-standard);
   }
   .jump:hover {
     border-color: var(--brass);
@@ -113,8 +113,10 @@
     border-radius: var(--radius-pill);
     width: 22px;
     height: 22px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
+    transition: color var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .dismiss:hover {
     color: var(--starlight);
@@ -132,7 +134,7 @@
     }
     .jump {
       padding: 4px 9px;
-      font-size: 10px;
+      font-size: var(--text-2xs);
     }
   }
 </style>

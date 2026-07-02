@@ -1071,24 +1071,24 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 18px 20px 16px;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5) var(--space-4);
   }
 
   .hdr {
     display: flex;
     align-items: baseline;
-    gap: 12px;
+    gap: var(--space-3);
     border-bottom: 1px solid var(--hairline);
-    padding-bottom: 12px;
+    padding-bottom: var(--space-3);
   }
   .title {
-    font-size: 13px;
+    font-size: var(--text-md);
     letter-spacing: 0.2em;
     color: var(--brass);
   }
   .sub {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.1em;
     color: var(--text-faint);
     text-transform: uppercase;
@@ -1102,23 +1102,31 @@
     width: 24px;
     height: 24px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--text-xs);
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .x:hover {
+    background: color-mix(in srgb, var(--n4) 70%, transparent);
     border-color: var(--crimson);
     color: var(--crimson);
+  }
+  .x:active {
+    background: color-mix(in srgb, var(--n4) 90%, transparent);
   }
 
   .idrow {
     display: flex;
-    gap: 10px;
+    gap: var(--space-3);
   }
   .taskfile {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     margin-top: -4px;
-    font-size: 10.5px;
+    font-size: var(--text-xs);
   }
   .taskfile-btn {
     background: transparent;
@@ -1126,11 +1134,18 @@
     color: var(--plasma-cyan);
     border-radius: var(--radius-pill);
     padding: 3px 10px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .taskfile-btn:hover {
+    background: color-mix(in srgb, var(--n4) 60%, transparent);
     border-color: var(--plasma-cyan);
+  }
+  .taskfile-btn:active {
+    background: color-mix(in srgb, var(--n4) 85%, transparent);
   }
   .taskfile-status {
     color: var(--text-meta);
@@ -1147,45 +1162,49 @@
   .field {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .field.grow {
     flex: 1;
   }
   .flab {
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.14em;
     color: var(--text-meta);
   }
   .inp {
-    background: var(--void-3);
+    background: var(--surface-void);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--starlight);
     font-family: var(--font-grotesk);
-    font-size: 12px;
+    font-size: var(--text-sm);
     padding: 7px 9px;
-    transition: border-color 0.18s;
+    transition: border-color var(--dur-feedback) var(--ease-standard);
     min-width: 0;
   }
   .inp.mono {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
+  }
+  .inp:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--brass) 30%, var(--hairline));
   }
   .inp:focus {
     border-color: var(--brass);
   }
   .inp:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .seclab {
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     color: var(--brass);
     text-transform: uppercase;
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
   }
   .seclab em {
     color: var(--text-faint);
@@ -1196,23 +1215,27 @@
   /* blueprint chips */
   .bp-row {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   .bp {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 8px 14px;
     background: var(--void-3);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-pill);
     color: var(--text-dim);
     cursor: pointer;
-    transition: all 0.18s;
+    transition: all var(--dur-feedback) var(--ease-standard);
   }
   .bp:hover {
+    background: color-mix(in srgb, var(--n4) 55%, var(--void-3));
     border-color: color-mix(in srgb, var(--brass) 40%, transparent);
+  }
+  .bp:active {
+    background: color-mix(in srgb, var(--n4) 80%, var(--void-3));
   }
   .bp.on {
     border-color: var(--brass);
@@ -1220,29 +1243,29 @@
     background: color-mix(in srgb, var(--brass) 12%, var(--void-3));
   }
   .bp-glyph {
-    font-size: 15px;
+    font-size: var(--text-lg);
     color: var(--brass);
   }
   .bp-name {
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
   }
   .bp-tag {
-    margin-top: 6px;
-    font-size: 10px;
+    margin-top: var(--space-2);
+    font-size: var(--text-2xs);
     color: var(--text-faint);
   }
 
   .cols {
     display: grid;
     grid-template-columns: 1.05fr 0.95fr;
-    gap: 12px;
+    gap: var(--space-3);
   }
   .panel {
-    background: rgba(7, 9, 18, 0.5);
+    background: var(--surface-raised);
     border: 1px solid var(--hairline);
     border-radius: var(--radius);
-    padding: 12px 14px;
+    padding: var(--space-3) var(--space-4);
   }
 
   /* dials */
@@ -1255,10 +1278,10 @@
   .dlabels {
     display: flex;
     justify-content: space-between;
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.1em;
     color: var(--text-meta);
-    margin-bottom: 4px;
+    margin-bottom: var(--space-1);
   }
   .dsub {
     font-size: var(--text-2xs);
@@ -1271,6 +1294,8 @@
     appearance: none;
     height: 3px;
     border-radius: 2px;
+    cursor: pointer;
+    transition: filter var(--dur-feedback) var(--ease-standard);
     /* the filled portion ends at the actual value (--fill); past it the track is
        an unlit hairline, so the bright span literally equals the setting. */
     background: linear-gradient(
@@ -1281,11 +1306,18 @@
       var(--surface-3) 100%
     );
   }
+  .dial input[type='range']:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+  .dial input[type='range']:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
   /* thumb appearance + focus ring now come from the shared .slider.thumb-brass
      (primitives.css) — see the `class="slider thumb-brass"` on each dial <input>. */
   .dhint {
     margin-top: 5px;
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     color: var(--text-meta);
     letter-spacing: 0.02em;
   }
@@ -1308,7 +1340,7 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 3px 14px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
   }
   .pstats li {
     display: flex;
@@ -1332,12 +1364,19 @@
     color: var(--plasma-cyan);
     border-radius: var(--radius-pill);
     padding: 5px 12px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
     letter-spacing: 0.06em;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .night-btn:hover {
+    background: color-mix(in srgb, var(--n4) 55%, transparent);
     border-color: var(--plasma-cyan);
+  }
+  .night-btn:active {
+    background: color-mix(in srgb, var(--n4) 80%, transparent);
   }
   .night {
     margin-top: 8px;
@@ -1347,7 +1386,7 @@
     height: 50px;
   }
   .night-cap {
-    font-size: 9.5px;
+    font-size: var(--text-2xs);
     color: var(--text-dim);
     margin-top: 2px;
   }
@@ -1359,10 +1398,10 @@
   .dest-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: var(--space-3);
   }
   .dlab {
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.1em;
     color: var(--text-meta);
     margin-bottom: 6px;
@@ -1376,7 +1415,7 @@
   }
   .ac-star {
     color: var(--brass);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .ac-row .inp {
     flex: 1;
@@ -1390,7 +1429,7 @@
   }
   .arrow {
     color: var(--text-faint);
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .probe-btn {
     flex: none;
@@ -1399,18 +1438,26 @@
     color: var(--text-dim);
     border-radius: var(--radius-pill);
     padding: 4px 9px;
-    font-size: 9.5px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     cursor: pointer;
     white-space: nowrap;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .probe-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--n4) 55%, transparent);
     border-color: var(--plasma-cyan);
     color: var(--plasma-cyan);
   }
+  .probe-btn:active:not(:disabled) {
+    background: color-mix(in srgb, var(--n4) 80%, transparent);
+  }
   .probe-btn:disabled {
     opacity: 0.4;
-    cursor: default;
+    cursor: not-allowed;
   }
   .probe-line {
     display: flex;
@@ -1418,7 +1465,7 @@
     gap: 8px;
     margin: -2px 0 6px;
     padding-left: 2px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-meta);
   }
   .probe-line.ok {
@@ -1435,18 +1482,22 @@
     border: none;
     color: var(--plasma-cyan);
     cursor: pointer;
-    font-size: 9.5px;
+    font-size: var(--text-2xs);
     text-decoration: underline;
     padding: 0;
+    transition: color var(--dur-feedback) var(--ease-standard);
+  }
+  .probe-toggle:hover {
+    color: var(--starlight);
   }
   .probe-tail {
     margin: -2px 0 8px;
     padding: 8px 10px;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--surface-void);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--text-dim);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     line-height: 1.4;
     max-height: 160px;
     overflow-y: auto;
@@ -1458,25 +1509,38 @@
     border: none;
     color: var(--text-faint);
     cursor: pointer;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .mini-x:hover {
+    background: color-mix(in srgb, var(--n4) 55%, transparent);
     color: var(--crimson);
   }
   .add {
     background: transparent;
     border: 1px dashed var(--hairline);
     color: var(--text-dim);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 5px 10px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
     margin-top: 2px;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .add:hover {
+    background: color-mix(in srgb, var(--n4) 45%, transparent);
     border-color: var(--brass);
     color: var(--brass);
+  }
+  .add:active {
+    background: color-mix(in srgb, var(--n4) 70%, transparent);
   }
 
   /* drawers */
@@ -1494,13 +1558,17 @@
     color: var(--text-dim);
     border-radius: var(--radius-pill);
     padding: 5px 12px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
     letter-spacing: 0.04em;
-    transition: all 0.16s;
+    transition: all var(--dur-feedback) var(--ease-standard);
   }
   .dtab:hover {
+    background: color-mix(in srgb, var(--n4) 55%, var(--void-3));
     border-color: color-mix(in srgb, var(--brass) 40%, transparent);
+  }
+  .dtab:active {
+    background: color-mix(in srgb, var(--n4) 80%, var(--void-3));
   }
   .dtab.on {
     border-color: var(--brass);
@@ -1515,24 +1583,24 @@
   }
   .drawer-body {
     margin-top: 10px;
-    padding: 12px 14px;
-    background: rgba(7, 9, 18, 0.6);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-raised);
     border: 1px solid var(--hairline);
     border-radius: var(--radius);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
   }
   .row {
     display: flex;
-    gap: 14px;
+    gap: var(--space-3);
     flex-wrap: wrap;
     align-items: flex-end;
   }
   .kv {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .kv.wide {
     width: 100%;
@@ -1543,24 +1611,29 @@
     gap: 7px;
   }
   .kv span {
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     color: var(--text-meta);
     letter-spacing: 0.08em;
   }
   .kv select {
-    background: var(--void-3);
+    background: var(--surface-void);
     border: 1px solid var(--hairline);
     color: var(--starlight);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 6px 8px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: border-color var(--dur-feedback) var(--ease-standard);
+  }
+  .kv select:hover {
+    border-color: color-mix(in srgb, var(--brass) 30%, var(--hairline));
   }
   .kv input[type='number'] {
     width: 84px;
   }
   .def {
-    font-size: 9.5px;
+    font-size: var(--text-2xs);
     color: var(--text-faint);
   }
   .reset {
@@ -1570,21 +1643,28 @@
     color: var(--amber);
     border-radius: var(--radius-pill);
     padding: 4px 11px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
+    transition: background var(--dur-feedback) var(--ease-standard);
+  }
+  .reset:hover {
+    background: color-mix(in srgb, var(--amber) 14%, transparent);
+  }
+  .reset:active {
+    background: color-mix(in srgb, var(--amber) 24%, transparent);
   }
 
   /* footer */
   .ftr {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     border-top: 1px solid var(--hairline);
-    padding-top: 12px;
+    padding-top: var(--space-3);
   }
   .valid {
     flex: 1;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .verr {
     color: var(--crimson);
@@ -1605,11 +1685,18 @@
     color: var(--text-dim);
     border-radius: var(--radius-pill);
     padding: 8px 16px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     cursor: pointer;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .ghost:hover {
+    background: color-mix(in srgb, var(--n4) 55%, transparent);
     color: var(--starlight);
+  }
+  .ghost:active {
+    background: color-mix(in srgb, var(--n4) 80%, transparent);
   }
   .ignite {
     background: color-mix(in srgb, var(--amber) 14%, transparent);
@@ -1617,19 +1704,22 @@
     color: var(--amber);
     border-radius: var(--radius-pill);
     padding: 8px 20px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.08em;
     cursor: pointer;
-    transition: all 0.16s;
+    transition: all var(--dur-feedback) var(--ease-standard);
   }
   .ignite:hover:not(:disabled) {
     background: color-mix(in srgb, var(--amber) 24%, transparent);
     transform: translateY(-1px);
   }
+  .ignite:active:not(:disabled) {
+    transform: translateY(0);
+  }
   .ignite:disabled {
     opacity: 0.4;
-    cursor: default;
+    cursor: not-allowed;
   }
 
   @media (max-width: 720px) {

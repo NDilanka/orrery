@@ -275,16 +275,22 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color var(--dur-mid) var(--ease-standard),
-      background var(--dur-mid) var(--ease-standard),
+    /* hover is a +1 surface step (M1.4) — the feedback timing (--dur-feedback) is on the
+       surface-changing properties; transform keeps its own slightly slower feel. */
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard),
       transform var(--dur-fast) var(--ease-standard);
   }
   .btn:hover:not(:disabled) {
     border-color: var(--brass);
+    background: color-mix(in srgb, var(--void-3) 70%, var(--n4) 30%);
     transform: translateY(-1px);
   }
   .btn:active:not(:disabled) { transform: translateY(0); }
-  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* button family (plan §1 + M1.2): "go forward" actions (Start/Restart/Resume) are the
+     primary family — solid, tinted fill. Brake/Cancel are secondary — ghost, hairline only,
+     no fill (already were). Stop-now is destructive — see .btn.stopnow below. */
   .btn.ignite {
     color: var(--amber);
     border-color: color-mix(in srgb, var(--amber) 45%, transparent);
@@ -297,6 +303,8 @@
   .btn.resume {
     color: var(--plasma-green);
     border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
+    /* primary-solid parity with .ignite — Resume is a "go forward" action too. */
+    background: color-mix(in srgb, var(--plasma-green) 8%, transparent);
   }
   /* "Restart fresh" alongside a "Resume from checkpoint" reads as the secondary
      choice — same ignite/amber styling (it IS the same start action), just
@@ -308,16 +316,18 @@
     opacity: 1;
   }
   .btn.cancel { color: var(--text-dim); }
-  /* the loudest, most urgent action — danger styling (crimson), visually distinct
-     from the ember brake buttons so it never gets mistaken for a graceful brake. */
+  /* the loudest, most urgent action — destructive styling, visually distinct from the
+     ember brake buttons so it never gets mistaken for a graceful brake. Uses the M0
+     two-tier status-err token (core = small/bright text+border) instead of the raw
+     --crimson literal — the plan's explicit mapping for destructive actions. */
   .btn.stopnow {
-    color: var(--crimson);
-    border-color: color-mix(in srgb, var(--crimson) 55%, transparent);
-    background: color-mix(in srgb, var(--crimson) 10%, transparent);
+    color: var(--status-err-core);
+    border-color: color-mix(in srgb, var(--status-err-core) 55%, transparent);
+    background: color-mix(in srgb, var(--status-err-core) 10%, transparent);
   }
   .btn.stopnow:hover:not(:disabled) {
-    border-color: var(--crimson);
-    background: color-mix(in srgb, var(--crimson) 20%, transparent);
+    border-color: var(--status-err-core);
+    background: color-mix(in srgb, var(--status-err-core) 20%, transparent);
   }
   /* a start/resume in flight: keep the button lit (not greyed) and gently pulsing so the
      click clearly registered while the engine cold-starts. Uses the shared `breathe`
@@ -353,7 +363,7 @@
     animation: none;
   }
   .pending.ember { color: var(--ember); opacity: 0.8; }
-  .pending.crashed { color: var(--crimson); }
+  .pending.crashed { color: var(--status-err-core); }
   .pending.failed {
     color: var(--ember);
     max-width: 320px;
@@ -361,10 +371,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* stop:now in flight — crimson glow (not the generic amber), so the danger button never
-     pulses the wrong hue while "stopping…" */
+  /* stop:now in flight — the destructive glow (not the generic amber), so the danger button
+     never pulses the wrong hue while "stopping…" */
   .btn.stopnow.working {
-    --glow: var(--crimson);
+    --glow: var(--status-err-core);
     animation: breathe 1.2s ease-in-out infinite;
   }
   /* reduced-motion: no pulsing (urgency reads from text, not blink) */

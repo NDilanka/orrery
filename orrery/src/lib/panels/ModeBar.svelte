@@ -63,9 +63,10 @@
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
-    transition: color var(--dur-fast) var(--ease-standard),
-      background var(--dur-fast) var(--ease-standard),
-      border-color var(--dur-fast) var(--ease-standard);
+    /* hover-driven state change → --dur-feedback (120ms), the smallest-change token */
+    transition: color var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .mbtn .glyph {
     font-size: var(--text-sm);
@@ -85,8 +86,8 @@
     color: var(--plasma-cyan);
   }
   .mbtn:disabled {
-    opacity: 0.32;
-    cursor: default;
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   /* tablet/narrow: collapse to glyphs — the top bar's own layout (+page.svelte
      .g-topbar) reserves room so this never runs under the floating navbar pill. */

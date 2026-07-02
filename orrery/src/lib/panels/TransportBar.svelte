@@ -209,15 +209,30 @@
   .pin:hover::after {
     transform: translateX(-50%) scaleY(1.4);
   }
-  .pin.verdict-pass::after { background: var(--plasma-green); }
-  .pin.verdict-fail::after { background: var(--crimson); }
-  .pin.rollback::after { background: var(--plasma-cyan); }
+  /* per-kind marker mapping onto the M0 two-tier status tokens (§M1.4), semantically:
+       verdict-pass → status-ok    (a certified pass)
+       verdict-fail → status-err   (a refuted / false-green verdict — judgment call: the
+                                    plan named "verdict=ok" for the pass case; the fail
+                                    case reads as an error, not idle/warn)
+       rollback     → status-run  (cyan hue 220 — same family as plasma-cyan/rewind)
+       quota        → --frost     (kept literal — the plan names this exact mapping;
+                                    frost isn't one of the five status hues)
+       handoff      → status-warn (a human-handoff moment reads as "needs attention", not
+                                    a failure — matches the app's amber-toned NEEDS YOU)
+       pr           → --brass     (kept literal — the plan names this exact mapping)
+       stop         → status-idle (a quiet, at-rest marker — not the warm "banked" ember)
+  */
+  .pin.verdict-pass::after { background: var(--status-ok-core); }
+  .pin.verdict-fail::after { background: var(--status-err-core); }
+  .pin.rollback::after { background: var(--status-run-core); }
   .pin.quota::after { background: var(--frost); }
-  .pin.handoff::after { background: var(--crimson); }
+  .pin.handoff::after { background: var(--status-warn-core); }
   .pin.pr::after { background: var(--brass); }
-  .pin.stop::after { background: var(--ember); }
+  .pin.stop::after { background: var(--status-idle-core); }
   .pos {
-    font-size: 10.5px;
+    /* 10.5px was one of the audit's near-duplicate micro-sizes (#1); collapsed onto
+       --text-2xs alongside ShareButton's matching .urlfield readout. */
+    font-size: var(--text-2xs);
     color: var(--text-meta);
     min-width: 48px;
     text-align: right;

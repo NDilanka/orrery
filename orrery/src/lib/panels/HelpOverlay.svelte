@@ -230,6 +230,8 @@
     cursor: pointer;
     font-size: var(--text-xs);
     align-self: center;
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .x:hover {
     border-color: var(--crimson);
@@ -245,7 +247,9 @@
   }
   .h {
     margin: 0;
-    font-size: var(--text-2xs);
+    /* unified header pattern (M1.2): 11px caps-spaced --text-xs label, matching
+       DecisionSheet's meta row and ShareButton's popover title. */
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     color: var(--brass);
     opacity: 0.85;
