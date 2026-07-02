@@ -37,6 +37,7 @@
   import HelpOverlay from '$lib/panels/HelpOverlay.svelte';
   import ShareButton from '$lib/panels/ShareButton.svelte';
   import AlertBanner from '$lib/panels/AlertBanner.svelte';
+  import CommandPalette from '$lib/panels/CommandPalette.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
@@ -51,6 +52,7 @@
   let activeLoop = $state<string | null>(null);
   let bodyKey = $state<string | null>(null);
   let showHelp = $state(false); // the keyboard-shortcut legend overlay
+  let showPalette = $state(false); // M3.1 command palette (Ctrl/Cmd+K)
   let mode = $state<'live' | 'replay'>('replay');
   // The kind of the transport that ACTUALLY mounted for the active System (single source of
   // truth for the badge, tracked by sessionStore) — vs `mode`, which is only the environment's
@@ -115,13 +117,23 @@
     )
       return;
     if (cosmosStore.console) return; // the Tuning Console owns its own keys while open
+    // Ctrl/Cmd+K — the command palette. Simplest correct behavior (M3.1): ignored while
+    // another modal (Help) or the palette itself is already open, rather than trying to
+    // stack/z-fight above them.
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      if (showHelp || showPalette) return;
+      showPalette = true;
+      e.preventDefault();
+      return;
+    }
     if (e.key === '?') {
       showHelp = !showHelp;
       e.preventDefault();
       return;
     }
     if (e.key === 'Escape') {
-      if (showHelp) showHelp = false;
+      if (showPalette) showPalette = false;
+      else if (showHelp) showHelp = false;
       else if (view === 'body') backToSystem();
       else return;
       e.preventDefault();
@@ -378,6 +390,14 @@
         {#if view === 'cosmos' && !hasWsServer()}
           <ShareButton />
         {/if}
+        <!-- M3.1: command-palette affordance — a discoverable hint chip alongside the shortcut
+             legend, not just a hidden keybinding. -->
+        <button
+          class="kbdhint mono"
+          title="Command palette"
+          aria-label="Open command palette"
+          onclick={() => (showPalette = true)}>⌘K</button
+        >
         <span
           class="mode mono"
           class:islive={view !== 'cosmos' && isLiveTransport}
@@ -402,6 +422,22 @@
     <!-- keyboard-shortcut legend (toggled with ?) -->
     {#if showHelp}
       <HelpOverlay onClose={() => (showHelp = false)} />
+    {/if}
+
+    <!-- M3.1: the command palette (Ctrl/Cmd+K) — pure dispatch onto the same nav closures
+         and stores every other panel already uses; +page.svelte owns only whether it's
+         mounted (mirrors HelpOverlay). -->
+    {#if showPalette}
+      <CommandPalette
+        onClose={() => (showPalette = false)}
+        {view}
+        {activeLoop}
+        onEnterSystem={(id) => void enterSystem(id)}
+        onEnterBody={(key) => enterBody(key)}
+        onBackToSystem={backToSystem}
+        onBackToCosmos={backToCosmos}
+        onOpenHelp={() => (showHelp = true)}
+      />
     {/if}
 
     <!-- A5: the Tuning Console (create / edit a loop) -->
@@ -572,6 +608,24 @@
   .nbtn.body {
     color: var(--plasma-cyan);
     border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
+  }
+  /* M3.1 hint chip — same boxed-mono chip vocabulary as HelpOverlay's .kbd, sized for the
+     navbar pill. */
+  .kbdhint {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    background: var(--void-3);
+    border: 1px solid var(--hairline);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
+  }
+  .kbdhint:hover {
+    border-color: var(--plasma-cyan);
+    color: var(--plasma-cyan);
   }
   /* was 9px — below the scale's floor; nearest step is --text-2xs (10px, see plan
      §M1.1 "round to nearest step") */

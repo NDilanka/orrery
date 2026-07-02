@@ -345,3 +345,94 @@ to verify the never-hue-alone invariant).
   attention keyframe; one color source feeding CSS + Pixi + uPlot;
   svelte-check 0 errors; vitest + cargo + golden all green and untouched
   in count.
+
+---
+
+## 5. Phase M4 — Monochrome retheme + hierarchy system
+*(added 2026-07-03 after owner interview; supersedes §1 principle 3)*
+
+**Owner decisions** (interview, 2026-07-03): near-monochrome "Linear
+vibe"; **no signature hue** — brass and cyan retire as accents; dense data
+areas fully monochrome; canvas cinematic monochrome; **the only chromatic
+pixels in the app are alerts**: red (failed/crashed) and amber
+(needs-you / handoff / quota). Success = pure monochrome (bright white +
+seal glyph). Interaction = white/gray only (white double-ring focus,
+breathing white live dot). The never-hue-alone invariant already holds
+(shape+motion coding), so removing hue from calm states is safe.
+
+**Owner diagnosis**: the UI lacks consistency and precise hierarchical
+arrangement. Analysis: (1) no altitude between panels — HUD reads equal
+to QAConsole; (2) three competing top clusters (StaleBadge / ModeBar /
+breadcrumb) with no shared rail; (3) flat typography — everything
+10-12px mono caps, headers = content; (4) no shared component anatomy —
+5 button species, 3 header styles; (5) ragged alignment — no single page
+gutter, bottom is three stacked unrelated objects; (6) duplicated info at
+equal weight (spend in HUD + canvas caption). In monochrome, hierarchy is
+carried entirely by scale/weight/lightness/arrangement — these are one
+design problem.
+
+### M4.1 Token retheme (foundation, sequential)
+- Four text-emphasis tiers: `--em-hi` (oklch .92 — primary values),
+  `--em-mid` (.70 — body), `--em-low` (.50 — labels), `--em-faint`
+  (.38 — meta/decorative). Semantic text tokens repoint onto them.
+- Status remap keeping token STRUCTURE (consumers unchanged):
+  `--status-run-*`, `--status-ok-*`, `--status-idle-*` → grayscale tiers
+  (run = em-hi + motion; ok = em-hi; idle = em-low). Only
+  `--status-err-*` (red) and `--status-warn-*` (amber) stay chromatic.
+- Alias repoint: `--brass`→ light neutral (identity = brightness, not
+  hue); `--plasma-cyan`/`--plasma-green`/`--auditor-white` → em tiers;
+  `--frost`/`--cache-teal` → cool/mid grays; `--horizon-rose` → red
+  family; `--ghost-brass` → white @ 12%; model spectral colors → three
+  grayscale steps. `--indigo-night` wash → neutral dark.
+- Focus ring → white double-ring. theme.ts fallback table + contrast
+  test updated to match.
+
+### M4.2 Component anatomy (primitives.css)
+- `.panel` + `.panel-hd`: THE card — --space-4 padding, hairline,
+  --radius; header = --text-xs caps 600 ls .08em at --em-low + optional
+  right `.panel-meta` (mono, --em-faint); internal gap --space-3.
+- `.btn` system: `-primary` (solid light: bg em-hi / text n1 — the
+  monochrome inversion is the strongest CTA), `-ghost` (hairline),
+  `-danger` (red ghost); sizes `-sm/-md/-lg`; icon-square variant.
+- `.seg`: segmented control (ModeBar, replay speed, blueprint picker).
+
+### M4.3 Shell hierarchy (+page.svelte)
+- **Full-bleed canvas** (owner request): Observatory moves out of
+  `.g-center` onto a stage-level absolute layer behind the grid; panels
+  float over the scene. Observatory gains a `safeInsets` prop
+  ({top,right,bottom,left}px of occluded chrome) so the system centers
+  and fit-scales in the unobstructed region ( = old .g-center box).
+  Vignette + grain become viewport-sized (grain div moves to stage
+  level, below chrome).
+- **One top bar**: single rail, one baseline — left: breadcrumb ·
+  center: ModeBar · right: live/replay + staleness + share + ⌘K. All
+  ghost pills of one height.
+- **One bottom dock**: RunControlBar + TransportBar merge into a single
+  full-width bar on the page gutter (scrubber fills, controls grouped
+  right); cost strip shares the same gutter.
+- `--page-inset`: one gutter aligning rails, top bar, dock, strip.
+
+### M4.4 Altitude tiers
+- **Tier A (primary)**: HUD status block — the only elevated rail
+  surface (--n3); status word / current story / spend at em-hi with
+  real scale jumps (--text-lg → --text-display).
+- **Tier B (working)**: log/metrics/verdict/QA — standard `.panel`,
+  em-mid content, em-low headers.
+- **Tier C (meta)**: top bar, cost-strip axis, staleness — --text-2xs
+  em-faint, borderless where possible.
+- Kill duplicate emphasis: canvas spend caption drops to em-faint (HUD
+  is canonical).
+
+### M4.5 Component sweeps (parallel agents)
+Per-file mapping onto `.panel`/`.btn`/`.seg` + monochrome: LogPanel
+chips → text-only kinds (only err/warn kinds keep color); HUD;
+right rail; RunControlBar/TransportBar as dock segments; CostQuotaStrip
+curves → white/gray (quota window amber); Observatory monochrome
+(planetColor switch, spectral, motes → gray, night wash → neutral,
+rings gray, trail white — alert bodies red/amber); Cosmos same;
+TuningConsole/CommandPalette/overlays sweep.
+
+**Acceptance**: a desktop screenshot in which the only chromatic pixels
+are genuine alerts; squint test — the eye lands on HUD status → star →
+controls, in that order; all prior invariants (reduced motion,
+greyscale-separable silhouettes, protocol untouched) hold.
