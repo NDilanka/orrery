@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from loop import gitutil
+from loop.heartbeat import Heartbeat
 from loop.bmad import phases, pr, recovery
 from loop.bmad.decider import retro_decider, review_decider
 from loop.bmad.sprint import (
@@ -72,6 +73,7 @@ from loop.logio import (
     clear_stop_flag,
     read_stop_flag,
     write_checkpoint,
+    write_run_output,
 )
 from loop.quota import survive
 from loop.runners.base import AgentResult, AgentRunner
@@ -90,11 +92,15 @@ DEFAULT_GATE_STAGES: list[dict[str, Any]] = [
     {"name": "lint", "command": "bun run lint"},
     {
         "name": "test",
-        # brain2's `bun run test` is vitest; its summary line is "Tests  N passed / N failed".
-        # Anchor on the "Tests" label so we read the test count, NOT the "Test Files" count
-        # (bmad-loop.ps1 ~287-289 used the same `Tests\s+(\d+)\s+passed` anchor).
+        # brain2's `bun run test` is vitest. Anchor on the "Tests" label so we read the test
+        # count, NOT the "Test Files" count. The moment ANY test fails, vitest REORDERS the
+        # summary to "Tests  <f> failed | <p> passed (<n>)" — the passed count is then no
+        # longer adjacent to "Tests". `(?:\d+\s+\w+\s+\|\s+)*` skips any leading "<n> failed |"
+        # / "<n> skipped |" segments before capturing the passed count; without it a single
+        # failing test made the parser read 0 passed and trip a FALSE "N->0 regression" halt
+        # (bmad-loop.ps1 ~287-289's plain `Tests\s+(\d+)\s+passed` had the same latent bug).
         "command": "bun run test",
-        "pass_pattern": r"Tests\s+(\d+)\s+passed",
+        "pass_pattern": r"Tests\s+(?:\d+\s+\w+\s+\|\s+)*(\d+)\s+passed",
         "fail_pattern": r"Tests\s+(\d+)\s+failed",
     },
 ]
@@ -173,7 +179,7 @@ class BmadConfig:
     )
     # Flaky-test tolerance for the external gate. A RED gate whose only failing stage is `test`,
     # with codegen+lint green and a SMALL nonzero fail count, is the signature of a flaky /
-    # timing-sensitive test (it passes on a clean re-run) â€” NOT a real regression. `_run_gate`
+    # timing-sensitive test (it passes on a clean re-run) — NOT a real regression. `_run_gate`
     # re-runs such a gate up to `gate_flaky_retries` times (first green wins); a deterministic
     # failure (codegen/lint red, or fail > gate_flaky_max_fail) is reported at once, no retry.
     # This stops one flaky test from turning an otherwise-green run into a hard terminal stop.
@@ -359,10 +365,16 @@ class ResilientRunner(AgentRunner):
         emit: Callable[[dict[str, Any]], None],
         quota_cfg: dict[str, Any] | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        activity_path: Any = None,
     ):
         self._base = base_runner
         self._emit = emit
         self._sleep = sleep
+        # When set, a liveness Heartbeat overwrites this file (activity.json) every few seconds
+        # for the DURATION of each agent call, so a watcher can tell a long silent phase (a 30-min
+        # dev-story is one continuous claude call that emits no log line until its gate) from a
+        # hung loop. None disables it (the mock-runner tests don't need it).
+        self._activity_path = activity_path
         cfg = quota_cfg or {}
         self._default_wait_min = int(cfg.get("default_wait_min", 30))
         self._max_waits = int(cfg.get("max_waits", 30))
@@ -436,10 +448,42 @@ class ResilientRunner(AgentRunner):
             )
         )
 
+    def _write_raw_capture(self, res: AgentResult) -> None:
+        """Persist this call's raw stdout to ``.loop/run-<phase>[-<story>].out``.
+
+        A debugging artifact for postmortem on a failed/halted phase — previously ``res.raw`` was
+        thrown away entirely. Named per phase/story (NOT per call) so it is overwritten on every
+        retry/attempt within that phase+story — the LATEST raw output is what matters, and this
+        keeps the file count bounded across a whole multi-story run. Lives alongside
+        ``activity.json`` (same state dir); a no-op when no activity dir is configured (the
+        mock-runner tests that don't set ``activity_path``) or ``raw`` is empty.
+        """
+        if self._activity_path is None:
+            return
+        raw = getattr(res, "raw", None)
+        if not raw:
+            return
+        name = f"run-{self._phase}-{self._story}.out" if self._story else f"run-{self._phase}.out"
+        write_run_output(Path(self._activity_path).parent / name, raw)
+
     def run(self, **kwargs) -> AgentResult:  # type: ignore[override]
         label = "bmad-phase"
         while True:
-            res = self._base.run(**kwargs)
+            # Beat activity.json for the lifetime of this (blocking) agent call. The phase/story
+            # context is whatever set_context tagged; `cwd` is the repo whose dirty-file count is
+            # the "actually producing work" signal. The heartbeat is scoped to the call (not the
+            # quota-wait below — that surfaces via quota events instead).
+            if self._activity_path is not None:
+                with Heartbeat(
+                    self._activity_path,
+                    phase=self._phase,
+                    story=self._story,
+                    repo=kwargs.get("cwd"),
+                ):
+                    res = self._base.run(**kwargs)
+            else:
+                res = self._base.run(**kwargs)
+            self._write_raw_capture(res)
             if not getattr(res, "quota_limited", False):
                 self._record_usage(res, kwargs.get("model", ""))
                 return res
@@ -761,7 +805,7 @@ def _run_gate(
     through (no shell ``cd`` wrapper). Callable hooks (tests) ignore ``cwd``.
 
     A red gate whose shape matches :func:`_is_flaky_shape` (a small flaky-looking ``test`` failure
-    with codegen+lint green) is RE-RUN up to ``config.gate_flaky_retries`` times â€” the first green
+    with codegen+lint green) is RE-RUN up to ``config.gate_flaky_retries`` times — the first green
     result wins. This stops a single flaky/timing-sensitive test from turning an otherwise-green
     run into a hard terminal stop (the recurring failure mode), while a real regression
     (deterministic, or many failures) still fails immediately. Re-running is idempotent (codegen
@@ -807,6 +851,7 @@ def _run_inner(
             "max_waits": config.max_quota_waits,
             "cum": cum,
         },
+        activity_path=state / "activity.json",
     )
 
     def gate_fn() -> dict[str, Any]:
@@ -1262,20 +1307,43 @@ def _process_story(
         return 0, cum
 
     # --- PHASE: merge -----------------------------------------------------------
+    # Discard any uncommitted churn before switching branches. Every phase commits its real work
+    # via _commit_if_dirty, so the only thing that can be dirty here is THROWAWAY gate output —
+    # most often a tracked file the baseline gate's `codegen` re-emits (brain2's
+    # convex/_generated/api.d.ts) or line-ending normalization. This bites hardest on the
+    # resume-tail ("done") path, where the baseline gate at story entry runs but NO later phase
+    # commits, so the churn survives to here. Left dirty it makes the branch switch fail ("your
+    # local changes would be overwritten by checkout") — both the _checkout below AND the one
+    # `gh pr merge --delete-branch` performs internally — aborting the merge mid-flight.
+    gitutil.discard_worktree(repo)
     _checkout(repo, config.merge_base)
     try:
         pr.merge_pr(branch=branch, base=config.merge_base, cwd=str(repo))
     except pr.PrError as e:
-        emit(bmad_stop_event(
-            False,
-            f"auto-merge for {target.key} failed: {e}. Resolve it (conflicts / required review / "
-            f"mergeability), then resume: {resume_cmd}",
-            cum,
-        ))
-        print(f"\n[HALT] auto-merge for {target.key} failed: {e}")
-        if resume_cmd:
-            print(f"       resume: {resume_cmd}")
-        return 1, cum
+        # `gh pr merge --squash --delete-branch` exits non-zero when its LOCAL post-merge cleanup
+        # (checkout base / delete the branch) fails EVEN IF the squash merge already landed on the
+        # remote. Don't conflate that benign local failure with a real merge failure: confirm the
+        # PR's actual state first. If it's already MERGED, fall through to the normal post-merge
+        # path (which pulls merge_base, so the next story sees this one as merged) instead of
+        # halting — otherwise the loop re-opens + re-merges the SAME story on every resume (this is
+        # exactly what merged story 5-1 twice and would have kept opening duplicate PRs).
+        if pr.pr_state(branch=branch, cwd=str(repo)) != "MERGED":
+            emit(bmad_stop_event(
+                False,
+                f"auto-merge for {target.key} failed: {e}. Resolve it (conflicts / required review "
+                f"/ mergeability), then resume: {resume_cmd}",
+                cum,
+            ))
+            print(f"\n[HALT] auto-merge for {target.key} failed: {e}")
+            if resume_cmd:
+                print(f"       resume: {resume_cmd}")
+            return 1, cum
+        # Squash merge already on the remote; only gh's local cleanup tripped. Get back onto
+        # merge_base (the failed cleanup may have left us on the now-merged feature branch) so the
+        # pull below updates the RIGHT branch, then continue as a normal successful merge.
+        _checkout(repo, config.merge_base)
+        print(f"  {target.key}: squash merge already landed on the remote; gh's local cleanup hit "
+              f"a benign error and was skipped ({e}).")
     gitutil._git(["pull", "origin", config.merge_base], repo)
     # Verify the merge actually landed (bmad-loop.ps1 ~857): `gh pr merge` can exit 0 while the
     # PR is only QUEUED behind branch protection. Branching the next story off an un-merged base

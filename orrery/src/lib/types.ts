@@ -29,12 +29,13 @@ export type ItemStatus =
   | 'blocked'
   | 'failed';
 
-// The four "not-running" rest palettes (+ null when running). §Design four states.
+// The five "not-running" rest palettes (+ null when running). §Design four states (+failed-dark).
 export type RestState =
   | 'certified-done'
   | 'stopped-ember'
   | 'quota-frost'
   | 'handoff-beacon'
+  | 'failed-dark'
   | null;
 
 export type Model = 'haiku' | 'sonnet' | 'opus';
@@ -222,6 +223,7 @@ export type EventName =
   | 'phase-timeout'
   // core v3
   | 'metrics'
+  | 'token-usage'
   // quota
   | 'quota-hit'
   | 'quota-wait'
@@ -285,6 +287,19 @@ export interface RawEvent {
   ceiling?: number;
   hitRatio?: number;
   warm?: boolean;
+  // token-usage (engine v3) — per-call token + cache telemetry; only hitRatio/warm feed the
+  // reducer (same fields as `cache`). costUsd is a per-call DELTA (not a running cum), so it is
+  // intentionally NOT fed into cost.cumUsd/series; cum* below are cumulative TOKEN counts, not
+  // USD, so they don't fit `cum`/`cumUsd` either. Carried here for completeness / future UI use.
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  costUsd?: number;
+  cumInput?: number;
+  cumOutput?: number;
+  cumCacheRead?: number;
+  cumCacheCreation?: number;
   // metrics (engine v3)
   firstTryGreen?: boolean;
   itersToGreen?: number | null;
@@ -345,11 +360,27 @@ export interface Checkpoint {
   meta?: Record<string, unknown>;
 }
 
+// ─── Liveness heartbeat (`<stateDir>/activity.json`, PROTOCOL §1) ────────────
+// A single beat the engine OVERWRITES every few seconds during a long agent step, so the UI can
+// tell "actively working" from a hung loop between the coarse phase-boundary events in log.jsonl.
+export interface Activity {
+  /** ISO-8601 (UTC, `Z`) write time — freshness is `Date.now() - Date.parse(ts)`. */
+  ts?: string;
+  phase?: string;
+  story?: string;
+  /** seconds the current agent step has been running */
+  elapsedSec: number;
+  /** changed-file count in the repo work tree — a live "actually producing work" signal */
+  dirty: number;
+  pid?: number;
+}
+
 // ─── §6 Tauri command surface — the Delta channel union ─────────────────────
 export type Delta =
   | { kind: 'snapshot'; state: RunState }
   | { kind: 'event'; event: RawEvent }
-  | { kind: 'state'; state: RunState };
+  | { kind: 'state'; state: RunState }
+  | { kind: 'activity'; activity: Activity | null };
 
 // §7 LoopDefinition (loops/<id>/loop.json) — minimal surface the frontend uses
 export interface LoopDef {

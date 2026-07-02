@@ -10,6 +10,7 @@ delete.
 - :func:`read_answer_inbox` / :func:`consume_answer` — read then delete ``answer.json``.
 - :func:`read_stop_flag`    / :func:`clear_stop_flag` — read then delete the ``STOP`` flag.
 - :func:`read_text` / :func:`write_text` — progress.md and friends.
+- :func:`write_run_output`  — persist an agent call's raw stdout (``run-<n>.out`` and friends).
 
 All paths accept ``str`` or ``os.PathLike``. Reads of a missing file return ``None``.
 """
@@ -89,6 +90,20 @@ def write_text(path, s: str) -> None:
         fh.write(s)
 
 
+def write_run_output(path, raw: str | None) -> None:
+    """Persist an agent call's raw stdout to ``path`` (e.g. ``.loop/run-3.out``), as-is.
+
+    A debugging artifact for postmortem on a failed/parse-failed run, whose ``raw`` output
+    was previously thrown away entirely. A no-op when ``raw`` is falsy (``None`` or empty) —
+    a timed-out or otherwise resultless call leaves no stray empty file. Overwrites any
+    existing file at ``path``; the caller picks a name stable enough that repeated calls
+    (retries, iterations) either accumulate distinct files or intentionally overwrite one.
+    """
+    if not raw:
+        return
+    write_text(path, raw)
+
+
 def _remove(path) -> None:
     """Delete ``path`` if it exists; swallow the not-found case."""
     try:
@@ -106,4 +121,5 @@ __all__: list[str] = [
     "clear_stop_flag",
     "read_text",
     "write_text",
+    "write_run_output",
 ]

@@ -74,6 +74,14 @@ fn parity_metrics_generic() {
     // other fixtures); proves TS and Rust agree on the new run-quality field.
     assert_golden("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json");
 }
+#[test]
+fn parity_failed_dark_bmad() {
+    // a BMAD stop{ok:false} that ENDS the log (here: retro halted after the epic's only story
+    // was already merged) must produce status 'error' + restState 'failed-dark' — and must
+    // outrank 'certified-done' even though all items are done & merged. Also exercises
+    // `token-usage`: three events feed cache.hitRatio/warm, last write wins.
+    assert_golden("failed-dark", "bmad", "failed-dark-log.jsonl", None, "failed-dark.bmad.json");
+}
 
 /// Guarded regenerator — does NOT run by default. After an intentional reducer change:
 /// `cargo test --test golden_parity -- --ignored regenerate_goldens`, then review the diff.
@@ -82,7 +90,7 @@ fn parity_metrics_generic() {
 fn regenerate_goldens() {
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     std::fs::create_dir_all(&out).unwrap();
-    let cases: [(&str, &str, &str, Option<&str>, &str); 7] = [
+    let cases: [(&str, &str, &str, Option<&str>, &str); 8] = [
         ("demo", "bmad", "demo-events.jsonl", None, "demo.bmad.json"),
         ("bmad", "bmad", "bmad-log.jsonl", Some("checkpoint.json"), "bmad.bmad.json"),
         ("roman", "generic", "roman-log.jsonl", None, "roman.generic.json"),
@@ -90,6 +98,7 @@ fn regenerate_goldens() {
         ("multirun", "generic", "multirun-log.jsonl", None, "multirun.generic.json"),
         ("collision", "generic", "series-collision-log.jsonl", None, "series-collision.generic.json"),
         ("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json"),
+        ("failed-dark", "bmad", "failed-dark-log.jsonl", None, "failed-dark.bmad.json"),
     ];
     for (lid, ad, fx, cp, g) in cases {
         let v = reduce_fixture(lid, ad, fx, cp);

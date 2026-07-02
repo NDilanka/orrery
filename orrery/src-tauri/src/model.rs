@@ -58,7 +58,7 @@ impl Default for ItemStatus {
     }
 }
 
-/// `type RestState = 'certified-done'|'stopped-ember'|'quota-frost'|'handoff-beacon'|null;`
+/// `type RestState = 'certified-done'|'stopped-ember'|'quota-frost'|'handoff-beacon'|'failed-dark'|null;`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RestState {
@@ -66,6 +66,9 @@ pub enum RestState {
     StoppedEmber,
     QuotaFrost,
     HandoffBeacon,
+    /// a run at rest with `status: Error` (a BMAD `stop{ok:false}`) — outranks every other rest
+    /// state (§4 rule 5): a crashed run needs attention most.
+    FailedDark,
 }
 
 /// `'haiku'|'sonnet'|'opus'`
@@ -546,16 +549,47 @@ pub struct GuardStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Activity — the liveness heartbeat (`<stateDir>/activity.json`, PROTOCOL §1)
+// ---------------------------------------------------------------------------
+
+/// A single liveness beat the engine overwrites every few seconds DURING a long agent step, so a
+/// watcher can tell "actively working" from a hung loop between the coarse phase-boundary events
+/// in `log.jsonl`. State, not event (a single overwritten file like `checkpoint.json`). All fields
+/// optional/defaulted — a malformed `activity.json` deserializes to defaults rather than erroring.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Activity {
+    /// ISO-8601 (UTC, `Z`) write time — the UI derives freshness from `now - ts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story: Option<String>,
+    /// Seconds the current agent step has been running.
+    #[serde(default)]
+    pub elapsed_sec: f64,
+    /// Count of changed files in the repo work tree — a live "actually producing work" signal.
+    #[serde(default)]
+    pub dirty: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
 // Delta channel enum (§6)
 // ---------------------------------------------------------------------------
 
-/// `Delta = { kind: 'snapshot', state } | { kind: 'event', event } | { kind: 'state', state }`
+/// `Delta = { kind: 'snapshot', state } | { kind: 'event', event } | { kind: 'state', state }
+///        | { kind: 'activity', activity }`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Delta {
     Snapshot { state: RunState },
     Event { event: serde_json::Value },
     State { state: RunState },
+    /// liveness heartbeat (`activity.json`); `activity` is `null` when the file is absent/cleared.
+    Activity { activity: Option<Activity> },
 }
 
 #[cfg(test)]
@@ -582,6 +616,32 @@ mod tests {
             state: RunState::new("x"),
         };
         assert_eq!(serde_json::to_value(&st).unwrap()["kind"], "state");
+
+        // activity delta: tagged kind + a camelCase Activity body (or null).
+        let act = Delta::Activity {
+            activity: Some(Activity {
+                ts: Some("2026-06-24T17:15:00Z".into()),
+                phase: Some("dev-story".into()),
+                story: Some("5-2".into()),
+                elapsed_sec: 252.0,
+                dirty: 3,
+                pid: Some(7240),
+            }),
+        };
+        let v = serde_json::to_value(&act).unwrap();
+        assert_eq!(v["kind"], "activity");
+        assert_eq!(v["activity"]["elapsedSec"], 252.0, "elapsedSec camelCase");
+        assert_eq!(v["activity"]["phase"], "dev-story");
+
+        // a null beat (file cleared/absent) round-trips as activity: null
+        let none = Delta::Activity { activity: None };
+        assert!(serde_json::to_value(&none).unwrap()["activity"].is_null());
+
+        // a malformed activity.json (extra/missing fields) deserializes to defaults, never errors.
+        let lax: Activity = serde_json::from_value(serde_json::json!({"phase":"x","bogus":1})).unwrap();
+        assert_eq!(lax.phase.as_deref(), Some("x"));
+        assert_eq!(lax.dirty, 0);
+        assert_eq!(lax.elapsed_sec, 0.0);
     }
 
     #[test]

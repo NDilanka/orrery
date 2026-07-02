@@ -1,0 +1,109 @@
+{
+  "cache": {
+    "hitRatio": 0.8889,
+    "warm": true
+  },
+  "cost": {
+    "alertPct": null,
+    "ceilingUsd": null,
+    "cumUsd": 5.9,
+    "ratePerMin": 9.000000000000004,
+    "series": [
+      {
+        "cum": 5.0,
+        "t": 4000.0
+      },
+      {
+        "cum": 5.9,
+        "t": 10000.0
+      }
+    ]
+  },
+  "currentItem": "9-1-flaky-retro",
+  "events": 11,
+  "groups": {
+    "9": {
+      "id": "9",
+      "retroStatus": "pending",
+      "ringIndex": 9,
+      "status": "in-progress"
+    }
+  },
+  "items": {
+    "9-1-flaky-retro": {
+      "certified": false,
+      "costAttributed": 5.0,
+      "gate": {
+        "baselinePass": 40,
+        "fail": 0,
+        "green": true,
+        "pass": 40,
+        "stages": [
+          {
+            "exit": 0,
+            "name": "codegen",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "lint",
+            "ok": true
+          },
+          {
+            "exit": 0,
+            "name": "test",
+            "ok": true
+          }
+        ],
+        "total": 40
+      },
+      "ghost": null,
+      "group": "9",
+      "index": 0,
+      "key": "9-1-flaky-retro",
+      "lastEventTs": 7000.0,
+      "pr": {
+        "base": "develop",
+        "merged": true,
+        "url": "https://github.com/example/demo-project/pull/99"
+      },
+      "smoke": null,
+      "status": "done",
+      "strikeBudget": 3,
+      "strikes": 0
+    }
+  },
+  "loopId": "failed-dark",
+  "metrics": null,
+  "phase": {
+    "label": "stop",
+    "model": null,
+    "name": null,
+    "sixPhase": "decide"
+  },
+  "questions": [],
+  "quota": {
+    "active": false,
+    "label": null,
+    "probe": 0,
+    "resetAt": null,
+    "resetType": null,
+    "resumeAt": null,
+    "waitSec": 0
+  },
+  "run": {
+    "branch": "feat/story-9-1-flaky-retro",
+    "cumUsd": 5.9,
+    "mergeBase": "main",
+    "pid": null,
+    "restState": "failed-dark",
+    "resumeCmd": null,
+    "stage": null,
+    "startedAt": null,
+    "status": "error",
+    "stopPending": null,
+    "target": "9-1-flaky-retro",
+    "updatedAt": null
+  },
+  "verdicts": {}
+}

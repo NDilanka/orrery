@@ -317,6 +317,18 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       if (typeof ev.warm === 'boolean') state.cache.warm = ev.warm;
       break;
     }
+    case 'token-usage': {
+      // Engine-v3 per-call token + cache telemetry (~22% of a real BMAD log). Feeds the SAME
+      // two fields the documented `cache` event feeds, last write wins — mirrors 'cache' above
+      // exactly (mirrors reducer.rs on_token_usage). `costUsd` is a per-call DELTA (not a
+      // running cum) and the `cum*` fields are cumulative TOKEN counts, not USD, so neither fits
+      // bumpCum's running-max-of-cum contract or cost.series (which assumes cumulative USD
+      // samples for ratePerMin); wiring either in would corrupt that logic. Intentionally left
+      // unwired.
+      if (typeof ev.hitRatio === 'number') state.cache.hitRatio = ev.hitRatio;
+      if (typeof ev.warm === 'boolean') state.cache.warm = ev.warm;
+      break;
+    }
     case 'plateau': {
       // Rust requires an `item` and sets its strike count to `k`.
       if (typeof ev.item === 'string') {
@@ -608,11 +620,18 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
       // a stop ends the current run (BUG-FIX #1): the next cum-bearing event rebases the
       // per-run running-max. Mirrors reducer.rs on_stop.
       bk(state).runEnded = true;
-      state.run.status = 'stopped';
+      // BMAD `stop` carries {ok}; generic `stop` carries {green}. `ok:false` is BMAD's failure
+      // signal (a halted/blocked session — gate red, regression, merge failure, ...): it maps to
+      // status 'error'. `ok` absent (generic loops) or `ok:true` keeps today's 'stopped'.
+      // Because the reducer is sequential, this is safe even mid-log: the very next event of a
+      // healthy run is 'engine-start'/'start' for the NEXT session, which resets status to
+      // 'running' before a human ever sees it. Only a log that truly ENDS on `stop{ok:false}`
+      // surfaces 'error' (→ restState 'failed-dark'). `cooperative-stop` is a distinct event
+      // that never carries `ok`, so a user-requested brake is never reclassified as an error.
+      state.run.status = ev.ok === false ? 'error' : 'stopped';
       state.phase.sixPhase = 'decide';
       state.phase.label = 'stop';
-      // BMAD `stop` carries {ok}; generic `stop` carries {green}. A green generic stop seals
-      // the synthetic "iter" item.
+      // A green generic stop seals the synthetic "iter" item.
       if (ev.green === true) {
         const it = state.items[GENERIC_ITEM_KEY];
         if (it) {
@@ -657,7 +676,12 @@ function deriveRestState(state: RunState): void {
     items.length > 0 &&
     items.every((it) => it.status === 'done' && (it.pr ? it.pr.merged : true));
 
-  if (state.run.status === 'handoff') {
+  // Ordering: failed-dark → handoff → quota → certified-done(&& not running) → stopped → null.
+  if (state.run.status === 'error') {
+    // a crashed run (stop{ok:false}) needs attention most — outranks every other rest state,
+    // checked before handoff/quota/certified-done.
+    state.run.restState = 'failed-dark';
+  } else if (state.run.status === 'handoff') {
     state.run.restState = 'handoff-beacon';
   } else if (state.quota.active) {
     state.run.restState = 'quota-frost';
@@ -666,7 +690,7 @@ function deriveRestState(state: RunState): void {
     // ends with a `stop{ok:true}` (refines PROTOCOL §4.5 ordering: a completed
     // run reads "done", reserving the ember for a stop that left work unfinished).
     state.run.restState = 'certified-done';
-  } else if (state.run.status === 'stopped' || state.run.status === 'error') {
+  } else if (state.run.status === 'stopped') {
     state.run.restState = 'stopped-ember';
   } else {
     state.run.restState = null;

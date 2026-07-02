@@ -37,6 +37,21 @@ Test Files  1 failed (1)
   Duration  812ms
 """
 
+# Real multi-file vitest output: BOTH summary lines carry a "passed" count, and because a
+# test failed vitest reordered "Tests" to "<f> failed | <p> passed". The count we want (860)
+# is neither adjacent to "Tests" (the old strict anchor read 0) nor the first "passed" in the
+# output (a bare `(\d+) passed` would steal the Test-Files line's 70). Captured 2026-06-25
+# from brain2 story 6-2, which a single load-induced timeout flake false-halted as "812->0".
+VITEST_MULTIFILE_RED = """ ❯ components/onboarding/CategoryWizard.test.tsx (6 tests | 1 failed) 7582ms
+ FAIL  components/onboarding/CategoryWizard.test.tsx > custom flow
+Error: Test timed out in 5000ms.
+
+ Test Files  1 failed | 70 passed (71)
+      Tests  1 failed | 860 passed (861)
+   Start at  08:30:16
+   Duration  88.04s
+"""
+
 JEST = """Tests:       1 failed, 8 passed, 9 total
 Snapshots:   0 total
 Time:        2.13 s
@@ -106,6 +121,29 @@ def test_vitest_anchored_patterns():
     r = parse_counts(VITEST, r"(\d+)\s+passed", r"Tests\s+(\d+)\s+failed")
     assert r["pass"] == 5
     assert r["fail"] == 2
+
+
+def test_brain2_gate_pattern_reads_passed_count_when_a_test_fails():
+    """Regression: the SHIPPED brain2 gate pattern must read the passed count even when
+    vitest reorders its summary to "<f> failed | <p> passed". The old strict
+    ``Tests\\s+(\\d+)\\s+passed`` read 0 here and turned one flaky test into a false
+    "812->0 regression" halt (brain2 story 6-2, 2026-06-25)."""
+    from loop.bmad.driver import DEFAULT_GATE_STAGES
+
+    test_stage = next(s for s in DEFAULT_GATE_STAGES if s["name"] == "test")
+    r = parse_counts(
+        VITEST_MULTIFILE_RED, test_stage["pass_pattern"], test_stage["fail_pattern"]
+    )
+    assert r["pass"] == 860  # NOT 0 (old anchor) and NOT 70 (the Test Files line)
+    assert r["fail"] == 1
+    # All-green still parses (no "failed |" prefix to skip).
+    g = parse_counts(
+        "      Tests  861 passed (861)\n",
+        test_stage["pass_pattern"],
+        test_stage["fail_pattern"],
+    )
+    assert g["pass"] == 861
+    assert g["fail"] == 0
 
 
 def test_jest_counts():

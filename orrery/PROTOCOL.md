@@ -15,6 +15,7 @@ TS interfaces use the same names verbatim.
 |---|---|---|
 | `log.jsonl` | append-only, one compact JSON object per line | the event stream. **Field order is non-deterministic** — key on `event`, never position. A writer may leave a trailing partial (unterminated) line; the tailer holds it until the `\n` arrives. |
 | `checkpoint.json` | single JSON object | resume state. |
+| `activity.json` | single JSON object, **overwritten in place** | LIVENESS heartbeat. The engine re-stamps it every ~12s DURING a long agent step (a 30-min `dev-story` is one `claude` call that emits NO `log.jsonl` line until its gate), so a watcher can tell "actively working" from a hung loop. Shape: `{ ts, phase, story, elapsedSec, dirty, pid }` (`ts` ISO-8601 UTC; `dirty` = changed-file count). Written atomically (temp + rename). State, not event — it never enters `log.jsonl` or its replay cap. |
 | `STOP` | text `phase` \| `story` \| `now` | cooperative stop request; the orchestrator deletes it when honored. |
 | `answer.json` (stretch) | `{ qid, kind, epic?, a }` | UI→engine answer inbox (inert until the engine reads it). |
 
@@ -62,6 +63,21 @@ fully backward-compatible.
   "rollbacks": int, "regressionRate": float, "totalIters": int, "totalCost": float, "finalGreen": bool }
 // emitted ONCE at stop when engine.metrics.emit is on; a run-quality fold of the event stream
 // (loop.metrics.compute_metrics). first-try-green + iters/cost-to-green replace pass@k for loops.
+// Idempotent (last write wins) — safe even if an engine emits it repeatedly (e.g. every iter)
+// instead of once at stop: each event is a full recomputed snapshot, never a partial merge.
+
+{ "event": "token-usage", "phase": string, "story"?: string, "model": string, "input": int,
+  "output": int, "cacheRead": int, "cacheCreation": int, "hitRatio": float, "warm": bool,
+  "costUsd": float, "cumInput": int, "cumOutput": int, "cumCacheRead": int, "cumCacheCreation": int }
+// per-call token + cache telemetry (ResilientRunner._record_usage) — ~22% of a real BMAD log.
+// NOT gated by an engine flag like `metrics`: it fires whenever the underlying agent result
+// carries usage telemetry (real `claude` CLI calls do; mock/text-format runners emit nothing).
+// Tokens are the real Max-**subscription** meter (USD is not); `cum*` are cumulative TOKEN
+// counts for the run, NOT dollars. The reducer feeds only `hitRatio`/`warm` into `cache` — the
+// SAME two fields the `cache` event feeds, last write wins. `costUsd` is a per-call DELTA (like
+// `iter.cost`, not `iter.cum`), and `cum*` are token counts, not USD, so neither fits `cumUsd`'s
+// running-max contract or the `cost.series` (built from cumulative USD samples for ratePerMin) —
+// both are intentionally left unwired to avoid corrupting that logic.
 ```
 
 ### Quota (engine v2 — see BMAD)
@@ -79,7 +95,7 @@ fully backward-compatible.
 { "event":"story-start",      "story": string, "status": string, "epic"?: string, "index"?: int }
 { "event":"dev-gate",         "story": string, "cum": float, "green": bool, "pass": int, "fail": int,
   "total": int, "baselinePass": int, "status": string, "codegenOk": bool, "lintOk": bool, "testOk": bool }
-{ "event":"gate-retry",       "attempt": int, "retries": int, "fail": int, "maxFail": int }  // flaky-SHAPED red gate (codegen+lint green, â‰¤maxFail failing tests) being re-run before it's trusted
+{ "event":"gate-retry",       "attempt": int, "retries": int, "fail": int, "maxFail": int }  // flaky-SHAPED red gate (codegen+lint green, ≤maxFail failing tests) being re-run before it's trusted
 { "event":"review-question",  "turn": int, "q": string, "story"?: string }
 { "event":"review-answer",    "turn": int, "a": string }
 { "event":"review-complete",  "turn": int, "summary": string }
@@ -110,7 +126,7 @@ and TS define this shape identically.
 type RunStatus = 'idle'|'running'|'stopping'|'stopped'|'quota-wait'|'handoff'|'error';
 type SixPhase  = 'discover'|'assemble'|'execute'|'verify'|'persist'|'decide';
 type ItemStatus= 'backlog'|'ready'|'in-progress'|'review'|'done'|'blocked'|'failed';
-type RestState = 'certified-done'|'stopped-ember'|'quota-frost'|'handoff-beacon'|null; // §Design four states
+type RestState = 'certified-done'|'stopped-ember'|'quota-frost'|'handoff-beacon'|'failed-dark'|null; // §Design five states
 
 interface RunState {
   loopId: string;
@@ -176,9 +192,20 @@ interface Verdict{ pass: boolean; failingCriteria: string[]; evidence?: string; 
    is derived from the last ~N samples. `t` is ms since epoch (caller stamps; in tests use the line index ×1000).
 4. **Status authority:** sprint-status.yaml is authoritative for items NOT currently in flight; a live
    event for an item overrides yaml if `item.lastEventTs` is newer. The current item's status comes from events.
-5. **restState** is derived last: `stop{ok:true}`/cooperative-stop→`stopped-ember`; quota active→`quota-frost`;
-   `handoff`→`handoff-beacon`; all items done & merged→`certified-done`; else `null` (running).
+5. **restState** is derived last, in this precedence (highest first): `status:'error'`→`failed-dark`;
+   `handoff`→`handoff-beacon`; quota active→`quota-frost`; all items done & merged (and not running)→
+   `certified-done`; `stop{ok:true}`/cooperative-stop (status `'stopped'`)→`stopped-ember`; else `null` (running).
+   `failed-dark` outranks every other rest state — a crashed run needs attention most — so it is checked
+   FIRST, even before `handoff`/`quota`/`certified-done`.
 6. **certified** flips true on a `verdict{pass:true}` for that item; a `dev-gate`/`gate green` only sets *claimed* green.
+7. **`RunStatus.error`** comes from a BMAD `stop{ok:false}` (a halted/blocked session — gate red, regression,
+   merge failure, spin-guard, ...). `stop.ok` absent (generic loops, which carry `green` instead) or
+   `ok:true` keeps the existing `'stopped'` status. Because the reducer is sequential, this is safe even
+   mid-log: the very next event of a healthy multi-session run is `engine-start`/`start`, which resets
+   status to `'running'` before a human ever observes the transient `'error'`. Only a log that truly ENDS
+   on `stop{ok:false}` surfaces `'error'` in the final `RunState` (→ `restState: 'failed-dark'`).
+   `cooperative-stop` is a distinct event that never carries `ok` — a user-requested brake (STOP file) is
+   never reclassified as an error.
 
 ---
 
@@ -198,8 +225,12 @@ load_run(stateDir: string, adapter: string, logFile?: string) -> RunState      /
 watch_run(stateDir, adapter, logFile?, channel: Channel<Delta>) -> ()
 // Emits a `snapshot`, then per drain: an `event` delta per NEW raw line (feeds the live LOG panel)
 // followed by ONE reduced `state` delta. The historical log is replayed once on mount, batched and
-// capped at 300 events so a long-running loop doesn't flood the channel.
+// capped at 300 events so a long-running loop doesn't flood the channel. An `activity` delta is
+// also emitted whenever <stateDir>/activity.json changes (the ~12s liveness heartbeat) — this is
+// what keeps the live-log freshness indicator alive through a silent dev-story; it never feeds the
+// reduced RunState. `activity` is null when the file is absent/cleared.
 // Delta = { kind: 'snapshot', state } | { kind: 'event', event: RawEvent } | { kind: 'state', state }
+//       | { kind: 'activity', activity: { ts?, phase?, story?, elapsedSec, dirty, pid? } | null }
 list_loops() -> LoopDef[]                                       // from loops/<id>/loop.json
 // A6 — control. All take `loopsDir` (path to loops/) so the Rust side can locate loop.json.
 start_loop(loopId, loopsDir, overrides?) -> { pid } | Err('AlreadyRunning'|...)

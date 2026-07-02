@@ -19,6 +19,7 @@
 import type { Delta, RawEvent, RunState } from '../types';
 import { initialState } from '../reduce';
 import { logStore } from '../stores/log.svelte';
+import { activityStore } from '../stores/activity.svelte';
 import type { Transport, TransportOpts } from './index';
 
 /** Connection lifecycle the UI surfaces as a freshness badge. */
@@ -178,6 +179,11 @@ export class WsTransport implements Transport {
     if (delta.kind === 'event') {
       // raw event → live LOG feed only; the server sends an authoritative `state` delta per batch.
       logStore.push(delta.event as RawEvent);
+      return;
+    }
+    if (delta.kind === 'activity') {
+      // liveness heartbeat → the activity store (LIVE LOG freshness dot); never reduced state.
+      activityStore.set(delta.activity);
       return;
     }
     // snapshot | state: server already reduced; adopt wholesale (also the reconnect resync).

@@ -31,6 +31,9 @@ examples/**/.pytest_cache/
 orrery/loops/**/.loop/
 orrery/loops/**/.pytest_cache/
 
+# QA loop browser profiles / auth state — session tokens, never commit
+orrery/loops/**/.auth/
+
 # Local PowerShell harness drivers — NOT part of the public repo (the maintained
 # engine is the Python package in engine/; the PS reference impl lives in legacy/).
 # Kept out of tracking so the repo root stays free of *.ps1.
