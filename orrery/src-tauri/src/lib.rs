@@ -33,6 +33,9 @@ pub fn run() {
             control::guard_status,
             // A8 — answer-from-UI (writes answer.json inbox)
             control::answer_question,
+            // U3 — creation & onboarding (scaffold a TASK.md, probe a gate command)
+            control::write_loop_file,
+            control::probe_command,
             // A7 — opt-in LAN server (phone/browser observe + token-gated control)
             lan::start_lan_server,
             lan::stop_lan_server,

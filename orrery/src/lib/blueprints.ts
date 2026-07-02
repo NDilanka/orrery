@@ -13,29 +13,43 @@
 // This module is pure + framework-free so it can be unit-checked and reused by
 // the live preview. `composeLoopDef()` turns all of the above into the exact
 // camelCase loop.json the Rust `create_loop` persists and `list_loops` reads.
+//
+// HONESTY CONSTRAINT (wave U3 Task 1): every field this module emits under
+// `engine` is a key `engine/loop/config.py` (`EngineConfig` + its per-block
+// parsers) actually reads. A2 retired `gate.greenWhen` (parsed, never
+// consulted) and made an unrecognized key print a stderr warning — so this
+// module used to hand the engine a `regression`/`decide`/`qa`/`concurrency`/
+// `quota` shaped config it silently ignored in full. Those blocks are gone;
+// every dial now drives a REAL bundle (see `deriveFromDials`).
 
 import type { Model } from './types';
 
-// ─── Engine config shape (PROTOCOL §7 engine block) ─────────────────────────
+// ─── Engine config shape (PROTOCOL §7 engine block, engine/loop/config.py) ──
 // Kept structural & permissive: this is the object that lands under loop.json's
 // `engine` key. The Rust side treats it as opaque Value; the console owns it.
+// Every top-level key here (and every nested key) is one `_ENGINE_KNOWN_KEYS` /
+// per-block `_*_KNOWN_KEYS` actually resolves — nothing else is emitted.
 
 export interface GateStageDef {
   name: string;
   command: string;
   passPattern?: string;
   failPattern?: string;
+  // advanced, per-stage (engine/loop/config.py GateStage) — not surfaced in the
+  // console's Definition-of-Done rows yet; kept so a hand-authored value round-trips.
+  heldOut?: boolean;
+  lockGlobs?: string[];
 }
 
 export interface EngineConfig {
   task: string;
   models: { discover: Model; execute: Model; judge: Model; hard: Model };
   maxTurns: number;
+  iterTimeoutMin: number;
   allowedTools: string[];
   permissionMode: 'acceptEdits' | 'plan' | 'default' | 'bypassPermissions';
   gate: {
     stages: GateStageDef[];
-    greenWhen: string;
     lockGlobs: string[];
   };
   cost: { ceilingUsd: number; alertPct: number[] };
@@ -46,12 +60,18 @@ export interface EngineConfig {
     regressLimit: number;
     gracefulAtPhase: boolean;
   };
-  regression: { floor: number; autoRollback: boolean; strikeBudget: number };
-  verify: { judgeModel: Model; contract: string[]; strictness: 'lenient' | 'normal' | 'strict' };
-  decide: { plateauK: number; consecutiveFail: number; totalFail: number; recoverOnce: boolean };
-  quota: { enabled: boolean; maxWaits: number; defaultWaitMin: number; manualContinue: boolean };
-  qa: { maxTurns: number; deciderModel: Model; humanInLoop: boolean };
-  concurrency: { guard: boolean };
+  verify: {
+    judgeModel: Model;
+    contract: string[];
+    // the switch: only when true does the engine emit the judge event + run the
+    // anti-false-green VERIFY pass (engine/loop/config.py VerifyConfig docstring).
+    enabled: boolean;
+    mutationAudit: boolean;
+    mutationEvery: number;
+  };
+  feedback: { compact: boolean };
+  memory: { enabled: boolean; path: string | null; recallLimit: number };
+  metrics: { emit: boolean };
 }
 
 export interface LoopDefDraft {
@@ -90,7 +110,9 @@ export interface Blueprint {
 // ─── The three dials ────────────────────────────────────────────────────────
 // Each dial is a 0..1 position. 0 = the left pole, 1 = the right pole. Each
 // drives a coordinated BUNDLE of engine params (plan §4). `deriveFromDials`
-// resolves the three positions into the concrete engine fields they own.
+// resolves the three positions into the concrete engine fields they own —
+// every field named below is a real `EngineConfig` field (see the honesty
+// constraint at the top of this file).
 
 export interface DialState {
   ambition: number; // 0 = Thrift (cheap/Haiku/low ceiling) … 1 = Ambition (Opus/high ceiling)
@@ -103,11 +125,13 @@ interface DialDerived {
   models: EngineConfig['models'];
   cost: EngineConfig['cost'];
   stop: EngineConfig['stop'];
-  regression: EngineConfig['regression'];
-  verify: EngineConfig['verify'];
-  decide: EngineConfig['decide'];
-  qa: EngineConfig['qa'];
+  // only the two verify fields the PATIENCE dial owns; `enabled`/`contract`/`judgeModel`
+  // are owned by the destination (the AC list) + a fixed cheap judge, not a dial.
+  verify: { mutationAudit: boolean; mutationEvery: number };
+  feedback: EngineConfig['feedback'];
   permissionMode: EngineConfig['permissionMode'];
+  maxTurns: number;
+  iterTimeoutMin: number;
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -130,12 +154,14 @@ function modelFromHeat(t: number): Model {
 /**
  * Resolve the 3 dials into the concrete engine fields they coordinate.
  * This is the single source of truth for "what does this dial DO" — the live
- * preview reads the same derivation, so the preview never lies.
+ * preview reads the same derivation, so the preview never lies. Every field
+ * produced here is a real, engine-consumed `EngineConfig` field (see the
+ * dial→field mapping table in the wave U3 report).
  */
 export function deriveFromDials(d: DialState): DialDerived {
   const { ambition, patience, autonomy } = d;
 
-  // AMBITION ⟷ THRIFT — model tiering + cost ceiling + max-iters as one bundle.
+  // AMBITION ⟷ THRIFT — model tiering + cost ceiling + iteration budget, one bundle.
   // High ambition = hotter models, taller ceiling, more iterations.
   const models: EngineConfig['models'] = {
     discover: 'haiku', // discovery stays cheap regardless
@@ -146,42 +172,39 @@ export function deriveFromDials(d: DialState): DialDerived {
   const ceilingUsd = round2(lerp(1.0, 25.0, ambition)); // $1 thrift → $25 ambition
   const maxIters = lerpInt(6, 40, ambition);
 
-  // PATIENCE ⟷ FUSSINESS — plateau K + regression strike budget + consecutive-fail
-  // + verifier strictness. Fussy (low) = strict verifier, tiny budgets, quick to
-  // give up; Patient (high) = lenient, generous budgets, long plateau tolerance.
-  const strictness: EngineConfig['verify']['strictness'] =
-    patience < 0.34 ? 'strict' : patience > 0.7 ? 'lenient' : 'normal';
-  const plateauK = lerpInt(2, 8, patience);
-  const strikeBudget = lerpInt(1, 6, patience);
-  const consecutiveFail = lerpInt(2, 6, patience);
-  const totalFail = lerpInt(4, 14, patience);
+  // PATIENCE ⟷ FUSSINESS — the real stop.* resilience knobs (how many stagnant /
+  // plateaued / regressed iterations the loop tolerates before giving up) plus the
+  // verify mutation-audit rigor. The engine has no configurable pass/fail RULE (gate
+  // green is always "every stage exits 0" — PROTOCOL §7), so "verifier strictness" is
+  // honestly the mutation-audit knob: how hard a claimed-green iteration gets
+  // double-checked, not a different green definition.
   const stagnationLimit = lerpInt(1, 4, patience);
+  const plateauLimit = lerpInt(2, 8, patience);
+  const regressLimit = lerpInt(1, 6, patience);
+  const mutationAudit = patience < 0.7; // the lenient tail turns the extra audit off
+  const mutationEvery = patience < 0.34 ? 1 : patience < 0.7 ? 3 : 0; // fussy = audit every green
 
-  // AUTONOMY ⟷ COMPANY — permission/interaction. Company (low) = human-in-loop
-  // Q&A, accept-edits stays guarded, stop-sensitive. Autonomy (high) = overnight
-  // unattended, decider answers its own questions, fewer stop teeth.
-  const humanInLoop = autonomy < 0.45;
+  // AUTONOMY ⟷ COMPANY — how unattended the run is: permission mode, the per-phase
+  // turn budget + per-iteration wall-clock cap (more slack when nobody's watching),
+  // whether a STOP lands at the next phase boundary, and feedback verbosity (a
+  // compacted single-failure steer suits an unattended overnight run; the full raw
+  // gate dump suits a human reading along).
   const permissionMode: EngineConfig['permissionMode'] =
     autonomy > 0.8 ? 'bypassPermissions' : 'acceptEdits';
-  const qaMaxTurns = lerpInt(2, 8, 1 - Math.abs(autonomy - 0.5) * 2 + 0.5); // most Q&A in the middle
-  const recoverOnce = autonomy > 0.5;
+  const maxTurns = lerpInt(15, 50, autonomy);
+  const iterTimeoutMin = lerpInt(20, 120, autonomy);
   const gracefulAtPhase = autonomy < 0.7; // company stops at phase teeth; high-autonomy runs longer
+  const compact = autonomy > 0.6;
 
   return {
     models,
     cost: { ceilingUsd, alertPct: [50, 80, 100] },
-    stop: {
-      maxIters,
-      stagnationLimit,
-      plateauLimit: plateauK,
-      regressLimit: strikeBudget,
-      gracefulAtPhase,
-    },
-    regression: { floor: 0, autoRollback: true, strikeBudget },
-    verify: { judgeModel: 'haiku', contract: [], strictness },
-    decide: { plateauK, consecutiveFail, totalFail, recoverOnce },
-    qa: { maxTurns: Math.max(2, qaMaxTurns), deciderModel: 'haiku', humanInLoop },
+    stop: { maxIters, stagnationLimit, plateauLimit, regressLimit, gracefulAtPhase },
+    verify: { mutationAudit, mutationEvery },
+    feedback: { compact },
     permissionMode,
+    maxTurns,
+    iterTimeoutMin,
   };
 }
 
@@ -203,11 +226,8 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
         stages: [
           { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
         ],
-        greenWhen: 'exit==0',
         lockGlobs: ['**/*.test.ts'],
       },
-      quota: { enabled: true, maxWaits: 6, defaultWaitMin: 20, manualContinue: false },
-      concurrency: { guard: true },
     },
     destination: {
       acceptanceCriteria: ['All tests pass', 'No regressions from the baseline'],
@@ -231,11 +251,8 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
           { name: 'lint', command: 'bun lint', passPattern: '', failPattern: '(\\d+)\\s+error' },
           { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
         ],
-        greenWhen: 'exit==0',
         lockGlobs: ['**/*.test.ts', '**/*.spec.ts'],
       },
-      quota: { enabled: true, maxWaits: 8, defaultWaitMin: 30, manualContinue: false },
-      concurrency: { guard: true },
     },
     destination: {
       acceptanceCriteria: ['Story acceptance criteria met', 'Tests green', 'PR opened to develop'],
@@ -243,7 +260,6 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
         { name: 'codegen', command: 'bun run build', passPattern: '', failPattern: 'error' },
         { name: 'lint', command: 'bun lint', passPattern: '', failPattern: '(\\d+)\\s+error' },
         { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
-        { name: 'audit', command: '', passPattern: '', failPattern: '' },
       ],
     },
   },
@@ -260,17 +276,13 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
         stages: [
           { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
         ],
-        greenWhen: 'exit==0',
         lockGlobs: [],
       },
-      quota: { enabled: true, maxWaits: 3, defaultWaitMin: 15, manualContinue: true },
-      concurrency: { guard: true },
     },
     destination: {
       acceptanceCriteria: ['The approach is sound and reviewed', 'Tests cover the new behavior'],
       gateStages: [
         { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
-        { name: 'audit', command: '', passPattern: '', failPattern: '' },
       ],
     },
   },
@@ -287,11 +299,8 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
         stages: [
           { name: 'test', command: 'bun test', passPattern: '(\\d+)\\s+pass', failPattern: '(\\d+)\\s+fail' },
         ],
-        greenWhen: 'exit==0',
         lockGlobs: ['**/*.test.ts'],
       },
-      quota: { enabled: true, maxWaits: 5, defaultWaitMin: 20, manualContinue: false },
-      concurrency: { guard: true },
     },
     destination: {
       acceptanceCriteria: ['Tests green'],
@@ -314,34 +323,43 @@ export function composeEngine(
   task: string,
 ): EngineConfig {
   const derived = deriveFromDials(dials);
+  // FOOT-GUN CATCH: `verify.enabled` is the switch that arms the AC-driven
+  // anti-false-green pass (engine/loop/config.py VerifyConfig docstring — a
+  // non-empty `contract` alone does nothing without it). Typing acceptance
+  // criteria into the console and having them silently do nothing would be
+  // exactly the kind of foot-gun this wave exists to catch, so `enabled` tracks
+  // "has the user described at least one criterion" automatically.
+  const hasCriteria = destination.acceptanceCriteria.some((c) => c.trim().length > 0);
   return {
     task,
     models: derived.models,
-    // maxTurns is the per-phase Claude turn cap (not dial-driven — the iteration
-    // budget the dials own lives in stop.maxIters).
-    maxTurns: blueprint.base.maxTurns ?? 30,
+    // per-phase Claude turn cap + per-iteration wall-clock cap — both AUTONOMY-owned
+    // (see deriveFromDials): the iteration BUDGET the AMBITION dial owns is stop.maxIters.
+    maxTurns: derived.maxTurns,
+    iterTimeoutMin: derived.iterTimeoutMin,
     allowedTools: blueprint.base.allowedTools ?? COMMON_TOOLS,
     permissionMode: derived.permissionMode,
     gate: {
       stages: destination.gateStages.length
         ? destination.gateStages
         : blueprint.base.gate?.stages ?? [],
-      greenWhen: blueprint.base.gate?.greenWhen ?? 'exit==0',
       lockGlobs: blueprint.base.gate?.lockGlobs ?? [],
     },
     cost: derived.cost,
     stop: derived.stop,
-    regression: derived.regression,
-    verify: { ...derived.verify, contract: destination.acceptanceCriteria },
-    decide: derived.decide,
-    quota: blueprint.base.quota ?? {
-      enabled: true,
-      maxWaits: 5,
-      defaultWaitMin: 20,
-      manualContinue: false,
+    verify: {
+      judgeModel: 'haiku',
+      contract: destination.acceptanceCriteria,
+      enabled: hasCriteria,
+      mutationAudit: derived.verify.mutationAudit,
+      mutationEvery: derived.verify.mutationEvery,
     },
-    qa: derived.qa,
-    concurrency: blueprint.base.concurrency ?? { guard: true },
+    feedback: derived.feedback,
+    // memory/metrics are OFF by default (matches the engine's own defaults exactly —
+    // MemoryConfig.enabled=False, MetricsConfig.emit=False); the Diagnostics drawer is
+    // the only way to turn them on, so a fresh loop's config is 1:1 with "say nothing".
+    memory: { enabled: false, path: null, recallLimit: 5 },
+    metrics: { emit: false },
   };
 }
 
@@ -414,12 +432,11 @@ export interface PreviewSummary {
   ceilingUsd: number;
   estUsd: number; // a back-of-envelope spend estimate from iters × model heat
   horizonAtPct: number; // where the est spend sits on the cost horizon (0..1+)
-  auditOn: boolean;
-  strikeBudget: number;
+  auditOn: boolean; // verify.enabled — is the AC-driven anti-false-green pass armed
+  regressLimit: number; // stop.regressLimit — the real regression-tolerance field
   maxIters: number;
   executeModel: Model;
-  humanInLoop: boolean;
-  plateauK: number;
+  plateauLimit: number; // stop.plateauLimit — the real plateau-tolerance field
   stageCount: number;
   acCount: number;
 }
@@ -433,7 +450,9 @@ const MODEL_COST_PER_ITER: Record<Model, number> = {
 /**
  * A cheap, deterministic projection used by the live preview AND "Preview night".
  * estUsd ≈ a fraction of maxIters × the execute model's per-iter heat, clamped to
- * the ceiling — "at this thrift, the horizon sits here, ~$3" (plan §4).
+ * the ceiling — "at this thrift, the horizon sits here, ~$3" (plan §4). Every field
+ * is sourced straight from a real `EngineConfig` field — see the module-top honesty
+ * constraint.
  */
 export function projectPreview(engine: EngineConfig): PreviewSummary {
   const perIter = MODEL_COST_PER_ITER[engine.models.execute] ?? 0.22;
@@ -445,14 +464,13 @@ export function projectPreview(engine: EngineConfig): PreviewSummary {
     ceilingUsd: engine.cost.ceilingUsd,
     estUsd,
     horizonAtPct,
-    auditOn: engine.verify.strictness !== 'lenient' || engine.verify.contract.length > 0,
-    strikeBudget: engine.regression.strikeBudget,
+    auditOn: engine.verify.enabled,
+    regressLimit: engine.stop.regressLimit,
     maxIters,
     executeModel: engine.models.execute,
-    humanInLoop: engine.qa.humanInLoop,
-    plateauK: engine.decide.plateauK,
+    plateauLimit: engine.stop.plateauLimit,
     stageCount: engine.gate.stages.length,
-    acCount: engine.verify.contract.length,
+    acCount: engine.verify.contract.filter((c) => c.trim().length > 0).length,
   };
 }
 

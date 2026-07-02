@@ -5,10 +5,13 @@
 //! - `list_loops` — read `loops/<id>/loop.json`.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::model::{
@@ -588,7 +591,7 @@ fn spawn_detached(
 
     let mut cmd = std::process::Command::new(program);
     cmd.args(args)
-        .current_dir(state_dir.parent().unwrap_or(state_dir))
+        .current_dir(spawn_cwd(state_dir))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(stdout))
         .stderr(std::process::Stdio::from(stderr));
@@ -930,6 +933,242 @@ fn pid_is_alive(pid: u32) -> bool {
         ProcessRefreshKind::new(),
     );
     sys.process(Pid::from_u32(pid)).is_some()
+}
+
+// ===========================================================================
+// U3 — CREATION & ONBOARDING (scaffold a TASK.md, probe a gate before starting)
+// ===========================================================================
+//
+// Two small commands that catch foot-guns BEFORE the first paid engine iteration:
+//   * `write_loop_file`  — scaffold a starter TASK.md (or any other spec file) the
+//     Tuning Console composed from the user's own inputs, so the agent's spec
+//     matches what the console promised.
+//   * `probe_command`    — run a gate stage's command once, synchronously, so a
+//     broken gate command is discovered for free instead of on iteration 1.
+//
+// SECURITY: both take `loopId` (validated via `is_safe_loop_id`) + `loopsDir`, same
+// as the A5 CRUD commands. `probe_command` shares `start_loop`'s trust model — it
+// already spawns commands straight out of the loop's own (user-authored) loop.json
+// gate stages; running one of those same commands synchronously is no new
+// capability, just an earlier opportunity to see it fail.
+
+/// The cwd a spawned loop process runs in: the state dir's parent (its own loop base
+/// dir), falling back to the state dir itself if it has none. Shared by
+/// `spawn_detached` (real start/resume) and `probe_command` (a synchronous dry run of
+/// one gate command) so a probe's cwd is GUARANTEED to match a real run's cwd.
+fn spawn_cwd(state_dir: &Path) -> PathBuf {
+    state_dir
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_dir.to_path_buf())
+}
+
+/// Resolve `rel` strictly INSIDE `base`: reject an absolute path and reject any
+/// `..` (`ParentDir`) component anywhere in it, so a relative path can never escape
+/// the loop's own directory. A `.` (`CurDir`) segment is a harmless no-op; a
+/// Windows drive-prefix or root component is rejected the same as an absolute path.
+fn resolve_rel_path_in(base: &Path, rel: &str) -> Result<PathBuf, String> {
+    if rel.trim().is_empty() {
+        return Err("relPath must not be empty".to_string());
+    }
+    let candidate = Path::new(rel);
+    if candidate.is_absolute() {
+        return Err(format!("relPath must be relative to the loop dir: {rel:?}"));
+    }
+    let mut resolved = base.to_path_buf();
+    for comp in candidate.components() {
+        match comp {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {} // "." — a no-op segment
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("relPath escapes the loop dir: {rel:?}"));
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+/// `write_loop_file(loopId, loopsDir, relPath, content, overwrite?)` (§6, U3 Task 2).
+/// Scaffolds a file (typically TASK.md) inside `loops/<loopId>/`. Refuses to clobber
+/// an existing file unless `overwrite: true` is passed. Writes atomically: the
+/// content lands in a sibling temp file first, then an `fs::rename` swaps it into
+/// place, so a crash mid-write can never leave a half-written file behind.
+#[tauri::command]
+pub fn write_loop_file(
+    loop_id: String,
+    loops_dir: String,
+    rel_path: String,
+    content: String,
+    overwrite: Option<bool>,
+) -> Result<(), String> {
+    if !is_safe_loop_id(&loop_id) {
+        return Err(format!("invalid loopId: {loop_id:?}"));
+    }
+    let base_dir = loop_base_dir(&PathBuf::from(&loops_dir), &loop_id);
+    let target = resolve_rel_path_in(&base_dir, &rel_path)?;
+    if target.exists() && !overwrite.unwrap_or(false) {
+        return Err(format!(
+            "{} already exists (pass overwrite:true to replace it)",
+            target.display()
+        ));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("{rel_path:?} has no parent directory"))?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("create {parent:?}: {e}"))?;
+
+    // Atomic write: a sibling `.tmp-<pid>` file, then an `fs::rename` into place (same
+    // filesystem, so the rename is atomic on both Windows and POSIX).
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}",
+        target.file_name().and_then(|s| s.to_str()).unwrap_or("write_loop_file"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, &content).map_err(|e| format!("write {tmp:?}: {e}"))?;
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename {tmp:?} -> {target:?}: {e}")
+    })?;
+    Ok(())
+}
+
+/// Result of `probe_command` (§6, U3 Task 3): `{ exitCode, durationMs, tail, timedOut }`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeResult {
+    /// The process exit code, or `null` when the probe was killed for exceeding
+    /// `timeoutMs` (in which case `timedOut` is true).
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    /// The last ~2000 chars of merged stdout+stderr.
+    pub tail: String,
+    pub timed_out: bool,
+}
+
+const PROBE_DEFAULT_TIMEOUT_MS: u64 = 60_000;
+const PROBE_MAX_TIMEOUT_MS: u64 = 300_000;
+/// How much of the merged output tail is kept (chars, not bytes — see `tail_of`).
+const PROBE_TAIL_CHARS: usize = 2000;
+
+/// Keep only the last `max_chars` characters of `s` (char-boundary safe, unlike a
+/// blind byte slice — merged process output may contain multi-byte UTF-8).
+fn tail_of(s: &str, max_chars: usize) -> String {
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
+    }
+    s.chars().skip(total - max_chars).collect()
+}
+
+/// `probe_command(loopId, loopsDir, command, timeoutMs?)` (§6, U3 Task 3). Runs
+/// `command` synchronously through the platform shell, in the SAME cwd
+/// `start_loop`/`spawn_detached` would use (`spawn_cwd` — the loop's state dir's
+/// parent), capped at `timeoutMs` (default 60s, max 300s; a caller-supplied value
+/// above the max is CLAMPED, not rejected). Same trust model as `start_loop`: this
+/// already spawns commands straight out of the loop's own loop.json gate stages; the
+/// only new surface here is doing it synchronously, before the first real iteration.
+#[tauri::command]
+pub fn probe_command(
+    loop_id: String,
+    loops_dir: String,
+    command: String,
+    timeout_ms: Option<u64>,
+) -> Result<ProbeResult, String> {
+    if !is_safe_loop_id(&loop_id) {
+        return Err(format!("invalid loopId: {loop_id:?}"));
+    }
+    if command.trim().is_empty() {
+        return Err("command must not be empty".to_string());
+    }
+    let timeout_ms = timeout_ms
+        .unwrap_or(PROBE_DEFAULT_TIMEOUT_MS)
+        .clamp(1, PROBE_MAX_TIMEOUT_MS);
+
+    let loops = PathBuf::from(&loops_dir);
+    let base_dir = loop_base_dir(&loops, &loop_id);
+    // Prefer the loop's own declared stateDir (exactly `start_loop`'s cwd) when its
+    // loop.json is already on disk. The Tuning Console's "▸ test" button can probe a
+    // gate stage BEFORE the loop is ever created (while still authoring the draft) —
+    // in that case there is no loop.json yet, so fall back to the loop's own base dir
+    // (loops/<id>/), which is what the default stateDir (".loop", one level under it)
+    // resolves to anyway in the common case.
+    let cwd = match load_loop_def(&loops, &loop_id) {
+        Ok(def) => spawn_cwd(&state_dir_of(&def, &base_dir)),
+        Err(_) => base_dir.clone(),
+    };
+    std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd {cwd:?}: {e}"))?;
+
+    // Merge stdout+stderr into one temp file (same technique as spawn_detached's
+    // run.out — a clone of the SAME handle for both streams), then read it back.
+    let out_path = std::env::temp_dir().join(format!(
+        "orrery-probe-{}-{}.out",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let stdout_file =
+        std::fs::File::create(&out_path).map_err(|e| format!("create {out_path:?}: {e}"))?;
+    let stderr_file = stdout_file
+        .try_clone()
+        .map_err(|e| format!("clone probe output handle: {e}"))?;
+
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", &command]);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", &command]);
+        c
+    };
+    cmd.current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    let start = Instant::now();
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn probe command: {e}"))?;
+
+    let mut exit_code = None;
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_code = status.code();
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() >= Duration::from_millis(timeout_ms) {
+                    timed_out = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&out_path);
+                return Err(format!("wait on probe command: {e}"));
+            }
+        }
+    }
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let text = std::fs::read_to_string(&out_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&out_path);
+
+    Ok(ProbeResult {
+        exit_code,
+        duration_ms,
+        tail: tail_of(&text, PROBE_TAIL_CHARS),
+        timed_out,
+    })
 }
 
 #[cfg(test)]
@@ -1524,5 +1763,223 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         assert!(content.contains("ORRERY_SPAWN_OK"), "run.out captured stdout: {content:?}");
+    }
+
+    // ----- U3 write_loop_file tests -----
+
+    #[test]
+    fn write_loop_file_rejects_unsafe_loop_id() {
+        let tmp = TmpDir::new("wlf-id");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        let err = write_loop_file("../evil".into(), loops_dir, "TASK.md".into(), "hello".into(), None)
+            .unwrap_err();
+        assert!(err.contains("invalid loopId"), "{err}");
+    }
+
+    #[test]
+    fn write_loop_file_rejects_path_escape() {
+        let tmp = TmpDir::new("wlf-escape");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(tmp.path().join("roman")).unwrap();
+        for bad in [
+            "../outside.md",
+            "..\\outside.md",
+            "sub/../../outside.md",
+            "/abs/TASK.md",
+            "C:/abs/TASK.md",
+        ] {
+            let err =
+                write_loop_file("roman".into(), loops_dir.clone(), bad.into(), "x".into(), None)
+                    .unwrap_err();
+            assert!(err.contains("relPath"), "{bad:?} -> {err}");
+        }
+        // an empty relPath is refused too
+        assert!(write_loop_file("roman".into(), loops_dir, "".into(), "x".into(), None).is_err());
+    }
+
+    #[test]
+    fn write_loop_file_writes_and_refuses_overwrite_without_flag() {
+        let tmp = TmpDir::new("wlf-write");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(tmp.path().join("roman")).unwrap();
+
+        write_loop_file(
+            "roman".into(),
+            loops_dir.clone(),
+            "TASK.md".into(),
+            "# Roman numerals\n".into(),
+            None,
+        )
+        .expect("first write ok");
+        let path = tmp.path().join("roman").join("TASK.md");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Roman numerals\n");
+
+        // a second write without overwrite:true is refused, and leaves the file untouched
+        let err = write_loop_file(
+            "roman".into(),
+            loops_dir.clone(),
+            "TASK.md".into(),
+            "clobbered".into(),
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Roman numerals\n");
+
+        // overwrite:true replaces it
+        write_loop_file("roman".into(), loops_dir, "TASK.md".into(), "# v2\n".into(), Some(true))
+            .expect("overwrite ok");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# v2\n");
+    }
+
+    #[test]
+    fn write_loop_file_creates_nested_dirs_inside_the_loop_dir() {
+        let tmp = TmpDir::new("wlf-nested");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(tmp.path().join("roman")).unwrap();
+
+        write_loop_file("roman".into(), loops_dir, "docs/spec/TASK.md".into(), "nested".into(), None)
+            .expect("nested write ok");
+        let path = tmp.path().join("roman").join("docs").join("spec").join("TASK.md");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "nested");
+    }
+
+    // ----- U3 probe_command tests -----
+
+    #[test]
+    fn probe_command_rejects_unsafe_loop_id_without_spawning() {
+        let err =
+            probe_command("../evil".into(), "D:/nonexistent".into(), "echo hi".into(), None)
+                .unwrap_err();
+        assert!(err.contains("invalid loopId"), "{err}");
+    }
+
+    #[test]
+    fn probe_command_rejects_empty_command_without_spawning() {
+        let tmp = TmpDir::new("probe-empty");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+        for empty in ["", "   "] {
+            let err =
+                probe_command("roman".into(), loops_dir.clone(), empty.into(), None).unwrap_err();
+            assert!(err.contains("command must not be empty"), "{err}");
+        }
+    }
+
+    /// Shared fixture: a minimal `loops/roman/loop.json` under a fresh temp dir, so
+    /// `probe_command` can resolve a cwd without touching the real seed loops.
+    fn probe_fixture(tag: &str) -> (TmpDir, PathBuf) {
+        let tmp = TmpDir::new(tag);
+        let loops_dir = tmp.path().join("loops");
+        let state_dir = tmp.path().join("state");
+        std::fs::create_dir_all(loops_dir.join("roman")).unwrap();
+        std::fs::create_dir_all(&state_dir).unwrap();
+        let def = serde_json::json!({
+            "id": "roman", "name": "roman", "kind": "generic", "adapter": "generic",
+            "stateDir": state_dir.to_string_lossy(), "logFile": "log.jsonl"
+        });
+        std::fs::write(
+            loops_dir.join("roman").join("loop.json"),
+            serde_json::to_string_pretty(&def).unwrap(),
+        )
+        .unwrap();
+        (tmp, loops_dir)
+    }
+
+    #[test]
+    fn probe_command_clamps_timeout_and_runs_a_trivial_command() {
+        let (_tmp, loops_dir) = probe_fixture("probe-run");
+        let result = probe_command(
+            "roman".into(),
+            loops_dir.to_string_lossy().to_string(),
+            "echo ORRERY_PROBE_OK && exit 0".into(),
+            Some(999_999_999), // way above the max — must be CLAMPED, not rejected
+        )
+        .expect("probe ok");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.timed_out);
+        assert!(result.tail.contains("ORRERY_PROBE_OK"), "{:?}", result.tail);
+    }
+
+    #[test]
+    fn probe_command_captures_nonzero_exit() {
+        let (_tmp, loops_dir) = probe_fixture("probe-fail");
+        let result =
+            probe_command("roman".into(), loops_dir.to_string_lossy().to_string(), "exit 7".into(), None)
+                .expect("probe ok even on nonzero exit");
+        assert_eq!(result.exit_code, Some(7));
+        assert!(!result.timed_out);
+    }
+
+    #[test]
+    fn probe_command_times_out_and_kills_the_process() {
+        let (_tmp, loops_dir) = probe_fixture("probe-timeout");
+        // A command that outlives a very short timeout — `ping`/`sleep` are available
+        // without extra tooling and don't need interactive stdin.
+        #[cfg(windows)]
+        let slow_cmd = "ping -n 20 127.0.0.1 >NUL";
+        #[cfg(not(windows))]
+        let slow_cmd = "sleep 20";
+
+        let start = Instant::now();
+        let result = probe_command(
+            "roman".into(),
+            loops_dir.to_string_lossy().to_string(),
+            slow_cmd.into(),
+            Some(300),
+        )
+        .expect("probe ok even on timeout");
+        assert!(result.timed_out, "{result:?}");
+        assert_eq!(result.exit_code, None);
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "kill must be prompt, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn probe_command_falls_back_to_loop_base_dir_when_loop_json_is_missing() {
+        // The console's "▸ test" button can probe a gate stage BEFORE the loop is ever
+        // created (while still authoring the draft) — no loops/<id>/loop.json exists yet.
+        let tmp = TmpDir::new("probe-no-def");
+        let loops_dir = tmp.path().join("loops"); // NOT created — no loop.json anywhere
+        let result = probe_command(
+            "draft-loop".into(),
+            loops_dir.to_string_lossy().to_string(),
+            "echo ORRERY_PROBE_OK && exit 0".into(),
+            None,
+        )
+        .expect("probe ok even with no loop.json on disk");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.tail.contains("ORRERY_PROBE_OK"));
+        // it ran inside the loop's own (freshly created) base dir
+        assert!(loops_dir.join("draft-loop").is_dir());
+    }
+
+    // ----- U3 resolve_rel_path_in / tail_of unit tests (pure, no fs) -----
+
+    #[test]
+    fn resolve_rel_path_in_accepts_normal_relative_and_rejects_escapes() {
+        let base = Path::new("/loops/roman");
+        assert_eq!(resolve_rel_path_in(base, "TASK.md").unwrap(), Path::new("/loops/roman/TASK.md"));
+        assert_eq!(
+            resolve_rel_path_in(base, "./TASK.md").unwrap(),
+            Path::new("/loops/roman/TASK.md")
+        );
+        assert_eq!(
+            resolve_rel_path_in(base, "docs/TASK.md").unwrap(),
+            Path::new("/loops/roman/docs/TASK.md")
+        );
+
+        for bad in ["../TASK.md", "docs/../../TASK.md", "/abs/TASK.md", ""] {
+            assert!(resolve_rel_path_in(base, bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn tail_of_keeps_only_the_last_n_chars() {
+        assert_eq!(tail_of("hello", 10), "hello");
+        assert_eq!(tail_of("hello world", 5), "world");
+        assert_eq!(tail_of("", 5), "");
     }
 }
