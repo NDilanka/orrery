@@ -121,7 +121,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 13;
+    z-index: var(--z-scene-overlay);
   }
   .ident {
     position: absolute;
@@ -180,10 +180,11 @@
   .threshold.frost { color: var(--frost); }
   .threshold.beacon { color: var(--crimson); }
   /* "loud" thresholds (a genuine crash + the weekly quota-night) get the SAME glowing-chip
-     treatment as the NEEDS-A-DECISION pill below (`--glow` + `chipBreathe`, shared) — a
-     failure earns the same voice, not just bigger pulsing text. Non-interactive (a div,
-     not a button): there's nothing to DO from inside Planetarium besides exit to the full
-     instrument, so unlike `.needs` this never gets `cursor:pointer` or a hover state. */
+     treatment as the NEEDS-A-DECISION pill below (`--glow` + the shared `breathe` keyframe,
+     primitives.css) — a failure earns the same voice, not just bigger pulsing text.
+     Non-interactive (a div, not a button): there's nothing to DO from inside Planetarium
+     besides exit to the full instrument, so unlike `.needs` this never gets
+     `cursor:pointer` or a hover state. */
   .threshold.loud {
     --glow: var(--crimson);
     left: 50%;
@@ -197,7 +198,7 @@
     border-radius: var(--radius-pill);
     border: 1px solid var(--glow);
     background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
-    animation: chipBreathe 2.6s var(--ease-standard) infinite;
+    animation: breathe 2.6s var(--ease-standard) infinite;
   }
   .threshold.loud.frost {
     --glow: var(--frost);
@@ -231,7 +232,7 @@
     background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
     cursor: pointer;
     backdrop-filter: blur(6px);
-    animation: chipBreathe 2.6s var(--ease-standard) infinite;
+    animation: breathe 2.6s var(--ease-standard) infinite;
   }
   .needs:hover {
     background: color-mix(in srgb, var(--glow) 32%, var(--void-3));
@@ -245,22 +246,9 @@
     font-size: 12px;
     font-weight: 700;
   }
-  /* shared by `.needs` and `.threshold.loud` — a slow tightening of the glow ring
-     (attention without a blink), parameterized by `--glow` so both a crimson crash/beacon
-     and the frost weekly-night read equally "loud" without duplicating the animation. */
-  @keyframes chipBreathe {
-    0%,
-    100% {
-      box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--glow) 40%, transparent),
-        0 0 24px color-mix(in srgb, var(--glow) 45%, transparent);
-    }
-    50% {
-      box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--glow) 70%, transparent),
-        0 0 12px color-mix(in srgb, var(--glow) 60%, transparent);
-    }
-  }
+  /* the shared `breathe` keyframe now lives in primitives.css (a slow tightening of the glow
+     ring, attention without a blink) — `.needs` and `.threshold.loud` above just supply
+     `--glow` and the per-consumer duration. */
   .needs.reduced {
     animation: none;
   }

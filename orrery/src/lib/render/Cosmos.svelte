@@ -30,6 +30,7 @@
   import { uiStore } from '../stores/ui.svelte';
   import { fmtRelative } from '../timefmt';
   import { restColor, stateKey, stateGlyph, stateLabel } from '../palette';
+  import { initTheme, FALLBACK } from '../theme';
 
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
@@ -44,18 +45,21 @@
   // it without creating a loop and it stays gone for the rest of this visit.
   let onboardingDismissed = $state(false);
 
-  const C = {
-    void: 0x070912,
-    brass: 0xc9a24b,
-    starlight: 0xeaf0ff,
-    ember: 0xff7a3c,
-    cyan: 0x46e0ff,
-    amber: 0xffc24b,
-    green: 0x5bf09b,
-    crimson: 0xff3b5c,
-    auditor: 0xf4f8ff,
-    horizonRose: 0xff6b7e,
-    frost: 0x9fb6ff,
+  // palette — resolved from tokens.css via theme.ts (the single color source, plan §M0.4)
+  // as soon as onMount runs, below; starts as the static fallback (== today's literal hex)
+  // so there's a valid value even for the instant before that resolution happens.
+  let C = {
+    void: FALLBACK.void,
+    brass: FALLBACK.brass,
+    starlight: FALLBACK.starlight,
+    ember: FALLBACK.ember,
+    cyan: FALLBACK.cyan,
+    amber: FALLBACK.amber,
+    green: FALLBACK.green,
+    crimson: FALLBACK.crimson,
+    auditor: FALLBACK.auditor,
+    horizonRose: FALLBACK.horizonRose,
+    frost: FALLBACK.frost,
   };
 
   function fmtUsd(n: number): string {
@@ -116,6 +120,23 @@
     let app: any = null;
     let raf = 0;
     let cleanup: (() => void) | null = null;
+
+    // resolve the live CSS custom properties into numeric colors BEFORE any Pixi setup —
+    // see ../theme.ts. Falls back to the FALLBACK-seeded C above if resolution fails.
+    const t = initTheme();
+    C = {
+      void: t.void,
+      brass: t.brass,
+      starlight: t.starlight,
+      ember: t.ember,
+      cyan: t.cyan,
+      amber: t.amber,
+      green: t.green,
+      crimson: t.crimson,
+      auditor: t.auditor,
+      horizonRose: t.horizonRose,
+      frost: t.frost,
+    };
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -503,11 +524,11 @@
        that don't match so triage still works on a wall of loops. -->
   {#if showFilters}
     <div class="filters" role="group" aria-label="filter loops">
-      <button class="pill" class:on={filter === 'all'} aria-pressed={filter === 'all'} onclick={() => (filter = 'all')}>
+      <button class="fchip" class:on={filter === 'all'} aria-pressed={filter === 'all'} onclick={() => (filter = 'all')}>
         All<span class="pcount num">{cosmosStore.loops.length}</span>
       </button>
       <button
-        class="pill"
+        class="fchip"
         class:on={filter === 'needs'}
         class:has={needsYouCount > 0}
         aria-pressed={filter === 'needs'}
@@ -516,7 +537,7 @@
         Needs you<span class="pcount num">{needsYouCount}</span>
       </button>
       <button
-        class="pill"
+        class="fchip"
         class:on={filter === 'running'}
         aria-pressed={filter === 'running'}
         onclick={() => (filter = 'running')}
@@ -533,7 +554,7 @@
     <!-- U3 Task 4: a compact 4-step checklist, not a wizard. Only step 1 is a button —
          steps 2-4 are one-line previews of what happens next, so the foot-gun catches
          (describe done, test the gate) are visible before the user ever hits them. -->
-    <div class="onboard" role="status">
+    <div class="onboard floating-card" role="status">
       <button class="onboard-x" aria-label="dismiss" onclick={() => (onboardingDismissed = true)}>
         ✕
       </button>
@@ -605,7 +626,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none; /* gaps pass clicks through to the canvas glyphs */
-    z-index: 11;
+    z-index: var(--z-scene-overlay);
   }
   .station {
     position: absolute;
@@ -764,7 +785,7 @@
     top: var(--chrome-inset);
     left: 50%;
     transform: translateX(-50%);
-    z-index: 12;
+    z-index: var(--z-scene-overlay);
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -824,9 +845,12 @@
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
-    z-index: 11;
+    z-index: var(--z-scene-overlay);
   }
-  .pill {
+  /* named .fchip (not .pill) to avoid colliding with the new shared .pill primitive
+     (primitives.css) — this filter chip is its own look (transparent, no blur),
+     unrelated to the navbar/ignite-fab chip shape. */
+  .fchip {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -844,32 +868,32 @@
       color var(--dur-fast) var(--ease-standard),
       background var(--dur-fast) var(--ease-standard);
   }
-  .pill:hover {
+  .fchip:hover {
     border-color: color-mix(in srgb, var(--brass) 45%, transparent);
     color: var(--starlight);
   }
-  .pill.on {
+  .fchip.on {
     border-color: var(--brass);
     color: var(--brass);
     background: color-mix(in srgb, var(--brass) 8%, transparent);
   }
-  .pill .pcount {
+  .fchip .pcount {
     font-size: var(--text-2xs);
     padding: 0 5px;
     border-radius: var(--radius-pill);
     background: var(--surface-3);
     color: var(--text-meta);
   }
-  .pill.on .pcount {
+  .fchip.on .pcount {
     background: color-mix(in srgb, var(--brass) 22%, var(--surface-3));
     color: var(--brass);
   }
-  /* the Needs-you pill earns a crimson edge when the count is nonzero */
-  .pill.has {
+  /* the Needs-you chip earns a crimson edge when the count is nonzero */
+  .fchip.has {
     border-color: color-mix(in srgb, var(--crimson) 40%, var(--hairline));
     color: var(--starlight);
   }
-  .pill.has .pcount {
+  .fchip.has .pcount {
     background: color-mix(in srgb, var(--crimson) 30%, var(--surface-3));
     color: var(--starlight);
   }
@@ -918,11 +942,7 @@
     width: min(380px, calc(100vw - 2 * var(--space-5)));
     text-align: left;
     padding: var(--space-5);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
     backdrop-filter: blur(10px);
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
   }
   .onboard .etitle,
   .onboard .esub {
@@ -1022,7 +1042,7 @@
     border: 1px solid color-mix(in srgb, var(--crimson) 40%, var(--panel-edge));
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
-    z-index: 13;
+    z-index: var(--z-scene-overlay);
   }
   .emsg {
     font-size: var(--text-xs);

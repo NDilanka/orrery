@@ -14,6 +14,7 @@
   // `browser` guard); this shell only orchestrates view state + the transport.
 
   import '$lib/render/tokens.css';
+  import '$lib/render/primitives.css';
   import '$lib/fonts'; // self-hosted Space Grotesk + JetBrains Mono (offline-safe)
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
@@ -323,7 +324,7 @@
     {/if}
 
     <!-- ── nav shell: brand + breadcrumbs + actions ────────────────────────── -->
-    <nav class="navbar" aria-label="primary">
+    <nav class="navbar pill" aria-label="primary">
       <div class="crumbs">
         <button
           class="crumb {view === 'cosmos' ? 'active' : ''}"
@@ -379,7 +380,7 @@
     <!-- ✦ new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
          now lives in the Cosmos roster — the single home for enter + edit. -->
     {#if view === 'cosmos'}
-      <button class="ignite-fab" onclick={() => cosmosStore.igniteNew()}>
+      <button class="ignite-fab pill" onclick={() => cosmosStore.igniteNew()}>
         <span aria-hidden="true">✦</span> new loop
       </button>
     {/if}
@@ -457,7 +458,7 @@
     filter: blur(1px);
   }
   .body-layer {
-    z-index: 8;
+    z-index: var(--z-layer-body);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -467,10 +468,8 @@
     }
   }
 
-  /* nav shell */
+  /* nav shell — .pill (primitives.css) supplies the shared position/shape/blur/z-index */
   .navbar {
-    position: absolute;
-    top: 18px;
     right: 18px;
     display: flex;
     align-items: center;
@@ -478,9 +477,6 @@
     padding: 9px 14px;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
-    border-radius: var(--radius-pill);
-    backdrop-filter: blur(8px);
-    z-index: 20;
   }
   .crumbs {
     display: flex;
@@ -578,7 +574,7 @@
     overflow: hidden;
     clip: rect(0 0 0 0);
     white-space: nowrap;
-    z-index: 30;
+    z-index: var(--z-a11y);
   }
   .items-a11y:focus-within {
     width: auto;
@@ -802,23 +798,18 @@
     font-weight: 600;
   }
 
-  /* ignite affordance */
+  /* ignite affordance — .pill (primitives.css) supplies the shared position/shape/blur/z-index */
   .ignite-fab {
-    position: absolute;
-    top: 18px;
     left: 18px;
     font-family: var(--font-grotesk);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.06em;
     padding: 9px 16px;
-    border-radius: var(--radius-pill);
     border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
     background: color-mix(in srgb, var(--amber) 9%, transparent);
     color: var(--amber);
     cursor: pointer;
-    backdrop-filter: blur(8px);
-    z-index: 20;
     transition: transform 0.12s, background 0.18s;
   }
   .ignite-fab:hover {

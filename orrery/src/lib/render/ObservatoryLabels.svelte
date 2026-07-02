@@ -123,7 +123,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 2;
+    z-index: var(--z-labels);
     /* low contrast so the labels read as instrument annotation, not chrome */
     font-family: var(--font-grotesk);
   }

@@ -403,7 +403,7 @@
 <!-- scrim + dialog -->
 <div class="scrim" role="presentation" onclick={onClose}>
   <div
-    class="console"
+    class="console floating-card"
     role="dialog"
     aria-modal="true"
     aria-labelledby="tc-title"
@@ -511,6 +511,7 @@
           <div class="dlabels mono"><span>THRIFT</span><span>AMBITION</span></div>
           <div class="dsub mono">budget &amp; models</div>
           <input
+            class="slider thumb-brass"
             type="range"
             min="0"
             max="1"
@@ -532,6 +533,7 @@
           <div class="dlabels mono"><span>FUSSY</span><span>PATIENCE</span></div>
           <div class="dsub mono">verification strictness</div>
           <input
+            class="slider thumb-brass"
             type="range"
             min="0"
             max="1"
@@ -555,6 +557,7 @@
           <div class="dlabels mono"><span>COMPANY</span><span>AUTONOMY</span></div>
           <div class="dsub mono">how unattended</div>
           <input
+            class="slider thumb-brass"
             type="range"
             min="0"
             max="1"
@@ -1057,19 +1060,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(5, 7, 14, 0.74);
+    background: var(--scrim);
     backdrop-filter: blur(4px);
-    z-index: 40;
+    z-index: var(--z-modal);
     padding: 18px;
   }
   .console {
     width: min(880px, 96vw);
     max-height: 94vh;
     overflow-y: auto;
-    background: linear-gradient(180deg, rgba(11, 14, 28, 0.96), rgba(7, 9, 18, 0.98));
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(201, 162, 75, 0.12);
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1282,24 +1281,8 @@
       var(--surface-3) 100%
     );
   }
-  .dial input[type='range']::-webkit-slider-thumb {
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--starlight);
-    border: 2px solid var(--brass);
-    cursor: pointer;
-    box-shadow: 0 0 8px rgba(201, 162, 75, 0.5);
-  }
-  .dial input[type='range']::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--starlight);
-    border: 2px solid var(--brass);
-    cursor: pointer;
-  }
+  /* thumb appearance + focus ring now come from the shared .slider.thumb-brass
+     (primitives.css) — see the `class="slider thumb-brass"` on each dial <input>. */
   .dhint {
     margin-top: 5px;
     font-size: 10.5px;

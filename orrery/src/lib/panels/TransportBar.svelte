@@ -60,7 +60,7 @@
 
   <div class="axis">
     <input
-      class="scrub"
+      class="scrub slider"
       type="range"
       min="0"
       max={Math.max(1, state.total)}

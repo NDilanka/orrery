@@ -21,6 +21,7 @@
   import { runStore, STAR_R0, STAR_K, RING_BASE } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
   import { restColor } from '../palette';
+  import { initTheme, FALLBACK } from '../theme';
   import ObservatoryLabels from './ObservatoryLabels.svelte';
 
   let host: HTMLDivElement;
@@ -58,25 +59,27 @@
     horizonPct: null,
   });
 
-  // palette (kept in sync with tokens.css; Pixi needs numbers)
-  const C = {
-    void: 0x070912,
-    brass: 0xc9a24b,
-    starlight: 0xeaf0ff,
-    ember: 0xff7a3c,
-    cyan: 0x46e0ff,
-    amber: 0xffc24b,
-    green: 0x5bf09b,
-    crimson: 0xff3b5c,
-    indigo: 0x1a1740,
-    auditor: 0xf4f8ff,
-    ghostBrass: 0xc9a24b,
-    cacheTeal: 0x2fd9c9,
-    horizonRose: 0xff6b7e,
-    frost: 0x9fb6ff,
-    haiku: 0xff6a4d,
-    sonnet: 0xc9a24b,
-    opus: 0x9fd0ff,
+  // palette — resolved from tokens.css via theme.ts (the single color source, plan §M0.4)
+  // as soon as onMount runs, below; starts as the static fallback (== today's literal
+  // hex) so there's a valid value even for the instant before that resolution happens.
+  let C = {
+    void: FALLBACK.void,
+    brass: FALLBACK.brass,
+    starlight: FALLBACK.starlight,
+    ember: FALLBACK.ember,
+    cyan: FALLBACK.cyan,
+    amber: FALLBACK.amber,
+    green: FALLBACK.green,
+    crimson: FALLBACK.crimson,
+    indigo: FALLBACK.indigo,
+    auditor: FALLBACK.auditor,
+    ghostBrass: FALLBACK.ghostBrass,
+    cacheTeal: FALLBACK.cacheTeal,
+    horizonRose: FALLBACK.horizonRose,
+    frost: FALLBACK.frost,
+    haiku: FALLBACK.haiku,
+    sonnet: FALLBACK.sonnet,
+    opus: FALLBACK.opus,
   };
 
   function modelColor(m: string): number {
@@ -114,6 +117,29 @@
     let app: any = null;
     let raf = 0;
     let cleanupResize: (() => void) | null = null;
+
+    // resolve the live CSS custom properties into numeric colors BEFORE any Pixi setup —
+    // see ../theme.ts. Falls back to the FALLBACK-seeded C above if resolution fails.
+    const t = initTheme();
+    C = {
+      void: t.void,
+      brass: t.brass,
+      starlight: t.starlight,
+      ember: t.ember,
+      cyan: t.cyan,
+      amber: t.amber,
+      green: t.green,
+      crimson: t.crimson,
+      indigo: t.indigo,
+      auditor: t.auditor,
+      ghostBrass: t.ghostBrass,
+      cacheTeal: t.cacheTeal,
+      horizonRose: t.horizonRose,
+      frost: t.frost,
+      haiku: t.haiku,
+      sonnet: t.sonnet,
+      opus: t.opus,
+    };
 
     // reduced-motion comes from the single uiStore source (read per-frame in tick)
 
