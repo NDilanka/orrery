@@ -427,7 +427,7 @@
     outline: none;
     font-family: var(--font-grotesk);
     font-size: var(--text-sm);
-    color: var(--starlight);
+    color: var(--text-primary);
   }
   .filter::placeholder {
     color: var(--text-faint);
@@ -439,11 +439,11 @@
   }
   .ghdr {
     padding: var(--space-2) var(--space-4) 4px;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.16em;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-meta);
-    opacity: 0.85;
+    color: var(--em-low);
   }
   .row {
     display: flex;
@@ -461,8 +461,8 @@
   }
   .row.active {
     background: var(--surface-hover);
-    border-left-color: var(--plasma-cyan);
-    color: var(--starlight);
+    border-left-color: var(--em-hi);
+    color: var(--text-primary);
   }
   .row.disabled {
     color: var(--text-faint);

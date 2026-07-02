@@ -77,6 +77,49 @@
     activeLoop ? LOOPS.find((l) => l.id === activeLoop)?.name ?? activeLoop : null,
   );
 
+  // ── M4.3 full-bleed canvas: safeInsets for Observatory ─────────────────────
+  // Observatory now renders on a stage-level layer BEHIND `.system-grid` (the scene fills
+  // the viewport edge-to-edge instead of being boxed into a grid cell). `.g-center` stays
+  // in the grid as an EMPTY probe — it's still laid out exactly where the canvas used to
+  // live (rails/dock/strip collapse it precisely as before), so its box IS the
+  // "unobstructed" region. We measure that box's distance from the full-bleed layer's
+  // edges (gridEl, whose rect === the layer's rect — both position:absolute inset:0) and
+  // hand it to Observatory as `safeInsets`, so the system centers/fit-scales inside the
+  // same region a boxed canvas used to occupy, without actually being boxed.
+  let gridEl = $state<HTMLDivElement | null>(null);
+  let centerProbeEl = $state<HTMLDivElement | null>(null);
+  let safeInsets = $state({ top: 0, right: 0, bottom: 0, left: 0 });
+
+  function measureSafeInsets() {
+    if (!gridEl || !centerProbeEl) return;
+    const g = gridEl.getBoundingClientRect();
+    const c = centerProbeEl.getBoundingClientRect();
+    safeInsets = {
+      top: Math.max(0, c.top - g.top),
+      right: Math.max(0, g.right - c.right),
+      bottom: Math.max(0, g.bottom - c.bottom),
+      left: Math.max(0, c.left - g.left),
+    };
+  }
+
+  // Re-measure whenever the probe or its grid host resize — rail collapse/expand, the
+  // ambient toggle, the Body drawer's `.bare` mode, the phone breakpoint, and a plain
+  // window resize all show up as one or the other's box changing size, so a single
+  // ResizeObserver pair covers every case without polling on every reactive tick. The
+  // effect itself re-runs whenever the elements mount/unmount (entering/leaving the
+  // System/Body altitude), tearing the observer down and resetting to zero insets.
+  $effect(() => {
+    if (!browser || !gridEl || !centerProbeEl) {
+      safeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+      return;
+    }
+    const ro = new ResizeObserver(measureSafeInsets);
+    ro.observe(gridEl);
+    ro.observe(centerProbeEl);
+    measureSafeInsets(); // synchronous first read — don't wait a frame for the initial box
+    return () => ro.disconnect();
+  });
+
   // ── navigation (the zoom state machine) ────────────────────────────────────
   async function enterSystem(id: string) {
     activeLoop = id;
@@ -239,47 +282,42 @@
     <!-- ── SYSTEM (the existing Observatory, scoped to the active loop) ─────── -->
     {#if view === 'system' || view === 'body'}
       <div class="layer system-layer {view === 'system' ? 'in' : 'out-near'}">
-        <!-- wave U2 Task 1: a CSS grid dock replaces the old stack of independently
-             absolutely-positioned panels (each hand-tracking a sibling's pixel
-             height via calc()). The canvas is a real grid cell ("center") that
-             genuinely resizes as the rails collapse/expand ("breathes"); chrome is
-             placed by the grid, not by z-indexed floats — each panel keeps only
-             its own internal styling (bg/border/padding). `.bare` collapses the
-             rails/bottom-dock/cost-strip to zero size in Ambient (Planetarium)
-             mode AND whenever the Body drawer is open (view==='body'), so the
-             canvas gets the full dock either way. Observatory itself is ALWAYS
-             mounted here (never remounted on the ambient toggle) — it owns its
-             own Tier-1 rendering via uiStore.tierOne. -->
-        <div class="system-grid" class:bare={uiStore.ambient || view !== 'system'}>
-          {#if view === 'system'}
-            <!-- top bar: freshness badge (left) · mode toggle (center) · the
-                 breadcrumb/live-replay badge cluster (navbar, below) owns the right -->
-            <div class="g-topbar">
-              <div class="tb-left">
-                <StaleBadge status={sessionStore.wsStatus} transportKind={sessionStore.transportKind} />
-              </div>
-              <div class="tb-center"><ModeBar canRewind={!!sessionStore.playback} /></div>
-              <div class="tb-right" aria-hidden="true"></div>
-            </div>
-          {/if}
+        <!-- ══ M4.3 full-bleed canvas ═══════════════════════════════════════════════
+             Observatory moves OFF the grid entirely onto a stage-level layer — behind
+             `.system-grid` in both DOM order and z-index — so the scene fills the whole
+             viewport edge-to-edge instead of being boxed into the old `.g-center` grid
+             cell. Observatory is ALWAYS mounted here (never remounted on the ambient
+             toggle, same lifetime guarantee the old `.g-center` gave it) and reads
+             `safeInsets` (measured off the now-empty `.g-center` probe below) to center/
+             fit-scale the system inside the unobstructed region instead of the whole
+             viewport. -->
+        <div class="canvas-stage">
+          <Observatory {safeInsets} />
+        </div>
+        <!-- M2.3 grain: now viewport-sized (stage level, below the chrome) instead of
+             bounded to the old canvas grid cell. -->
+        <div class="grain" aria-hidden="true"></div>
 
+        <!-- wave U2 Task 1 (M4.3: topbar row removed — merged into the one top rail
+             below) — a CSS grid dock places the floating chrome (rails/dock/strip) over
+             the full-bleed canvas above; every cell is transparent, so only each panel's
+             own background reads as a surface. `.bare` collapses the rails/bottom-dock/
+             cost-strip to zero size in Ambient (Planetarium) mode AND whenever the Body
+             drawer is open (view==='body') — the empty probe cell then spans the whole
+             grid, so safeInsets correctly collapses to ~0 in both cases too. -->
+        <div class="system-grid" class:bare={uiStore.ambient || view !== 'system'} bind:this={gridEl}>
           {#if view === 'system' && !uiStore.ambient}
             <!-- left rail: HUD (top) + the live log (flexes to fill, internal scroll) -->
             <div class="g-hud"><Hud /></div>
             <div class="g-log"><LogPanel /></div>
           {/if}
 
-          <div class="g-center">
-            <!-- the canvas always renders; it consults uiStore for the tier/mode -->
-            <Observatory />
-
-            <!-- M2.3 grain (CSS part): static, full-bleed over the canvas only — bounded to
-                 this grid cell (position:relative on .g-center is the containing block), so it
-                 structurally cannot bleed onto the rails/bottom-dock in sibling grid areas. No
-                 explicit z-index: it paints above the canvas by DOM order alone and stays below
-                 .items-a11y (var(--z-a11y)) without adding another magic number. -->
-            <div class="grain" aria-hidden="true"></div>
-
+          <!-- the empty probe cell: laid out exactly where the canvas used to live (rails/
+               dock/strip collapse it identically to before), so its box IS the safe region
+               — see the safeInsets effect above. Carries nothing visual of its own
+               (pointer-events:none) so clicks/hover reach the canvas behind it; the a11y
+               nav re-enables pointer-events on itself. -->
+          <div class="g-center" bind:this={centerProbeEl}>
             <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
                  Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
                  hidden until focused (skip-link style), so it never crowds the instrument. -->
@@ -306,7 +344,9 @@
               <VerdictPanel />
               <QAConsole />
             </div>
-            <!-- bottom dock: run controls (+ the transport scrubber in replay) -->
+            <!-- bottom dock (M4.3): RunControlBar + TransportBar merged into ONE
+                 full-width bar — this container supplies the hairline-top/background/
+                 padding; the panels inside stay transparent segments. -->
             <div class="g-bottom">
               {#if liveAndEmpty}
                 <!-- plan's empty-state pattern (§M3.2): dim glyph + one-line explanation +
@@ -320,14 +360,18 @@
                   </p>
                 </div>
               {/if}
-              <RunControlBar />
-              {#if sessionStore.playback}
-                <TransportBar
-                  transport={sessionStore.playback}
-                  state={sessionStore.playbackState}
-                  rewind={uiStore.rewind}
-                />
-              {/if}
+              <div class="dock">
+                <div class="dock-controls"><RunControlBar /></div>
+                {#if sessionStore.playback}
+                  <div class="dock-scrub">
+                    <TransportBar
+                      transport={sessionStore.playback}
+                      state={sessionStore.playbackState}
+                      rewind={uiStore.rewind}
+                    />
+                  </div>
+                {/if}
+              </div>
             </div>
             <div class="g-strip"><CostQuotaStrip /></div>
           {/if}
@@ -349,38 +393,65 @@
       </div>
     {/if}
 
-    <!-- ── nav shell: brand + breadcrumbs + actions ────────────────────────── -->
-    <nav class="navbar pill" aria-label="primary">
-      <div class="crumbs">
-        <button
-          class="crumb {view === 'cosmos' ? 'active' : ''}"
-          onclick={backToCosmos}
-          disabled={view === 'cosmos'}
-        >
-          <span aria-hidden="true">✦</span> COSMOS
-        </button>
-        {#if view !== 'cosmos'}
-          <span class="sep" aria-hidden="true">›</span>
+    <!-- ══ M4.3 the one top rail ═══════════════════════════════════════════════
+         Replaces three previously-competing floating clusters (the breadcrumb/badge
+         navbar pill, the System dock's own top-bar row) with a single rail on one
+         baseline: left = breadcrumb · center = ModeBar (System only) · right =
+         live/replay badge + staleness + share + ⌘K — one family of ghost pills.
+         Positioned within `.stage-body` exactly like the old navbar did, so
+         AlertBanner still pushes it down instead of overlapping it. -->
+    <nav class="toprail" class:has-fab={view === 'cosmos'} aria-label="primary">
+      <div class="tr-left">
+        <div class="crumbs">
           <button
-            class="crumb {view === 'system' ? 'active' : ''}"
-            onclick={backToSystem}
-            disabled={view === 'system'}
+            class="crumb {view === 'cosmos' ? 'active' : ''}"
+            onclick={backToCosmos}
+            disabled={view === 'cosmos'}
           >
-            {activeLoop ?? 'system'}
+            <span aria-hidden="true">✦</span> COSMOS
           </button>
-        {/if}
-        {#if view === 'body' && bodyKey}
-          <span class="sep" aria-hidden="true">›</span>
-          <span class="crumb active body">{bodyKey}</span>
+          {#if view !== 'cosmos'}
+            <span class="sep" aria-hidden="true">›</span>
+            <button
+              class="crumb {view === 'system' ? 'active' : ''}"
+              onclick={backToSystem}
+              disabled={view === 'system'}
+            >
+              {activeLoop ?? 'system'}
+            </button>
+          {/if}
+          {#if view === 'body' && bodyKey}
+            <span class="sep" aria-hidden="true">›</span>
+            <span class="crumb active body">{bodyKey}</span>
+          {/if}
+        </div>
+      </div>
+
+      <div class="tr-center">
+        {#if view === 'system'}
+          <ModeBar canRewind={!!sessionStore.playback} />
         {/if}
       </div>
 
-      <div class="navactions">
+      <div class="tr-right">
         {#if view === 'system'}
           {@const sel = runStore.selectedItem ?? runStore.state.currentItem}
           {#if sel}
             <button class="nbtn body" onclick={() => enterBody(sel)}>fly into body →</button>
           {/if}
+        {/if}
+        <span
+          class="mode mono"
+          class:islive={view !== 'cosmos' && isLiveTransport}
+          class:isreplay={view !== 'cosmos' && sessionStore.transportKind === 'replay'}
+          title={view !== 'cosmos' && sessionStore.transportKind === 'replay'
+            ? 'Watching a recorded fixture — controls (Start/Resume) are inert here.'
+            : isLiveTransport
+              ? 'Driving the real loop — Start/Resume spawn the engine.'
+              : ''}>{badgeLabel}</span
+        >
+        {#if view === 'system'}
+          <StaleBadge status={sessionStore.wsStatus} transportKind={sessionStore.transportKind} />
         {/if}
         <!-- Share to phone (Task 1): desktop/tauri-source affordance — hidden for the
              actual phone/web client served BY the LAN server (hasWsServer()), which has no
@@ -398,23 +469,17 @@
           aria-label="Open command palette"
           onclick={() => (showPalette = true)}>⌘K</button
         >
-        <span
-          class="mode mono"
-          class:islive={view !== 'cosmos' && isLiveTransport}
-          class:isreplay={view !== 'cosmos' && sessionStore.transportKind === 'replay'}
-          title={view !== 'cosmos' && sessionStore.transportKind === 'replay'
-            ? 'Watching a recorded fixture — controls (Start/Resume) are inert here.'
-            : isLiveTransport
-              ? 'Driving the real loop — Start/Resume spawn the engine.'
-              : ''}>{badgeLabel}</span
-        >
       </div>
     </nav>
 
-    <!-- ✦ new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
-         now lives in the Cosmos roster — the single home for enter + edit. -->
+    <!-- ✦ new-loop (Cosmos altitude only) — the primary CTA there, so it stays its own
+         top-left affordance rather than folding into the rail above (`.has-fab` on the
+         rail reserves clearance so the two never overlap). The per-loop ✎ edit
+         affordance now lives in the Cosmos roster — the single home for enter + edit.
+         M4.2 anatomy: `.btn-primary` (solid light — the monochrome inversion is the
+         strongest CTA) at `-lg` size; `.pill` keeps its shared position/z-index. -->
     {#if view === 'cosmos'}
-      <button class="ignite-fab pill" onclick={() => cosmosStore.igniteNew()}>
+      <button class="ignite-fab pill btn btn-primary btn-lg" onclick={() => cosmosStore.igniteNew()}>
         <span aria-hidden="true">✦</span> new loop
       </button>
     {/if}
@@ -535,15 +600,52 @@
     }
   }
 
-  /* nav shell — .pill (primitives.css) supplies the shared position/shape/blur/z-index */
-  .navbar {
-    right: 18px;
+  /* ══ M4.3 the one top rail ═══════════════════════════════════════════════════
+     Replaces the old right-anchored `.navbar` pill + the System dock's separate
+     `.g-topbar` row with a single full-width rail on the page gutter — one baseline,
+     three flex clusters (left/center/right), each still a "ghost pill" family but no
+     longer two independently-floating structures that needed mutual clearance hacks.
+     `position:absolute` within `.stage-body` (not `.pill` — that primitive is a small
+     anchored chip, not a full-width rail) so AlertBanner still pushes it down exactly
+     like the old navbar did. */
+  .toprail {
+    position: absolute;
+    top: var(--page-inset);
+    left: var(--page-inset);
+    right: var(--page-inset);
+    z-index: var(--z-chrome);
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: start;
+    gap: var(--space-3);
+    /* empty grid tracks between the pill clusters must not steal clicks/hover from the
+       full-bleed canvas now sitting behind the whole rail — each cluster re-enables. */
+    pointer-events: none;
+  }
+  .tr-left,
+  .tr-center,
+  .tr-right {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 9px 14px;
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    gap: var(--space-2);
+    min-width: 0;
+    pointer-events: auto;
+  }
+  .tr-left {
+    justify-self: start;
+  }
+  .tr-center {
+    justify-self: center;
+  }
+  .tr-right {
+    justify-self: end;
+  }
+  /* Cosmos view: the ignite-fab (below) is pinned to the exact same top-left corner as
+     `.tr-left` — reserve its width so the "COSMOS" home crumb doesn't render underneath
+     it (same clearance-reservation pattern the old `.tb-right` used for the reverse
+     case). ~152px covers the restyled `.btn-lg` "✦ new loop" button at its widest. */
+  .toprail.has-fab .tr-left {
+    padding-left: 152px;
   }
   .crumbs {
     display: flex;
@@ -559,33 +661,28 @@
     border-radius: var(--radius-pill);
     border: 1px solid transparent;
     background: transparent;
-    color: var(--text-dim);
+    color: var(--em-low);
     cursor: pointer;
     transition: color var(--dur-feedback) var(--ease-standard),
       border-color var(--dur-feedback) var(--ease-standard);
   }
   .crumb:hover:not(:disabled) {
-    color: var(--starlight);
-    border-color: var(--hairline);
+    color: var(--em-hi);
+    border-color: var(--border-hairline);
   }
   .crumb.active {
-    color: var(--brass);
+    color: var(--em-hi);
   }
   .crumb.body {
-    color: var(--plasma-cyan);
+    color: var(--em-hi);
     cursor: default;
   }
   .crumb:disabled {
     cursor: default;
   }
   .sep {
-    color: var(--text-faint);
+    color: var(--em-faint);
     font-size: var(--text-xs);
-  }
-  .navactions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
   }
   .nbtn {
     font-family: var(--font-grotesk);
@@ -594,62 +691,95 @@
     letter-spacing: 0.04em;
     padding: 6px 13px;
     border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
+    border: 1px solid var(--border-hairline);
     background: var(--void-3);
-    color: var(--starlight);
+    color: var(--em-hi);
     cursor: pointer;
     transition: border-color var(--dur-feedback) var(--ease-standard),
       transform var(--dur-feedback) var(--ease-standard);
   }
   .nbtn:hover {
-    border-color: var(--brass);
+    border-color: var(--em-mid);
     transform: translateY(-1px);
   }
   .nbtn.body {
-    color: var(--plasma-cyan);
-    border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
+    color: var(--em-hi);
+    border-color: var(--border-hairline);
   }
-  /* M3.1 hint chip — same boxed-mono chip vocabulary as HelpOverlay's .kbd, sized for the
-     navbar pill. */
+  /* M3.1 hint chip — same boxed-mono chip vocabulary as HelpOverlay's .kbd, now pill-
+     radius like every other rail chip (M4.3 "one family of ghost pills"). */
   .kbdhint {
     font-size: var(--text-2xs);
     letter-spacing: 0.06em;
-    padding: 3px 7px;
-    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    border-radius: var(--radius-pill);
     background: var(--void-3);
-    border: 1px solid var(--hairline);
-    color: var(--text-dim);
+    border: 1px solid var(--border-hairline);
+    color: var(--em-low);
     cursor: pointer;
     transition: border-color var(--dur-feedback) var(--ease-standard),
       color var(--dur-feedback) var(--ease-standard);
   }
   .kbdhint:hover {
-    border-color: var(--plasma-cyan);
-    color: var(--plasma-cyan);
+    border-color: var(--em-hi);
+    color: var(--em-hi);
   }
-  /* was 9px — below the scale's floor; nearest step is --text-2xs (10px, see plan
-     §M1.1 "round to nearest step") */
+  /* Tier C (meta, plan §M4.4): the LIVE/REPLAY source badge — borderless, faint by
+     default; LIVE brightens (em-hi, it's the thing you're actively watching) but stays
+     monochrome — neither state is a genuine alert (those stay red/amber, M4.1). was
+     9px — below the scale's floor; nearest step is --text-2xs (10px, plan §M1.1). */
   .mode {
     font-size: var(--text-2xs);
     padding: 2px 7px;
     border-radius: var(--radius-pill);
-    background: var(--void-3);
-    color: var(--text-dim);
+    background: transparent;
+    color: var(--em-faint);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     border: 1px solid transparent;
     cursor: default;
   }
-  /* honest live/replay badge: green when driving a real loop, amber when watching a fixture */
   .mode.islive {
-    color: var(--plasma-green);
-    border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
-    background: color-mix(in srgb, var(--plasma-green) 8%, transparent);
+    color: var(--em-hi);
+    border-color: var(--border-hairline);
   }
   .mode.isreplay {
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
-    background: color-mix(in srgb, var(--amber) 8%, transparent);
+    color: var(--em-low);
+  }
+
+  /* phone: the rail has too many pills (crumbs + ModeBar + fly-into-body + badge +
+     StaleBadge + kbdhint) for one 3-column grid row at 390px — the grid's tracks would
+     force a single item to either overflow past the viewport edge or squeeze its text
+     into a wrapped blob. Flex + space-between instead: left cluster stays left, right
+     cluster stays right (never merged into one centered blob — Cosmos's own centered
+     "N needs you" badge/filter bar, which +page.svelte can't touch, live in that exact
+     center band on this view), wrapping to a new line only when a cluster itself runs
+     out of room. */
+  @media (max-width: 640px) {
+    .toprail {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-start;
+      row-gap: var(--space-2);
+      column-gap: var(--space-2);
+      left: var(--space-2);
+      right: var(--space-2);
+      top: var(--space-2);
+    }
+    .toprail.has-fab .tr-left {
+      /* the ignite-fab sits above at top-left — clear it vertically (no room for the
+         desktop's horizontal reservation on a narrow phone); the right cluster is
+         untouched, so it stays above Cosmos's own centered badge instead of dropping
+         into the same band. */
+      padding-left: 0;
+      padding-top: 52px;
+    }
+    .tr-left,
+    .tr-center,
+    .tr-right {
+      flex-wrap: wrap;
+    }
   }
 
   /* accessible work-item list: visually hidden until a child is focused (skip-link pattern),
@@ -664,6 +794,9 @@
     clip: rect(0 0 0 0);
     white-space: nowrap;
     z-index: var(--z-a11y);
+    /* `.g-center` (its parent, M4.3) is pointer-events:none so clicks reach the full-bleed
+       canvas behind it — re-enable here so this list stays clickable once focused. */
+    pointer-events: auto;
   }
   .items-a11y:focus-within {
     width: auto;
@@ -691,8 +824,8 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     background: var(--void-3);
-    color: var(--starlight);
-    border: 1px solid var(--hairline);
+    color: var(--em-hi);
+    border: 1px solid var(--border-hairline);
     border-radius: var(--radius-sm);
     padding: 4px 9px;
     cursor: pointer;
@@ -700,34 +833,52 @@
     width: 100%;
   }
   .items-a11y button:focus-visible {
-    outline: 2px solid var(--plasma-cyan);
+    outline: 2px solid var(--em-hi);
     outline-offset: 1px;
   }
 
-  /* ══ wave U2 Task 1: the System dock — a CSS grid host ══════════════════════
+  /* ══ M4.3 full-bleed canvas layer ═══════════════════════════════════════════
+     Observatory's stage-level host — behind `.system-grid` (see z-index below),
+     filling the whole System layer edge-to-edge instead of a boxed grid cell. */
+  .canvas-stage {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+
+  /* ══ wave U2 Task 1 / M4.3: the System dock — a CSS grid host ═══════════════
      Replaces the old stack of independently absolutely-positioned panels (each
      hand-tracking a sibling's pixel height via calc() — MetricsPanel hardcoding
      the Mechanism's 190px, VerdictPanel stacking off a --metrics-block constant,
      five files hand-tracking --strip-h). Named areas; each cell is a plain
      unstyled box, so a panel's own CSS carries only its internal look (bg/
-     border/padding) — the grid owns placement + spacing (the token scale).
+     border/padding) — the grid owns placement + spacing (the token scale). Every
+     cell stays transparent (no background here) — panels paint their own
+     surface; the grid itself must never read as a boxed rectangle over the
+     full-bleed canvas now sitting behind it (z-index above `.canvas-stage`/
+     `.grain`, both z-index:0/auto).
 
-     Rows: topbar (auto) / hud (auto) + log (1fr, so LogPanel fills the rail and
-     scrolls internally) / bottom-dock (auto) / cost strip (auto, --strip-h tall).
-     "center" and "right" span the hud+log row band so the canvas gets the full
-     rail height even though the left rail is itself split into two rows.
-     Columns: left rail / center (canvas, 1fr — this is what "breathes") / right
-     rail. `.bare` (Ambient mode, or the Body drawer open) collapses both rails
-     to zero width so the canvas gets the whole dock; `gap: 0` there too so an
-     empty rail leaves no dead gutter. */
+     Rows: a reserved-but-empty first row ('.') clearing the floating top rail
+     (`.toprail`, a stage-level sibling — not part of this grid) / hud (auto) +
+     log (1fr, so LogPanel fills the rail and scrolls internally) / bottom-dock
+     (auto) / cost strip (auto, --strip-h tall). "center" and "right" span the
+     hud+log row band so the canvas gets the full rail height even though the
+     left rail is itself split into two rows. Columns: left rail / center (the
+     EMPTY safe-area probe, 1fr — this is what "breathes") / right rail. `.bare`
+     (Ambient mode, or the Body drawer open) collapses both rails to zero width
+     so the probe — and so Observatory's safeInsets — spans the whole dock;
+     `gap: 0` there too so an empty rail leaves no dead gutter. */
   .system-grid {
     position: absolute;
     inset: 0;
+    z-index: 1;
     display: grid;
     grid-template-columns: minmax(272px, 320px) 1fr minmax(272px, 320px);
-    grid-template-rows: auto auto 1fr auto auto;
+    /* ~60px reserves the floating top rail's height (page-inset top offset + one row of
+       ghost pills + a little breathing room) so nothing renders underneath it. */
+    grid-template-rows: 60px auto 1fr auto auto;
     grid-template-areas:
-      'topbar topbar topbar'
+      '.      .      .'
       'hud    center right'
       'log    center right'
       'bottom bottom bottom'
@@ -739,44 +890,26 @@
     gap: 0;
   }
 
-  .g-topbar {
-    grid-area: topbar;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: start;
-    padding: var(--space-3) var(--chrome-inset) 0;
-  }
-  .tb-left {
-    justify-self: start;
-  }
-  .tb-center {
-    justify-self: center;
-  }
-  .tb-right {
-    /* an empty reserved column — clears the floating breadcrumb/badge pill
-       (navbar, top-right, z-index 20) so the centered ModeBar never creeps
-       under it on medium widths. */
-    justify-self: end;
-    min-width: 168px;
-  }
-
   .g-hud {
     grid-area: hud;
     min-width: 0;
-    padding: var(--space-3) 0 0 var(--chrome-inset);
+    padding: var(--space-3) 0 0 var(--page-inset);
   }
   .g-log {
     grid-area: log;
     min-width: 0;
     min-height: 0;
     display: flex;
-    padding: var(--space-2) 0 var(--space-3) var(--chrome-inset);
+    padding: var(--space-2) 0 var(--space-3) var(--page-inset);
   }
   .g-center {
     grid-area: center;
     position: relative;
     min-width: 0;
     min-height: 0;
+    /* the empty safe-area probe (M4.3) — no visual of its own, so it must not steal
+       clicks/hover from the full-bleed canvas now rendering behind it. */
+    pointer-events: none;
   }
   .g-right {
     grid-area: right;
@@ -786,18 +919,42 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-3) var(--chrome-inset) var(--space-3) 0;
+    padding: var(--space-3) var(--page-inset) var(--space-3) 0;
   }
   .g-bottom {
     grid-area: bottom;
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--page-inset) var(--page-inset);
+  }
+  /* M4.3: RunControlBar + TransportBar merged into ONE full-width bar — this container
+     supplies the hairline-top/background/padding; the panels inside (once the sibling
+     M4.5 sweep lands) render as borderless transparent segments. Controls (fixed width)
+     grouped left; the scrubber (when replay offers one) fills the remaining width. */
+  .dock {
+    width: 100%;
+    display: flex;
+    align-items: center;
     gap: var(--space-3);
-    padding: 0 var(--chrome-inset) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-panel);
+    border-top: 1px solid var(--border-hairline);
+    border-radius: var(--radius);
+  }
+  .dock-controls {
+    flex: none;
+  }
+  .dock-scrub {
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .g-strip {
     grid-area: strip;
+    /* M4.3: CostQuotaStrip renders edge-to-edge internally — inset it by the page
+       gutter here so it shares the same left/right margin as the rails/dock above. */
+    padding: 0 var(--page-inset);
   }
 
   /* phone (wave U2 Task 4): single column, reordered so the canvas + controls
@@ -809,9 +966,12 @@
     .system-grid,
     .system-grid.bare {
       grid-template-columns: 1fr;
-      grid-template-rows: auto auto minmax(220px, 42vh) auto auto auto auto;
+      /* the floating top rail wraps to several rows once ModeBar/StaleBadge/badges all
+         share it on a narrow width — reserve generously (mirrors BodyView's own 100px
+         phone clearance for the lighter body-view rail). */
+      grid-template-rows: 132px auto minmax(220px, 42vh) auto auto auto auto;
       grid-template-areas:
-        'topbar'
+        '.'
         'hud'
         'center'
         'bottom'
@@ -820,18 +980,6 @@
         'strip';
       gap: var(--space-2);
       overflow-y: auto;
-    }
-    .g-topbar {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: var(--space-2);
-      /* clears the floating navbar pill, which wraps to two rows (~80px deep
-         incl. its 18px top inset) on a 390px width */
-      padding: 88px var(--space-2) 0;
-    }
-    .tb-right {
-      display: none;
     }
     .g-hud,
     .g-log,
@@ -877,41 +1025,35 @@
   .eh-glyph {
     font-size: var(--text-xl);
     line-height: 1;
-    color: var(--text-faint);
+    color: var(--em-faint);
   }
   .eh-line {
     font-family: var(--font-mono);
     /* was 11.5px — an exact tie between --text-xs (11) and --text-sm (12); this file's
        other mono meta text (crumbs/nbtn) sits on --text-xs, so this follows that lead */
     font-size: var(--text-xs);
-    color: var(--text-dim);
+    color: var(--em-mid);
     margin: 0;
   }
   .eh-line strong {
-    color: var(--amber);
+    /* brightness carries the emphasis now, not amber (M4.1: amber is reserved for genuine
+       alerts — needs-you/handoff/quota — and this is a neutral how-to hint). */
+    color: var(--em-hi);
     font-weight: 600;
   }
 
-  /* ignite affordance — .pill (primitives.css) supplies the shared position/shape/blur/z-index.
-     Same chrome family as .navbar (hairline-family border, amber is the identity accent earning
-     its saturated tint here per plan §1 "chroma budget by area" — small chip, allowed to be loud). */
+  /* ignite affordance (M4.3) — position/shape/z-index only; `.btn-primary.btn-lg`
+     (primitives.css) supplies the anatomy: solid light fill, the monochrome inversion is
+     the strongest CTA in a hueless palette. `.has-fab` on `.toprail` reserves this
+     button's width so it never collides with the "COSMOS" home crumb sharing this
+     corner. */
   .ignite-fab {
-    left: 18px;
-    font-family: var(--font-grotesk);
-    font-size: var(--text-sm);
-    font-weight: 600;
+    left: var(--page-inset);
     letter-spacing: 0.06em;
-    padding: 9px 16px;
-    border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-    background: color-mix(in srgb, var(--amber) 9%, transparent);
-    color: var(--amber);
-    cursor: pointer;
-    transition: transform var(--dur-feedback) var(--ease-standard),
-      background var(--dur-feedback) var(--ease-standard);
+    transition: transform var(--dur-feedback) var(--ease-standard);
   }
   .ignite-fab:hover {
     transform: translateY(-1px);
-    background: color-mix(in srgb, var(--amber) 16%, transparent);
   }
   .ignite-fab:active {
     transform: translateY(0);

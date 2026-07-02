@@ -4,10 +4,11 @@
   // dragging re-reduces the event prefix up to time T (idempotent, cheap). Only
   // shown in dev replay mode (the live Tauri/ws transports have no scrub).
   //
-  // In REWIND mode (uiStore.rewind / the `rewind` prop) the bar grows into a full
-  // timeline: notable events — verdicts (seal/refute), strikes/rollbacks, quota
-  // nights, merges, stops — are pinned as clickable ticks you can jump to, framed
-  // in the Plasma-cyan time-shimmer (plan §3).
+  // In REWIND mode (uiStore.rewind / the `rewind` prop) the scrub axis becomes a
+  // full timeline: notable events — verdicts (seal/refute), strikes/rollbacks,
+  // quota nights, merges, stops — are pinned as clickable ticks you can jump to
+  // (grayscale per the M4.5 monochrome sweep — the only chromatic pins are the
+  // genuine alerts, verdict-fail/handoff/quota).
 
   import type { PlaybackState, PlaybackTransport, TimelineMarker } from '../transport/replay';
 
@@ -47,14 +48,14 @@
   {/if}
 
   <button
-    class="tbtn play"
+    class="btn btn-ghost btn-icon"
     aria-label={state.playing ? 'pause' : 'play'}
     onclick={() => transport?.toggle()}
   >
     {#if state.playing}❚❚{:else}▶{/if}
   </button>
 
-  <button class="tbtn" aria-label="restart" title="scrub to start" onclick={() => transport?.restart()}>
+  <button class="btn btn-ghost btn-icon" aria-label="restart" title="scrub to start" onclick={() => transport?.restart()}>
     ⏮
   </button>
 
@@ -88,10 +89,10 @@
 
   <span class="pos mono">{state.cursor}/{state.total}</span>
 
-  <div class="speeds">
+  <div class="seg speeds" role="group" aria-label="playback speed">
     {#each SPEEDS as sp (sp)}
       <button
-        class="tbtn sp {state.speed === sp ? 'active' : ''}"
+        class="seg-item sp {state.speed === sp ? 'selected' : ''}"
         onclick={() => transport?.setSpeed(sp)}
       >
         {sp}×
@@ -102,64 +103,21 @@
 
 <style>
   .transport {
-    /* placed by the System dock's bottom row (+page.svelte .g-bottom) */
+    /* placed by the System dock's single bottom bar (+page.svelte merges this
+       with RunControlBar into one full-width dock — plan §M4.3/M4.5). M4.5:
+       no more pill-card chrome of its own (background/border/backdrop-filter,
+       clamped width) — the dock container supplies that; this just lays the
+       controls out and lets the scrubber (.axis, flex:1) fill the rest. */
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: 7px 11px;
-    width: min(620px, 80vw);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius-pill);
-    backdrop-filter: blur(8px);
-  }
-  /* Rewind mode: grow + frame in the cyan time-shimmer */
-  .transport.rewind {
-    width: min(820px, 92vw);
-    border-color: color-mix(in srgb, var(--plasma-cyan) 45%, transparent);
-    box-shadow: 0 0 22px color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
+    width: 100%;
   }
   .rwlabel {
     font-size: var(--text-2xs);
     letter-spacing: 0.16em;
-    color: var(--plasma-cyan);
+    color: var(--em-mid);
     padding-right: var(--space-1);
-  }
-  .tbtn {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    min-width: 30px;
-    padding: 5px 9px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--void-3);
-    color: var(--starlight);
-    cursor: pointer;
-    transition: border-color var(--dur-fast) var(--ease-standard),
-      background var(--dur-fast) var(--ease-standard);
-  }
-  .tbtn:hover {
-    border-color: color-mix(in srgb, var(--brass) 45%, transparent);
-  }
-  .tbtn.play {
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
-  }
-  .tbtn.sp {
-    min-width: 0;
-    font-size: var(--text-xs);
-    padding: var(--space-1) var(--space-2);
-    color: var(--text-dim);
-  }
-  .tbtn.sp.active {
-    color: var(--plasma-cyan);
-    border-color: color-mix(in srgb, var(--plasma-cyan) 45%, transparent);
-    background: color-mix(in srgb, var(--plasma-cyan) 8%, transparent);
-  }
-  .speeds {
-    display: flex;
-    gap: var(--space-1);
   }
   .axis {
     position: relative;
@@ -172,9 +130,6 @@
     accent-color: var(--brass);
     cursor: pointer;
     height: 4px;
-  }
-  .transport.rewind .scrub {
-    accent-color: var(--plasma-cyan);
   }
   .pins {
     position: absolute;
@@ -209,25 +164,31 @@
   .pin:hover::after {
     transform: translateX(-50%) scaleY(1.4);
   }
-  /* per-kind marker mapping onto the M0 two-tier status tokens (§M1.4), semantically:
-       verdict-pass → status-ok    (a certified pass)
-       verdict-fail → status-err   (a refuted / false-green verdict — judgment call: the
-                                    plan named "verdict=ok" for the pass case; the fail
-                                    case reads as an error, not idle/warn)
-       rollback     → status-run  (cyan hue 220 — same family as plasma-cyan/rewind)
-       quota        → --frost     (kept literal — the plan names this exact mapping;
-                                    frost isn't one of the five status hues)
-       handoff      → status-warn (a human-handoff moment reads as "needs attention", not
-                                    a failure — matches the app's amber-toned NEEDS YOU)
-       pr           → --brass     (kept literal — the plan names this exact mapping)
-       stop         → status-idle (a quiet, at-rest marker — not the warm "banked" ember)
+  /* per-kind marker mapping (M4.5 monochrome sweep), semantically:
+       verdict-pass → status-ok    (grayscale — a certified pass; status-ok-core
+                                    already resolves to --em-hi post-M4.1)
+       verdict-fail → status-err   (the one non-alert-adjacent hue: a refuted /
+                                    false-green verdict reads as an error)
+       rollback     → status-run   (grayscale — status-run-core = --em-hi too;
+                                    distinguished from pass by tick position/tooltip,
+                                    never by hue alone)
+       quota        → status-warn  (amber — a quota-wait IS a genuine attention
+                                    window, not mere status; was --frost, a plain
+                                    cool gray that undersold it)
+       handoff      → status-warn  (amber — a human-handoff moment reads as
+                                    "needs attention", matching the app's NEEDS YOU)
+       pr           → --em-mid     (grayscale — was --brass; brass now carries the
+                                    "identity/certification" connotation elsewhere
+                                    (VerdictPanel's seal), so a plain marker pin
+                                    uses an explicit emphasis tier instead)
+       stop         → status-idle  (grayscale, dimmest tier — a quiet at-rest marker)
   */
   .pin.verdict-pass::after { background: var(--status-ok-core); }
   .pin.verdict-fail::after { background: var(--status-err-core); }
   .pin.rollback::after { background: var(--status-run-core); }
-  .pin.quota::after { background: var(--frost); }
+  .pin.quota::after { background: var(--status-warn-core); }
   .pin.handoff::after { background: var(--status-warn-core); }
-  .pin.pr::after { background: var(--brass); }
+  .pin.pr::after { background: var(--em-mid); }
   .pin.stop::after { background: var(--status-idle-core); }
   .pos {
     /* 10.5px was one of the audit's near-duplicate micro-sizes (#1); collapsed onto

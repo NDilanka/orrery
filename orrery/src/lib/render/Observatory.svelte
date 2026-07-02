@@ -33,7 +33,7 @@
   import { runStore, STAR_R0, STAR_K, RING_BASE } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
   import { restColor } from '../palette';
-  import { initTheme, FALLBACK } from '../theme';
+  import { initTheme, FALLBACK, type EmTiers } from '../theme';
   import {
     makeGlowTexture,
     makeVignetteTexture,
@@ -45,6 +45,18 @@
     type GlowTexture,
   } from './fx';
   import ObservatoryLabels from './ObservatoryLabels.svelte';
+
+  // M4.5 (plan §5 M4.3): a sibling wave moves this canvas onto a full-viewport stage layer
+  // behind the grid, so it no longer sits inside the `.g-center` box that used to center it
+  // for free. `safeInsets` is the occluded-chrome margin (px, measured from the empty
+  // `.g-center` cell) the shell passes down; the scene centers/fits within that unobstructed
+  // rect instead of the full canvas — the vignette/starfield/rewind-frame below still span the
+  // FULL canvas (open sky behind the panels is the point; only the orbital system itself
+  // steers clear of the chrome). Defaults to zero insets so Observatory still centers on the
+  // full canvas if no stage layer passes anything (e.g. in isolation / a test host).
+  let { safeInsets = { top: 0, right: 0, bottom: 0, left: 0 } }: {
+    safeInsets?: { top: number; right: number; bottom: number; left: number };
+  } = $props();
 
   let host: HTMLDivElement;
 
@@ -108,6 +120,15 @@
     hairline: FALLBACK.hairline,
     status: FALLBACK.status,
   };
+  // M4.5: the four text-emphasis tiers (theme.ts) — the canvas's monochrome vocabulary for
+  // every element that isn't one of the 5 fixed status pairs or a genuine per-silhouette
+  // identity hue (seal/brass, model spectral). Used below for selection/hover rings, the
+  // rollback snapback flash, the rewind time-shimmer frame, the seal-flash bloom, and the
+  // brake ring — all retired from their old cyan/brass tints (plan §5 M4.5). Kept as its own
+  // always-defined variable (rather than folded into `C`) since `em` is only OPTIONAL on
+  // ThemeColors/`typeof FALLBACK` (theme.ts's compat note for hand-written partials) — this
+  // way every read below is non-nullable without a chain of `!`/`?.` at every call site.
+  let emC: EmTiers = FALLBACK.em as EmTiers;
 
   function modelColor(m: string): number {
     if (m === 'haiku') return C.haiku;
@@ -133,11 +154,16 @@
     switch (o.status) {
       case 'done':
         return C.status.ok;
+      // M4.5 alert taxonomy: 'review' and 'blocked' both mean "a human needs to look at this",
+      // not "this crashed" — the warn/amber bucket. Previously 'blocked' was lumped in with
+      // 'failed' under err/red; split out so red is reserved for genuinely failed/crashed
+      // bodies (plan §5: "ONLY failed/crashed bodies use --status-err … ONLY needs-you/handoff
+      // use --status-warn").
       case 'review':
+      case 'blocked':
         return C.status.warn;
       case 'in-progress':
         return C.status.run;
-      case 'blocked':
       case 'failed':
         return C.status.err;
       case 'ready':
@@ -178,6 +204,7 @@
       hairline: t.hairline,
       status: t.status,
     };
+    emC = t.em as EmTiers;
 
     // reduced-motion comes from the single uiStore source (read per-frame in tick)
 
@@ -230,7 +257,7 @@
       const starG = new PIXI.Graphics(); // star core
       const planetsC = new PIXI.Container(); // pooled per-planet containers (M2.7)
       const brakeG = new PIXI.Graphics(); // brake-ring "stopping at next <mode>"
-      const shimmerG = new PIXI.Graphics(); // Rewind-mode cyan time-shimmer frame
+      const shimmerG = new PIXI.Graphics(); // Rewind-mode time-shimmer frame (neutral frost)
 
       // M2.1: glow discipline — corona reads as an atmosphere (screen), never a hard
       // additive hotspot; 'add' is reserved for true transient moments below.
@@ -395,7 +422,11 @@
         night: 0, // 0 day → 1 night
         nightHue: 0, // 0 dusk(ember) → 1 polar(frost)
         restForm: 0, // 0 running → 1 the rest-state silhouette is fully formed
-        rewind: 0, // 0 normal → 1 Rewind-mode cyan time-shimmer fully on
+        rewind: 0, // 0 normal → 1 Rewind-mode time-shimmer frame fully on
+        // M4.5 safeInsets: the scene center, eased toward the current safe rect's centroid so a
+        // prop change (the shell's chrome growing/shrinking) glides rather than snaps — see tick().
+        cx: 0,
+        cy: 0,
         t: 0,
       };
       // per-planet eased angle (so they rotate smoothly)
@@ -406,7 +437,7 @@
       // We track per-key prior values and fire a decaying pulse on a transition.
       // sealFlash: certified flipped true (PASS chime/ring bloom)
       // refuteFx:  verdict became fail (Crimson beam snaps on the failing AC)
-      // snapFx:    strikes increased (rollback → cyan time-shimmer rewind)
+      // snapFx:    strikes increased (rollback → a white/gray snapback flash on the body)
       const prevCertified = new Map<string, boolean>();
       const prevStrikes = new Map<string, number>();
       const prevVerdictPass = new Map<string, boolean | null>();
@@ -448,10 +479,27 @@
         return 1 - Math.pow(1 - k60, dt / 16.67);
       }
 
+      // M4.5 safeInsets: the centroid of the unobstructed rect (full canvas minus the
+      // occluded-chrome margin the shell measured) — the orbital system's home point.
+      // `safeInsets` is read live (it's the reactive $props binding) so this always reflects
+      // whatever the stage layer most recently passed down.
+      function safeRectCenter(vw: number, vh: number): { x: number; y: number } {
+        const si = safeInsets;
+        const sw = Math.max(1, vw - si.left - si.right);
+        const sh = Math.max(1, vh - si.top - si.bottom);
+        return { x: si.left + sw / 2, y: si.top + sh / 2 };
+      }
+
       let w = host.clientWidth || 800;
       let h = host.clientHeight || 600;
       starData = makeStarfieldLayers(w, h);
       rebuildVignette(w, h);
+      // seed the eased center at the real target so mount doesn't glide in from (0,0).
+      {
+        const c0 = safeRectCenter(w, h);
+        vis.cx = c0.x;
+        vis.cy = c0.y;
+      }
 
       const onResize = () => {
         w = host.clientWidth || 800;
@@ -521,8 +569,16 @@
         // single reduced-motion source (uiStore); read fresh each frame
         const reduced = uiStore.reducedMotion;
         const s = runStore.state;
-        const cx = w / 2;
-        const cy = h / 2;
+        // M4.5 safeInsets: the orbital system centers on the unobstructed rect (full canvas
+        // minus occluded chrome), not the raw canvas center — eased so a safeInsets change
+        // (chrome growing/shrinking) glides instead of jump-cutting. The vignette/starfield/
+        // rewind-frame below still key off the RAW w/h (full canvas) — only the system itself
+        // steers clear of the chrome.
+        const safeTarget = safeRectCenter(w, h);
+        vis.cx = lerp(vis.cx, safeTarget.x, kdt(0.08, dt));
+        vis.cy = lerp(vis.cy, safeTarget.y, kdt(0.08, dt));
+        const cx = vis.cx;
+        const cy = vis.cy;
         if (!reduced) vis.t += dt / 1000; // real elapsed seconds — every sin(vis.t*…) below
         // is therefore already dt-correct without further changes.
         const running = s.run.status === 'running';
@@ -593,13 +649,17 @@
         //   beam, ghost, snapback shimmer & the planet draw below) ──────────
         const spin = vis.t * 0.06; // global slow orbital advance — strictly linear in real
         // elapsed time (vis.t), so angular velocity never depends on frame rate.
-        // fit all rings/orbits inside the viewport AND the cost-horizon: one shared
-        // scale so the fixed RING_BASE/GAP geometry never overflows a small/short
-        // window or a many-group run (planets, rings & ghost all consult it).
+        // fit all rings/orbits inside the SAFE rect (not the raw canvas — M4.5 safeInsets)
+        // AND the cost-horizon: one shared scale so the fixed RING_BASE/GAP geometry never
+        // overflows a small/short safe area or a many-group run (planets, rings & ghost all
+        // consult it). Uses the raw (un-eased) safe rect so the fit itself tracks the current
+        // chrome instantly; only the system's CENTER (cx/cy above) glides.
         let maxOrbitR = RING_BASE;
         for (const o of runStore.orbits) if (o.ringRadius > maxOrbitR) maxOrbitR = o.ringRadius;
         for (const ring of runStore.rings) if (ring.radius > maxOrbitR) maxOrbitR = ring.radius;
-        const fitScale = PXPER * Math.min(1, (Math.min(w, h) * 0.42) / Math.max(1, maxOrbitR));
+        const safeW = Math.max(1, w - safeInsets.left - safeInsets.right);
+        const safeH = Math.max(1, h - safeInsets.top - safeInsets.bottom);
+        const fitScale = PXPER * Math.min(1, (Math.min(safeW, safeH) * 0.42) / Math.max(1, maxOrbitR));
         const ppos = new Map<string, { x: number; y: number; r: number; o: any }>();
         for (const o of runStore.orbits) {
           const target = o.angle + (running && !reduced ? spin : 0);
@@ -613,7 +673,22 @@
         // ── eased global signals ──
         const targetR = STAR_R0 + STAR_K * Math.log1p(Math.max(0, s.run.cumUsd));
         vis.starR = lerp(vis.starR, targetR, kdt(0.08, dt));
-        const targetColor = restColor(s.run.status, s.run.restState, C.starlight);
+        // M4.5 monochrome sweep: restColor() (../palette.ts, shared with Cosmos, not owned by
+        // this sweep) still maps the bare 'running' status onto amber and 'handoff-beacon' onto
+        // crimson — both predate the M4 alert taxonomy ("the only chromatic pixels are alerts:
+        // red=failed/crashed, amber=needs-you/handoff/quota"). A plain running loop is neither —
+        // it's the pale near-white light source breathing/flaring via MOTION, not color; a
+        // handoff is "needs you", the amber bucket, not the red one. Both are overridden here
+        // (Observatory-local, doesn't touch the shared decision table) before falling through to
+        // restColor for every other rest-state, whose hues are correct as-is (crimson=failed-
+        // dark, frost=quota-frost, green=certified-done, ember=stopped-ember — all per-silhouette
+        // identities, unchanged).
+        const targetColor =
+          rest === 'handoff-beacon'
+            ? C.amber
+            : running && !rest
+              ? C.starlight
+              : restColor(s.run.status, s.run.restState, C.starlight);
         vis.starColor = lerpColor(vis.starColor, targetColor, kdt(0.08, dt));
         vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), kdt(0.06, dt));
         vis.burn = lerp(vis.burn, running ? runStore.burn : 0, kdt(0.05, dt));
@@ -630,7 +705,18 @@
         // ── dusk / polar-night wash (behind everything but the dust) ──
         nightG.clear();
         if (vis.night > 0.01) {
-          const dusk = lerpColor(0x2a1606, 0x0c1430, vis.nightHue); // ember bank → indigo
+          // M4.5: was two hardcoded literal hexes (a hue leak tokens.css/theme.ts couldn't
+          // reach) — now token-derived. Quota IS a genuine warn-family alert per the owner's own
+          // M4 taxonomy ("the only chromatic pixels are alerts: red…and amber (needs-you/
+          // handoff/quota)"), and nightType is ONLY ever non-null while quota is active (see
+          // runStore.nightType) — so the dusk (daily-wait) end keeps a whisper of amber via
+          // C.ember (already the muted warn-base token), heavily muted further since this is a
+          // full-canvas wash, not a small accent. The polar (weekly-wait) end goes fully neutral
+          // — its own identity color is the cold frost crystal-spoke motif drawn below, so the
+          // base wash underneath it doesn't need its own hue too.
+          const duskWash = muteColor(C.ember, C.void, 0.45);
+          const polarWash = C.indigo;
+          const dusk = lerpColor(duskWash, polarWash, vis.nightHue);
           nightG.rect(0, 0, w, h).fill({ color: dusk, alpha: 0.34 * vis.night });
           if (vis.nightHue > 0.4) {
             // frost creep: pale crystalline spokes growing from the corners (polar)
@@ -892,11 +978,13 @@
         }
 
         // ── the star core: FIVE mutually-distinct rest silhouettes ──
-        // certified-done = sealed green disc + brass seal · stopped-ember = banked
+        // certified-done = sealed near-white disc + brass seal · stopped-ember = banked
         // warm dome · quota-frost = cold crystal spikes · handoff-beacon = rotating
-        // amber→crimson wedge · failed-dark = a dim crimson disc, no glow, cut by a
-        // jagged fracture. Each differs by SHAPE + motion + color (greyscale
-        // separable per §F). restForm eases the transition so it "sets" at rest.
+        // two-armed amber wedge (M4.5: needs-you = amber only, no red) · failed-dark = a dim
+        // crimson disc, no glow, cut by a jagged fracture. Each differs by SHAPE + motion +
+        // color (greyscale separable per §F — M4.5: now trivially so, since color itself is
+        // gone from every silhouette except the two genuine alerts, handoff/amber and failed/
+        // crimson). restForm eases the transition so it "sets" at rest.
         // M2.2: the big disc FILLS below use `starFill` (lightly muted); small accents (the
         // frost/ember core dot, brass seal ticks, crack lines) keep the full-saturation
         // hue — the same two-tier split as the planets, applied to the star's own
@@ -968,7 +1056,10 @@
             }
           }
         } else if (rest === 'handoff-beacon') {
-          // distress beacon: a rotating amber→crimson wedge sweeping like a siren.
+          // distress beacon: a rotating two-armed wedge sweeping like a siren. M4.5: handoff is
+          // "needs you", the amber/warn bucket — NOT a crash — so both arms are now the same
+          // amber family (previously one arm was crimson); the two-armed silhouette stays
+          // motion-distinct via alpha (bright arm / dim echo arm) rather than a second hue.
           starG.circle(cx, cy, coronaR).fill({ color: starFill, alpha: 0.92 });
           const sweep = reduced ? 0 : vis.t * 1.1; // slow rotation (urgency=slowing not blinking)
           const wedge = 0.6;
@@ -976,13 +1067,13 @@
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep - wedge / 2, sweep + wedge / 2);
           starG.closePath();
-          starG.fill({ color: muteColor(C.crimson, C.void, MUTE_FILL), alpha: 0.16 });
-          // opposite wedge (two-armed beacon) in amber
+          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.18 });
+          // opposite (echo) arm — same amber family, dimmer, keeps the two-armed read
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep + Math.PI - wedge / 2, sweep + Math.PI + wedge / 2);
           starG.closePath();
-          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.12 });
-          starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.crimson, alpha: 0.7 });
+          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.08 });
+          starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.amber, alpha: 0.7 });
         } else if (rest === 'certified-done') {
           // sealed: calm green disc with a brass certification seal (concentric
           // brass rings + a notch) — steady, NOT animated (it's done).
@@ -1014,14 +1105,16 @@
         // ── brake-ring: "stopping at next <mode>" — coasting to a tooth (Tier-2) ──
         brakeG.clear();
         if (!tierOne && s.run.stopPending && running) {
-          // a tightening brake-shoe arc around the star (urgency = tightening)
+          // a tightening brake-shoe arc around the star (urgency = tightening). M4.5: a
+          // requested/cooperative stop is a routine operational signal, not an alert — gray
+          // (em-hi), not the warm ember tint it used to borrow.
           const br = coronaR + 16 + (reduced ? 0 : Math.sin(vis.t * 1.4) * 2);
           const segs = 6;
           for (let i = 0; i < segs; i++) {
             const a0 = (i / segs) * Math.PI * 2 + (reduced ? 0 : vis.t * 0.3);
             brakeG
               .arc(cx, cy, br, a0, a0 + 0.5)
-              .stroke({ width: 2.5, color: C.ember, alpha: 0.75 });
+              .stroke({ width: 2.5, color: emC.hi, alpha: 0.75 });
           }
         }
 
@@ -1077,15 +1170,17 @@
             g.circle(px, py, pr).fill({ color: pair.base, alpha: 0.95 });
 
             // selection ring — the planet whose VerdictPanel/dossier is open (mouse
-            // click or the keyboard work-item list both set runStore.selectedItem)
+            // click or the keyboard work-item list both set runStore.selectedItem). M4.5:
+            // white/gray interaction only (owner: "white double-ring focus… interaction =
+            // white/gray only") — was the retired cyan accent.
             if (isSelected) {
-              g.circle(px, py, pr + 6).stroke({ width: 1.5, color: C.cyan, alpha: 0.9 });
+              g.circle(px, py, pr + 6).stroke({ width: 1.5, color: emC.hi, alpha: 0.9 });
             }
 
             // hover highlight — a subtle ring on the planet under the pointer (kept
             // dimmer than the selection ring so the two never read as the same).
             if (o.key === hoveredKey && !isSelected) {
-              g.circle(px, py, pr + 5).stroke({ width: 1, color: C.cyan, alpha: 0.4 });
+              g.circle(px, py, pr + 5).stroke({ width: 1, color: emC.mid, alpha: 0.4 });
             }
 
             // A2: CERTIFIED green (sealed) — a solid brass certification ring; calm.
@@ -1118,13 +1213,17 @@
             const fxG = pv.fx;
             fxG.clear();
             if (seal > 0.02) {
+              // M4.5: success is pure monochrome (owner: "bright white + seal glyph") — em-hi,
+              // not the brass identity tint the static certification ring keeps (that one's
+              // correct as-is; this is the one-shot chime bloom, a different element).
               const bloomR = pr + 3 + (1 - seal) * 14;
-              fxG.circle(px, py, bloomR).stroke({ width: 1.5, color: C.brass, alpha: seal * 0.85 });
+              fxG.circle(px, py, bloomR).stroke({ width: 1.5, color: emC.hi, alpha: seal * 0.85 });
             }
             if (snap > 0.02) {
+              // M4.5: rollback snapback flash → white/gray (was the retired cyan accent).
               const ringR = pr + 4 + (1 - snap) * 10;
-              fxG.circle(px, py, ringR).stroke({ width: 1.5, color: C.cyan, alpha: snap * 0.8 });
-              fxG.circle(px, py, ringR + 4).stroke({ width: 1, color: C.cyan, alpha: snap * 0.4 });
+              fxG.circle(px, py, ringR).stroke({ width: 1.5, color: emC.hi, alpha: snap * 0.8 });
+              fxG.circle(px, py, ringR + 4).stroke({ width: 1, color: emC.hi, alpha: snap * 0.4 });
             }
             if (refute > 0.02) {
               fxG.circle(px, py, pr + 1).stroke({ width: 1.5, color: C.status.err.core, alpha: refute });
@@ -1132,30 +1231,32 @@
           }
         }
 
-        // ── Rewind-mode cyan time-shimmer frame (plan §3) ────────────────────
-        // A Plasma-cyan vignette + faint horizontal scan-lines that frame the
-        // whole orrery while you scrub time. Eased on/off so entering Rewind
-        // reads as "stepping into the timeline". Steady-state safe: the scan
-        // drift is suppressed under reduced-motion (only the frame shows).
+        // ── Rewind-mode time-shimmer frame (plan §3) ─────────────────────────
+        // M4.5: a neutral cool-gray (frost) frame + faint horizontal scan-lines, instead of
+        // the retired plasma-cyan accent — Rewind is a mode change, not an alert, so it stays
+        // in the monochrome vocabulary (frost reads "outside normal time" without spending a
+        // hue). Frames the whole orrery while you scrub time; eased on/off so entering Rewind
+        // reads as "stepping into the timeline". Steady-state safe: the scan drift is
+        // suppressed under reduced-motion (only the frame shows).
         vis.rewind = lerp(vis.rewind, uiStore.rewind ? 1 : 0, kdt(0.08, dt));
         shimmerG.clear();
         if (vis.rewind > 0.01) {
           const a = vis.rewind;
-          // cyan border frame
+          // frost border frame
           const inset = 6;
           shimmerG
             .rect(inset, inset, w - inset * 2, h - inset * 2)
-            .stroke({ width: 1.5, color: C.cyan, alpha: 0.5 * a });
+            .stroke({ width: 1.5, color: C.frost, alpha: 0.5 * a });
           shimmerG
             .rect(inset + 4, inset + 4, w - (inset + 4) * 2, h - (inset + 4) * 2)
-            .stroke({ width: 1, color: C.cyan, alpha: 0.2 * a });
-          // soft top/bottom cyan vignette wash
-          shimmerG.rect(0, 0, w, h * 0.12).fill({ color: C.cyan, alpha: 0.05 * a });
-          shimmerG.rect(0, h * 0.88, w, h * 0.12).fill({ color: C.cyan, alpha: 0.05 * a });
+            .stroke({ width: 1, color: C.frost, alpha: 0.2 * a });
+          // soft top/bottom frost vignette wash
+          shimmerG.rect(0, 0, w, h * 0.12).fill({ color: C.frost, alpha: 0.05 * a });
+          shimmerG.rect(0, h * 0.88, w, h * 0.12).fill({ color: C.frost, alpha: 0.05 * a });
           // drifting scan-lines (the "time-shimmer"); frozen under reduced-motion
           const drift = reduced ? 0 : (vis.t * 30) % 26;
           for (let y = -26 + drift; y < h; y += 26) {
-            shimmerG.moveTo(0, y).lineTo(w, y).stroke({ width: 1, color: C.cyan, alpha: 0.04 * a });
+            shimmerG.moveTo(0, y).lineTo(w, y).stroke({ width: 1, color: C.frost, alpha: 0.04 * a });
           }
         }
 

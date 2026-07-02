@@ -39,8 +39,8 @@
 </script>
 
 {#if open && activeKey}
-  <div class="verdict {verdict ? (verdict.pass ? 'pass' : 'fail') : 'pending'}">
-    <div class="vhead">
+  <div class="verdict panel {verdict ? (verdict.pass ? 'pass' : 'fail') : 'pending'}">
+    <div class="vhead panel-hd">
       <span class="vtitle mono">{activeKey}</span>
       <button class="vclose" aria-label="close" onclick={close}>✕</button>
     </div>
@@ -102,7 +102,7 @@
   <!-- M1.5: subtle skeleton-shimmer placeholder instead of rendering nothing, so the
        right rail reads as one continuous instrument even before a body is selected.
        Decorative only — the sr-only text below carries the actual state to a11y tools. -->
-  <div class="verdict empty" aria-hidden="true">
+  <div class="verdict panel empty" aria-hidden="true">
     <div class="skel-bar skel-title"></div>
     <div class="skel-bar skel-line"></div>
     <div class="skel-bar skel-line short"></div>
@@ -114,22 +114,25 @@
   .verdict {
     /* wave U2 Task 1: docked in the right rail below MetricsPanel — normal flow in
        a flex column, not a hand-computed offset off MetricsPanel's height.
-       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
-       border (no shadow, no glass on docked rails per plan §1.6). */
+       M4.5: card chrome (padding/border/radius/background) now comes from the
+       shared `.panel` primitive — this class keeps the left-border accent (a
+       one-off shape `.panel` doesn't have) and the flex-column layout. */
     width: 100%;
     flex: none;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-4);
-    background: var(--surface-panel);
-    border: 1px solid var(--hairline);
     border-left-width: var(--accent-border-w);
-    border-radius: var(--radius);
     font-size: var(--text-sm);
   }
-  /* left-border accent is a small element → the two-tier system's -core */
+  /* left-border accent is a small element → the two-tier system's -core.
+     M4.5 monochrome sweep: pass/fail keep the pass→grayscale / fail→err
+     mapping (status-ok-core already resolves to --em-hi post-M4.1). `pending`
+     here means "no verdict yet" — nothing for the user to act on (verification
+     runs automatically), so it is NOT a genuine "needs you" state and stays
+     grayscale rather than warn-amber; contrast QAConsole, where a pending
+     question genuinely blocks on the user and correctly stays amber. */
   .verdict.pass {
     border-left-color: var(--status-ok-core);
   }
@@ -137,22 +140,11 @@
     border-left-color: var(--status-err-core);
   }
   .verdict.pending {
-    border-left-color: var(--status-warn-core);
+    border-left-color: var(--em-low);
   }
   .verdict.empty {
     border-left-color: var(--hairline);
     gap: var(--space-2);
-  }
-  .vhead {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .vtitle {
-    font-size: var(--text-xs);
-    letter-spacing: 0.08em;
-    color: var(--starlight);
   }
   .vclose {
     background: transparent;
@@ -193,12 +185,15 @@
     letter-spacing: 0.04em;
   }
   .claimed {
-    color: var(--status-warn-core);
+    /* an unverified claim, not a thing the user must act on → content tier,
+       not warn-amber (see the .verdict.pending comment above) */
+    color: var(--em-mid);
     font-weight: 600;
   }
   .model {
+    /* meta aside → em-faint */
     font-size: var(--text-2xs);
-    color: var(--text-dim);
+    color: var(--text-faint);
     padding: 2px 7px;
     border-radius: var(--radius-pill);
     background: var(--void-3);
@@ -239,7 +234,8 @@
     word-break: break-word;
   }
   .next {
-    color: var(--starlight);
+    /* body sentence, not a headline value → content tier */
+    color: var(--text-dim);
     font-size: var(--text-sm);
     line-height: 1.4;
   }

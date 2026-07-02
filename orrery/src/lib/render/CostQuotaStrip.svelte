@@ -54,9 +54,12 @@
         const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
         return v || fallback;
       };
-      const brass = cssVar('--brass', '#c9a24b');
-      const cyan = cssVar('--plasma-cyan', '#46e0ff');
-      const frost = cssVar('--frost', '#9fb6ff');
+      // M4.5 monochrome sweep: the cum-$ curve and its axis go light-gray
+      // (em-hi), the $/min rate curve/axis go mid-gray (em-mid) — the only
+      // chromatic pixels left on this strip are the quota-wait window (warn).
+      const emHi = cssVar('--em-hi', '#eaf0ff');
+      const emMid = cssVar('--em-mid', 'rgba(234,240,255,0.7)');
+      const warn = cssVar('--status-warn-core', '#e8b64a');
       // state-bearing axis labels live at --text-meta (AA on the void), ≥11px.
       const meta = cssVar('--text-meta', 'rgba(234,240,255,0.66)');
       const axisFont = '11px JetBrains Mono, monospace';
@@ -66,10 +69,13 @@
       // literals were hand-copied from (theme.ts's probe-based resolver, shared with the Pixi
       // color bridge) and re-apply the SAME alphas, so a token edit propagates here too.
       const gridRgb = resolveVarRgbTriple('--starlight') ?? '234, 240, 255';
-      const frostRgb = resolveVarRgbTriple('--frost') ?? '159, 182, 255';
+      const emHiRgb = resolveVarRgbTriple('--em-hi') ?? '234, 240, 255';
+      const warnRgb = resolveVarRgbTriple('--status-warn-core') ?? '232, 182, 74';
 
-      // quota-band plugin: paint a frost wash over x-ranges that were waiting,
-      // with a top hairline so the band is clearly legible (not a faint tint).
+      // quota-band plugin: paint a warn-amber wash over x-ranges that were
+      // waiting — a quota night IS a genuine attention window, so it's the one
+      // chromatic band on an otherwise monochrome strip — with a top hairline
+      // so it's clearly legible (not a faint tint).
       let quotaBands: [number, number][] = [];
       const bandPlugin = {
         hooks: {
@@ -82,10 +88,10 @@
               const cx1 = self.valToPos(x1, 'x', true);
               const w = Math.max(1, cx1 - cx0);
               // raised wash so the waiting window reads at a glance
-              ctx.fillStyle = `rgba(${frostRgb}, 0.18)`;
+              ctx.fillStyle = `rgba(${warnRgb}, 0.18)`;
               ctx.fillRect(cx0, self.bbox.top, w, self.bbox.height);
-              // top hairline in --frost to crown the band
-              ctx.fillStyle = frost;
+              // top hairline in warn-amber to crown the band
+              ctx.fillStyle = warn;
               ctx.globalAlpha = 0.6;
               ctx.fillRect(cx0, self.bbox.top, w, 1);
               ctx.globalAlpha = 1;
@@ -137,7 +143,7 @@
           },
           {
             scale: '$',
-            stroke: brass,
+            stroke: emHi,
             grid: { stroke: `rgba(${gridRgb}, 0.05)`, width: 1 },
             font: axisFont,
             size: 42,
@@ -146,7 +152,7 @@
           {
             scale: 'rate',
             side: 1,
-            stroke: cyan,
+            stroke: emMid,
             grid: { show: false },
             font: axisFont,
             size: 40,
@@ -158,15 +164,15 @@
           {
             label: 'cum $',
             scale: '$',
-            stroke: brass,
+            stroke: emHi,
             width: 1.5,
-            fill: 'rgba(201,162,75,0.16)',
+            fill: `rgba(${emHiRgb}, 0.1)`,
             points: { show: false },
           },
           {
             label: '$/sample',
             scale: 'rate',
-            stroke: cyan,
+            stroke: emMid,
             width: 1,
             dash: [4, 3],
             points: { show: false },
@@ -328,8 +334,9 @@
     flex: none;
   }
   .dot.live {
-    background: var(--plasma-green);
-    box-shadow: 0 0 6px var(--plasma-green);
+    /* M4.5: the live dot is white/gray, not an identity hue */
+    background: var(--em-hi);
+    box-shadow: 0 0 6px var(--em-hi);
     animation: dotpulse 1.8s ease-in-out infinite;
   }
   @keyframes dotpulse {
@@ -357,17 +364,17 @@
     height: 0;
     flex: none;
   }
-  /* brass swatch = cumulative $ area */
+  /* light-gray swatch = cumulative $ area (was brass-tinted) */
   .sw-cum {
     height: 8px;
     border-radius: 1px;
-    background: rgba(201, 162, 75, 0.4);
-    border-top: 1.5px solid var(--brass);
+    background: color-mix(in srgb, var(--em-hi) 14%, transparent);
+    border-top: 1.5px solid var(--em-hi);
   }
-  /* cyan dashed swatch = $/min rate */
+  /* mid-gray dashed swatch = $/min rate (was cyan-tinted) */
   .sw-rate {
     height: 0;
-    border-top: 1.5px dashed var(--plasma-cyan);
+    border-top: 1.5px dashed var(--em-mid);
   }
   .plot {
     width: 100%;
