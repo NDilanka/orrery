@@ -211,6 +211,83 @@ def test_one_ready_story_end_to_end_no_merge(tmp_path, monkeypatch):
     assert FakeServer.instances and FakeServer.instances[0].stopped == 1
 
 
+def test_driver_writes_activity_heartbeat_during_a_phase(tmp_path, monkeypatch):
+    # Every agent call is wrapped in a liveness Heartbeat that writes <stateDir>/activity.json, so a
+    # watcher can tell a long silent phase (a dev-story emits no log line until its gate) from a
+    # hung loop. Prove it end-to-end: a runner that reads activity.json DURING its own run() sees a
+    # beat already written, tagged with the current phase + the camelCase liveness fields.
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    seen: dict = {}
+
+    class CapturingRunner(MockRunner):
+        def run(self, **kwargs):
+            if "beat" not in seen:
+                ap = state / "activity.json"
+                if ap.exists():
+                    seen["beat"] = json.loads(ap.read_text(encoding="utf-8"))
+            return super().run(**kwargs)
+
+    runner = CapturingRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),
+        ]
+    )
+    rc = driver.run(_config(root, no_merge=True), runner=runner, state_dir=str(state))
+    assert rc == 0
+
+    beat = seen.get("beat")
+    assert beat is not None, "no activity.json beat was written before/during the first agent call"
+    # the first agent call is dev-story (ONE_READY skips create-story); the beat is tagged with it
+    assert beat.get("phase") == "dev-story", beat
+    # camelCase liveness fields are all present
+    for k in ("ts", "elapsedSec", "dirty", "pid"):
+        assert k in beat, f"missing {k} in beat {beat}"
+    # the file persists after the run (the final exit beat)
+    assert (state / "activity.json").exists()
+
+
+def test_driver_persists_raw_output_per_phase_story(tmp_path, monkeypatch):
+    """ResilientRunner.run writes each call's raw stdout to run-<phase>-<story>.out.
+
+    AgentResult.raw was previously thrown away entirely, so a failed/halted phase left no
+    artifact. Assert the file lands next to activity.json, named by the phase + story
+    set_context tagged the call with, and contains that call's raw text verbatim.
+    """
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    runner = MockRunner(
+        [
+            AgentResult(raw='{"phase":"dev"}', text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw='{"phase":"review"}', text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
+            AgentResult(raw='{"phase":"smoke"}', text="SMOKE_PASS: verified AC1, AC2.", cost_usd=0.5),
+        ]
+    )
+    cfg = _config(root, no_merge=True)
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+
+    dev_out = state / "run-dev-story-2-1-capture.out"
+    assert dev_out.exists()
+    assert dev_out.read_text(encoding="utf-8") == '{"phase":"dev"}'
+
+    review_out = state / "run-code-review-2-1-capture.out"
+    assert review_out.exists()
+    assert review_out.read_text(encoding="utf-8") == '{"phase":"review"}'
+
+    smoke_out = state / "run-browser-smoke-2-1-capture.out"
+    assert smoke_out.exists()
+    assert smoke_out.read_text(encoding="utf-8") == '{"phase":"smoke"}'
+
+
 # ---------------------------------------------------------------------------
 # 2. selection / recovery
 # ---------------------------------------------------------------------------
@@ -304,6 +381,51 @@ def test_resume_reuses_existing_pr_when_create_says_already_exists(tmp_path, mon
     assert "pr-merged" in kinds  # proceeded to merge instead of stalling at create
     assert pr_calls.get("url")  # the existing-PR fallback was exercised
     assert pr_calls.get("merge")
+
+
+def test_merge_local_cleanup_fails_but_remote_merged_is_success(tmp_path, monkeypatch):
+    # `gh pr merge --squash --delete-branch` exits non-zero because its LOCAL post-merge cleanup
+    # (checkout base / delete branch) tripped on a dirty tree — but the squash merge ALREADY
+    # landed on the remote. The driver must confirm pr_state == MERGED and CONTINUE (pull
+    # merge_base + emit pr-merged), NOT halt: halting here is what re-opened + re-merged story 5-1
+    # on every resume (PRs #17 and #18 both merged) and would have kept spawning duplicate PRs.
+    root = _init_project(tmp_path, ONE_DONE)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    seen = {"n": 0}
+
+    def predicate_factory(**kw):
+        def predicate(story):
+            seen["n"] += 1
+            return seen["n"] == 1
+
+        return predicate
+
+    monkeypatch.setattr(recovery, "unmerged_done_predicate", predicate_factory)
+
+    def cleanup_fails(*, branch, base, cwd):
+        pr_calls.setdefault("merge", []).append({"branch": branch})
+        raise pr.PrError(
+            "gh pr merge feat/story-2-1-capture --squash --delete-branch failed (exit 1): "
+            "failed to run git: error: Your local changes to the following files would be "
+            "overwritten by checkout:\n\tconvex/_generated/api.d.ts\nAborting"
+        )
+
+    monkeypatch.setattr(pr, "merge_pr", cleanup_fails)
+    # _patch_externals' fake_state already returns "MERGED" — i.e. the remote merge landed.
+
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: verified.", cost_usd=0.5)])
+    rc = driver.run(_config(root), runner=runner, state_dir=str(state))
+    assert rc == 0  # the remote-merged PR is success, not a halt
+
+    evts = _events(state)
+    assert "pr-merged" in [e["event"] for e in evts]  # treated as a completed merge
+    assert pr_calls.get("merge")  # merge WAS attempted (and raised on local cleanup)
+    # local merge_base was advanced so the next scan no longer sees the story as unmerged
+    assert ["pull", "origin", "develop"] in pr_calls.get("git", [])
+    # NO failure stop event was emitted
+    assert not [e for e in evts if e["event"] == "stop" and e.get("ok") is False]
 
 
 ALL_DONE = (
@@ -1109,7 +1231,7 @@ def test_is_flaky_shape_classification():
     # NOT flaky: a deterministic codegen / lint failure
     assert f(_fake_gate(False, 1, codegen_ok=False), 2) is False
     assert f(_fake_gate(False, 1, lint_ok=False), 2) is False
-    # NOT flaky: red with no failing-test count (fail==0) â€” not the test signature
+    # NOT flaky: red with no failing-test count (fail==0) — not the test signature
     assert f(_fake_gate(False, 0, test_ok=False), 2) is False
     # a green gate is never "flaky red"
     assert f(_fake_gate(True, 0), 2) is False
@@ -1147,7 +1269,7 @@ def test_run_gate_does_not_retry_deterministic_failure(tmp_path, monkeypatch):
     emitted = []
     g = driver._run_gate(cfg, tmp_path, emitted.append)
     assert g["green"] is False
-    assert calls["n"] == 1  # failed fast â€” no retry
+    assert calls["n"] == 1  # failed fast — no retry
     assert emitted == []
 
 

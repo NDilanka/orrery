@@ -13,6 +13,7 @@ from loop.logio import (
     read_stop_flag,
     read_text,
     write_checkpoint,
+    write_run_output,
     write_text,
 )
 
@@ -105,3 +106,34 @@ def test_write_then_read_text_round_trip(tmp_path):
     write_text(path, "# Progress\nline two\n")
     assert read_text(path) == "# Progress\nline two\n"
     assert os.path.exists(path)
+
+
+def test_write_run_output_writes_raw_as_is(tmp_path):
+    path = tmp_path / "run-1.out"
+    write_run_output(path, '{"result": "ok"}\nsecond line')
+    assert read_text(path) == '{"result": "ok"}\nsecond line'
+
+
+def test_write_run_output_creates_parent_dir(tmp_path):
+    path = tmp_path / "state" / "run-3.out"
+    write_run_output(path, "raw output")
+    assert path.exists()
+
+
+def test_write_run_output_none_is_a_noop(tmp_path):
+    path = tmp_path / "run-none.out"
+    write_run_output(path, None)
+    assert not path.exists()
+
+
+def test_write_run_output_empty_string_is_a_noop(tmp_path):
+    path = tmp_path / "run-empty.out"
+    write_run_output(path, "")
+    assert not path.exists()
+
+
+def test_write_run_output_overwrites_existing_file(tmp_path):
+    path = tmp_path / "run-2.out"
+    write_run_output(path, "first attempt")
+    write_run_output(path, "second attempt")
+    assert read_text(path) == "second attempt"

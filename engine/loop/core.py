@@ -58,6 +58,7 @@ from loop.events import (
 from loop.feedback import compact_feedback
 from loop.gate import run_gate
 from loop.hashlock import compare_hash_map, test_hash_map
+from loop.heartbeat import Heartbeat
 from loop.memory import FileMemoryStore, Lesson, NullMemoryStore
 from loop.metrics import compute_metrics
 from loop.verify import (
@@ -74,6 +75,7 @@ from loop.logio import (
     read_stop_flag,
     read_text,
     write_checkpoint,
+    write_run_output,
     write_text,
 )
 from loop.quota import survive
@@ -438,17 +440,21 @@ def _run_loop_body(
             return 0
 
         # 2 + 3. EXECUTE (with quota-survival retry — the same iter is retried on recovery).
+        # A liveness Heartbeat overwrites <stateDir>/activity.json for the duration of each
+        # (blocking) execute call, mirroring ResilientRunner (loop.bmad.driver) so the UI has the
+        # same freshness signal for a generic loop's execute phase as it does for BMAD phases.
         result = None
         while True:
-            result = runner.run(
-                prompt=prompt,
-                model=execute_model,
-                allowed_tools=config.allowed_tools,
-                permission_mode=config.permission_mode,
-                max_turns=config.max_turns,
-                cwd=str(work),
-                timeout_sec=iter_timeout_sec,
-            )
+            with Heartbeat(state / "activity.json", phase="execute", story=f"iter {it}", repo=work):
+                result = runner.run(
+                    prompt=prompt,
+                    model=execute_model,
+                    allowed_tools=config.allowed_tools,
+                    permission_mode=config.permission_mode,
+                    max_turns=config.max_turns,
+                    cwd=str(work),
+                    timeout_sec=iter_timeout_sec,
+                )
             if result.timed_out:
                 emit(phase_timeout_event(f"iter {it}", iter_timeout_sec))
                 print(f"  [TIMEOUT] iter {it} killed (hung runner)")
@@ -480,6 +486,12 @@ def _run_loop_body(
                 _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum)
                 return 1
             break  # productive (or a non-quota error result we fall through with)
+
+        # Persist this iteration's raw agent output for postmortem — previously thrown away
+        # entirely, so a failed/parse-failed run left no artifact. No-op when there's nothing to
+        # write (result is None on a timeout, or raw is empty).
+        if result is not None:
+            write_run_output(state / f"run-{it}.out", result.raw)
 
         # 4. cost accounting + 50/80/100% alerts, then cache telemetry.
         iter_cost = float(result.cost_usd) if result else 0.0
@@ -644,6 +656,27 @@ def _run_loop_body(
             f"  -> {g['pass']}/{g['total']} pass  iter_cost=${iter_cost}  "
             f"cum=${round(cum, 4)}  [{action}]"
         )
+
+        # 9a. LIVE METRICS — an updated `metrics` event folded over every event so far this run,
+        # so a watching UI has a fresh run-quality read every iteration instead of only at stop.
+        # Additive to (does not replace) the single authoritative metrics event emitted at
+        # shutdown (_run_loop_inner); reducers treat repeated `metrics` events as last-write-wins.
+        # OFF by default (config.metrics.emit) -> `emitted` is None -> no-op, byte-identical to
+        # today.
+        if emitted is not None:
+            live_m = compute_metrics(emitted)
+            emit(
+                metrics_event(
+                    first_try_green=live_m["first_try_green"],
+                    iters_to_green=live_m["iters_to_green"],
+                    cost_to_green=live_m["cost_to_green"],
+                    rollbacks=live_m["rollbacks"],
+                    regression_rate=live_m["regression_rate"],
+                    total_iters=live_m["total_iters"],
+                    total_cost=live_m["total_cost"],
+                    final_green=live_m["final_green"],
+                )
+            )
 
         # 9b. MEMORY — record a green-gated lesson for this productive iteration. NullMemoryStore
         # makes this a no-op; FileMemoryStore green-gates + de-dupes internally so only useful

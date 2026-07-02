@@ -6,6 +6,7 @@
 import type { Delta, RawEvent, RunState } from '../types';
 import { initialState } from '../reduce';
 import { logStore } from '../stores/log.svelte';
+import { activityStore } from '../stores/activity.svelte';
 import type { Transport, TransportOpts } from './index';
 
 // Absolute path to the loops/ registry. A5 (loop library) will source this from
@@ -59,6 +60,11 @@ export class TauriTransport implements Transport {
       // raw event → live LOG feed only; the authoritative reduced RunState arrives via the
       // matching `state` delta (the watcher sends Event then State per log line).
       logStore.push(delta.event as RawEvent);
+      return;
+    }
+    if (delta.kind === 'activity') {
+      // liveness heartbeat → the activity store (drives the LIVE LOG freshness dot); never state.
+      activityStore.set(delta.activity);
       return;
     }
     // snapshot | state: the full reduced RunState from the Rust watcher.

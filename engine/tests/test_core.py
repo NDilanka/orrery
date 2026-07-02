@@ -196,6 +196,69 @@ def test_dry_run_does_not_call_runner(tmp_path):
     assert not (state / "log.jsonl").exists() or _events(state / "log.jsonl") == []
 
 
+def test_activity_heartbeat_written_during_execute(tmp_path):
+    """run_loop wraps each execute call in a Heartbeat, mirroring bmad's ResilientRunner.
+
+    Prove it end-to-end (same style as test_bmad_driver's heartbeat test): a runner that reads
+    <stateDir>/activity.json DURING its own run() sees a beat already written, tagged with the
+    "execute" phase and an "iter <N>" story label, carrying the camelCase liveness fields.
+    """
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+
+    class CapturingRunner(AgentRunner):
+        name = "mock-capture"
+
+        def __init__(self, repo: Path, state: Path):
+            self.repo = repo
+            self.state = state
+            self.calls = 0
+            self.beat: dict | None = None
+
+        def run(self, *, prompt, model, allowed_tools, permission_mode, max_turns, cwd,
+                timeout_sec=0, resume_session=None, output_format="json"):
+            self.calls += 1
+            if self.beat is None:
+                ap = self.state / "activity.json"
+                if ap.exists():
+                    self.beat = json.loads(ap.read_text(encoding="utf-8"))
+            if self.calls >= 2:
+                (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")
+            return AgentResult(raw="{}", text="worked", cost_usd=0.01)
+
+    runner = CapturingRunner(repo, state)
+    rc = run_loop(config, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+
+    assert runner.beat is not None, "no activity.json beat observed during execute"
+    assert runner.beat.get("phase") == "execute"
+    assert runner.beat.get("story") == "iter 1"
+    for k in ("ts", "elapsedSec", "dirty", "pid"):
+        assert k in runner.beat, f"missing {k} in beat {runner.beat}"
+    # the file persists after the run (the final exit beat)
+    assert (state / "activity.json").exists()
+
+
+def test_raw_output_persisted_per_iteration(tmp_path):
+    """Each iteration's raw agent output is written to .loop/run-<iter>.out (Task 2)."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+    runner = FixOnIter2Runner(repo)
+
+    rc = run_loop(config, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+    assert runner.calls == 2
+
+    out1 = state / "run-1.out"
+    out2 = state / "run-2.out"
+    assert out1.exists() and out1.read_text(encoding="utf-8") == "{}"
+    assert out2.exists() and out2.read_text(encoding="utf-8") == "{}"
+
+
 def test_concurrency_lock_refuses_second_run(tmp_path):
     repo = _init_repo(tmp_path)
     state = tmp_path / "state"

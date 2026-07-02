@@ -49,6 +49,7 @@ const cases: [string, string, string, string?][] = [
   ['multirun', 'multirun-log.jsonl', 'multirun.generic.json', undefined],
   ['collision', 'series-collision-log.jsonl', 'series-collision.generic.json', undefined],
   ['metrics', 'metrics-log.jsonl', 'metrics.generic.json', undefined],
+  ['failed-dark', 'failed-dark-log.jsonl', 'failed-dark.bmad.json', undefined],
 ];
 
 describe('reducer parity (TS == committed Rust golden)', () => {

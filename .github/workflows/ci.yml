@@ -79,5 +79,9 @@ jobs:
         working-directory: orrery
         run: npm run check
 
+      - name: Frontend unit tests (vitest — includes TS reducer golden parity)
+        working-directory: orrery
+        run: npm run test:unit
+
       - name: Rust tests (cargo test)
         run: cargo test --manifest-path orrery/src-tauri/Cargo.toml

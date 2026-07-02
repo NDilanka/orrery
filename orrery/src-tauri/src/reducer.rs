@@ -66,6 +66,7 @@ impl Reducer {
 
             // ---- Core engine v3 additions -------------------------------------------
             "metrics" => self.on_metrics(obj),
+            "token-usage" => self.on_token_usage(obj),
 
             // ---- Quota --------------------------------------------------------------
             "quota-hit" => self.on_quota_hit(obj, ts),
@@ -251,10 +252,21 @@ impl Reducer {
         self.bump_cum(obj, ts);
         // a stop ends the current run; the next cum-bearing event rebases the per-run running-max.
         self.run_ended = true;
-        // BMAD `stop` carries {ok}; generic `stop` carries {green}.
+        // BMAD `stop` carries {ok}; generic `stop` carries {green}. `ok:false` is BMAD's failure
+        // signal (a halted/blocked session — gate red, regression, merge failure, ...): it maps
+        // to RunStatus::Error. `ok` absent (generic loops) or `ok:true` keeps today's Stopped.
+        // Because the reducer is sequential, this is safe even mid-log: the very next event of a
+        // healthy run is `engine-start`/`start` for the NEXT session, which resets status to
+        // Running before a human ever sees it. Only a log that truly ENDS on `stop{ok:false}`
+        // surfaces Error (→ restState 'failed-dark'). `cooperative-stop` is a distinct event that
+        // never carries `ok`, so a user-requested brake is never reclassified as an error here.
         let ok = obj.get("ok").and_then(Value::as_bool);
         let green = obj.get("green").and_then(Value::as_bool).unwrap_or(false);
-        self.state.run.status = RunStatus::Stopped;
+        self.state.run.status = if ok == Some(false) {
+            RunStatus::Error
+        } else {
+            RunStatus::Stopped
+        };
         self.state.phase.six_phase = Some(SixPhase::Decide);
         self.state.phase.label = Some("stop".to_string());
 
@@ -267,7 +279,6 @@ impl Reducer {
                 }
             }
         }
-        let _ = ok;
     }
 
     fn on_gate(&mut self, obj: &Value, ts: f64) {
@@ -378,6 +389,22 @@ impl Reducer {
     }
 
     fn on_cache(&mut self, obj: &Value) {
+        if let Some(r) = obj.get("hitRatio").and_then(Value::as_f64) {
+            self.state.cache.hit_ratio = r;
+        }
+        if let Some(w) = obj.get("warm").and_then(Value::as_bool) {
+            self.state.cache.warm = w;
+        }
+    }
+
+    /// Engine-v3 `token-usage` event (per-call token + cache telemetry; ~22% of a real BMAD log).
+    /// Feeds the SAME two fields the documented `cache` event feeds (`hitRatio`/`warm`), last
+    /// write wins — mirrors `on_cache` exactly. `costUsd` is a per-call DELTA (not a running
+    /// cum), and the `cum*` fields are cumulative TOKEN counts, not USD, so neither fits
+    /// `bump_cum`'s running-max-of-cum contract or the `cost.series` (which assumes cumulative
+    /// USD samples for `ratePerMin`); wiring either in would corrupt that logic. Intentionally
+    /// left unwired — see reduce.ts `case 'token-usage'` for the identical decision.
+    fn on_token_usage(&mut self, obj: &Value) {
         if let Some(r) = obj.get("hitRatio").and_then(Value::as_f64) {
             self.state.cache.hit_ratio = r;
         }
@@ -784,13 +811,17 @@ impl Reducer {
     fn derive_rest_state(&mut self) {
         // all items done & (merged OR no-PR) → a clean finish. A generic green stop has no PR,
         // so "no PR" counts as merged-ok (mirrors reduce.ts). Ordering matches reduce.ts:
-        // handoff → quota → certified-done(&& not running) → stopped/error → null.
+        // failed-dark → handoff → quota → certified-done(&& not running) → stopped → null.
         let all_done_merged = !self.state.items.is_empty()
             && self.state.items.values().all(|it| {
                 it.status == ItemStatus::Done && it.pr.as_ref().map(|p| p.merged).unwrap_or(true)
             });
 
-        let rest = if self.state.run.status == RunStatus::Handoff {
+        let rest = if self.state.run.status == RunStatus::Error {
+            // a crashed run (stop{ok:false}) needs attention most — outranks every other rest
+            // state, checked before handoff/quota/certified-done.
+            Some(RestState::FailedDark)
+        } else if self.state.run.status == RunStatus::Handoff {
             Some(RestState::HandoffBeacon)
         } else if self.state.quota.active {
             Some(RestState::QuotaFrost)
@@ -799,7 +830,7 @@ impl Reducer {
             // with a stop{ok:true} (PROTOCOL §4.5: the ember is reserved for a stop that left
             // work unfinished).
             Some(RestState::CertifiedDone)
-        } else if self.state.run.status == RunStatus::Stopped || self.state.run.status == RunStatus::Error {
+        } else if self.state.run.status == RunStatus::Stopped {
             Some(RestState::StoppedEmber)
         } else {
             None
@@ -1014,5 +1045,112 @@ mod tests {
         let state = reduce_events("x", "bmad", &events);
         // second run reset to 0 then max is 5.0
         assert_eq!(state.run.cum_usd, 5.0);
+    }
+
+    #[test]
+    fn bmad_stop_ok_false_maps_to_error_and_failed_dark() {
+        let events = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"stop","ok":false,"reason":"gate red","cum":1.0}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.run.status, RunStatus::Error);
+        assert_eq!(state.run.rest_state, Some(RestState::FailedDark));
+    }
+
+    #[test]
+    fn bmad_stop_ok_true_or_absent_stays_stopped_ember() {
+        let ok_true = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"stop","ok":true,"reason":"backlog complete","cum":1.0}),
+        ];
+        let state = reduce_events("x", "bmad", &ok_true);
+        assert_eq!(state.run.status, RunStatus::Stopped);
+        assert_eq!(state.run.rest_state, Some(RestState::StoppedEmber));
+
+        // `ok` absent entirely (a stray/legacy stop) must not be treated as a failure.
+        let ok_absent = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"stop","reason":"halted","cum":1.0}),
+        ];
+        let state = reduce_events("x", "bmad", &ok_absent);
+        assert_eq!(state.run.status, RunStatus::Stopped);
+        assert_eq!(state.run.rest_state, Some(RestState::StoppedEmber));
+    }
+
+    #[test]
+    fn a_later_start_clears_a_transient_error_status() {
+        // A stop{ok:false} mid-log (not the final event) is a session boundary, not a crash: the
+        // next `start` resets status to Running, so `error`/`failed-dark` never leaks into a
+        // healthy multi-session run's final state.
+        let events = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"stop","ok":false,"reason":"gate red","cum":1.0}),
+            serde_json::json!({"event":"engine-start"}),
+            serde_json::json!({"event":"start","target":"1-2-bar","branch":"b","baselinePass":0}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.run.status, RunStatus::Running);
+        assert_eq!(state.run.rest_state, None);
+    }
+
+    #[test]
+    fn cooperative_stop_is_never_reclassified_as_error() {
+        // `cooperative-stop` (a user-requested STOP-file brake) never carries `ok`, so it must
+        // never surface `error`/`failed-dark` — regardless of any earlier stop{ok:false}.
+        let events = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"cooperative-stop","scope":"story","mode":"now","stage":"iter 1","story":null,"branch":"b","cum":1.0}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.run.status, RunStatus::Stopped);
+        assert_eq!(state.run.rest_state, Some(RestState::StoppedEmber));
+    }
+
+    #[test]
+    fn token_usage_feeds_cache_last_write_wins() {
+        let events = vec![
+            serde_json::json!({"event":"token-usage","phase":"dev-story","model":"opus","hitRatio":0.9,"warm":true,"costUsd":0.5,"cumInput":1000,"cumOutput":200,"cumCacheRead":9000,"cumCacheCreation":500}),
+            serde_json::json!({"event":"token-usage","phase":"code-review","model":"sonnet","hitRatio":0.0,"warm":false,"costUsd":0.1,"cumInput":1300,"cumOutput":300,"cumCacheRead":9000,"cumCacheCreation":550}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.cache.hit_ratio, 0.0);
+        assert_eq!(state.cache.warm, false);
+        // costUsd/cum* are intentionally NOT wired into cost — the running-max is untouched.
+        assert_eq!(state.run.cum_usd, 0.0);
+        assert!(state.cost.series.is_empty());
+    }
+
+    #[test]
+    fn failed_dark_outranks_certified_done_and_quota_frost() {
+        // All items done+merged (would be certified-done) AND quota still active (would be
+        // quota-frost) — a terminal stop{ok:false} must still win: failed-dark outranks both.
+        let events = vec![
+            serde_json::json!({"event":"start","target":"1-1-foo","branch":"b","baselinePass":0}),
+            serde_json::json!({"event":"dev-gate","story":"1-1-foo","cum":1.0,"green":true,"pass":1,"fail":0,"total":1,"baselinePass":0,"status":"done"}),
+            serde_json::json!({"event":"pr-created","story":"1-1-foo","branch":"b","base":"develop","url":"https://x/1"}),
+            serde_json::json!({"event":"pr-merged","story":"1-1-foo","base":"develop","pr":"https://x/1"}),
+            serde_json::json!({"event":"quota-hit","label":"5h","cum":1.0,"resetAt":null}),
+            serde_json::json!({"event":"stop","ok":false,"reason":"epic retro halted","cum":1.0}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.run.status, RunStatus::Error);
+        assert!(state.quota.active, "quota is still active going into the stop");
+        assert_eq!(state.run.rest_state, Some(RestState::FailedDark));
+    }
+
+    #[test]
+    fn repeated_metrics_events_are_last_write_wins() {
+        // An engine emitting `metrics` on every iter (not just once at stop) must still yield the
+        // LATEST snapshot: each event is a full recomputed replace, never a partial merge.
+        let events = vec![
+            serde_json::json!({"event":"metrics","firstTryGreen":false,"itersToGreen":null,"costToGreen":null,"rollbacks":0,"regressionRate":0.0,"totalIters":1,"totalCost":0.5,"finalGreen":false}),
+            serde_json::json!({"event":"metrics","firstTryGreen":false,"itersToGreen":2,"costToGreen":0.75,"rollbacks":1,"regressionRate":0.5,"totalIters":2,"totalCost":0.75,"finalGreen":true}),
+        ];
+        let state = reduce_events("x", "generic", &events);
+        let m = state.metrics.expect("metrics set");
+        assert_eq!(m.total_iters, 2);
+        assert_eq!(m.iters_to_green, Some(2));
+        assert!(m.final_green);
     }
 }

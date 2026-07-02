@@ -4,10 +4,44 @@
   // so it never has to crowd the instrument. Reads the shared logStore the transport feeds.
 
   import { logStore } from '../stores/log.svelte';
+  import { activityStore, computeLiveness } from '../stores/activity.svelte';
+  import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
 
   let open = $state(true);
   const entries = $derived(logStore.entries);
+
+  // ── liveness ────────────────────────────────────────────────────────────────
+  // log.jsonl only gains a line at phase boundaries, so a 30-min dev-story looks frozen. The
+  // engine's activity.json heartbeat (every ~12s during an agent step) fills the gap. We turn it
+  // into a real dot: green = a fresh beat (actively working), amber = running but the beat has gone
+  // quiet (a gate run / between steps — still alive), faint = not running / no beat. A local 1s
+  // clock makes the dot go stale + the elapsed tick up WITHOUT needing a new delta. The derivation
+  // itself is the pure (unit-tested) computeLiveness.
+  let now = $state(Date.now());
+  $effect(() => {
+    const id = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+
+  const activity = $derived(activityStore.current);
+  const live = $derived(
+    computeLiveness(
+      activity,
+      runStore.state.run.status === 'running',
+      now,
+      activityStore.receivedAt,
+    ),
+  );
+  const liveness = $derived(live.state);
+
+  function fmtDur(sec: number): string {
+    const s = Math.max(0, Math.floor(sec));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m${String(s % 60).padStart(2, '0')}s`;
+    return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
+  }
 
   // colour the event-type chip by family (start/done = green, stop/halt = ember, ask = cyan…)
   function tone(ev: string): string {
@@ -80,12 +114,30 @@
 
 <div class="log" class:closed={!open}>
   <button class="loghdr mono" onclick={() => (open = !open)} aria-expanded={open}>
-    <span class="dot" class:live={entries.length > 0} class:still={uiStore.reducedMotion} aria-hidden="true"></span>
+    <span
+      class="dot"
+      class:live={liveness === 'live'}
+      class:idle={liveness === 'idle'}
+      class:still={uiStore.reducedMotion}
+      aria-hidden="true"
+    ></span>
     LIVE LOG
     <span class="count num">{entries.length}</span>
     <span class="chev" aria-hidden="true">{open ? '▾' : '▸'}</span>
   </button>
   {#if open}
+    <!-- liveness sub-header: what the engine is doing RIGHT NOW (between coarse log events) -->
+    {#if liveness !== 'off' && activity}
+      <div class="activity mono" class:idle={liveness === 'idle'} title={activity.ts ? `last beat ${activity.ts}` : ''}>
+        <span class="aphase">{activity.phase ?? 'working'}</span>
+        {#if activity.story}<span class="asep">·</span><span class="astory">{activity.story}</span>{/if}
+        <span class="asep">·</span><span class="adur num">{fmtDur(live.elapsedSec)}</span>
+        {#if activity.dirty > 0}
+          <span class="asep">·</span><span class="adirty num">{activity.dirty} file{activity.dirty === 1 ? '' : 's'}</span>
+        {/if}
+        {#if liveness === 'idle'}<span class="aquiet">quiet {fmtDur(live.ageMs / 1000)}</span>{/if}
+      </div>
+    {/if}
     <div class="logwrap">
       <div
         class="logbox"
@@ -167,7 +219,14 @@
     box-shadow: 0 0 6px var(--plasma-green);
     animation: pulse 1.8s ease-in-out infinite;
   }
-  .dot.live.still {
+  /* running but the heartbeat has gone quiet (gate run / between steps) — alive, not working */
+  .dot.idle {
+    background: var(--amber);
+    box-shadow: 0 0 5px var(--amber);
+    animation: pulse 3.2s ease-in-out infinite;
+  }
+  .dot.live.still,
+  .dot.idle.still {
     animation: none;
   }
   @keyframes pulse {
@@ -181,6 +240,48 @@
   .chev {
     margin-left: auto;
     color: var(--text-faint);
+  }
+  /* liveness sub-header: phase · story · elapsed · files-changed (one ellipsized line) */
+  .activity {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 0 11px 7px;
+    font-size: 10.5px;
+    line-height: 1.3;
+    color: var(--plasma-green);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .activity.idle {
+    color: var(--amber);
+  }
+  .activity .aphase {
+    flex: 0 0 auto;
+    letter-spacing: 0.04em;
+  }
+  .activity .astory {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-meta);
+  }
+  .activity .asep {
+    flex: 0 0 auto;
+    color: var(--text-faint);
+  }
+  .activity .adur,
+  .activity .adirty {
+    flex: 0 0 auto;
+    color: var(--text-dim);
+  }
+  .activity .aquiet {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--text-faint);
+    font-style: italic;
   }
   .logwrap {
     position: relative;

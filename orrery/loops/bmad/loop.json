@@ -13,7 +13,9 @@
     "args": [
       "--project-root", "D:/dev/brain2",
       "--state-dir", "D:/dev/loop/orrery/loops/bmad/.loop",
-      "--merge-base", "develop"
+      "--merge-base", "develop",
+      "--loop-json", "D:/dev/loop/orrery/loops/bmad/bmad-engine.json",
+      "--no-smoke"
     ]
   }
 }

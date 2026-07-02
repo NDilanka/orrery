@@ -39,6 +39,7 @@
 
   import { runStore } from '$lib/stores/run.svelte';
   import { logStore } from '$lib/stores/log.svelte';
+  import { activityStore } from '$lib/stores/activity.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import {
@@ -134,6 +135,7 @@
     transport?.stop();
     runStore.reset();
     logStore.clear();
+    activityStore.clear();
     playback = null;
     wsStatus = null;
     // Seed loops come from the static LOOPS table (they carry replay fixtures); any other
@@ -163,6 +165,7 @@
     wsStatus = null;
     runStore.reset();
     logStore.clear();
+    activityStore.clear();
   }
 
   async function control(action: string) {

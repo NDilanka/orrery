@@ -1,0 +1,11 @@
+{"event":"engine-start","mergeBase":"develop"}
+{"event":"story-start","story":"9-1-flaky-retro","status":"backlog","epic":"9","index":0}
+{"event":"start","target":"9-1-flaky-retro","branch":"feat/story-9-1-flaky-retro","baselinePass":40}
+{"event":"token-usage","phase":"dev-story","story":"9-1-flaky-retro","model":"opus","input":1000,"output":200,"cacheRead":9000,"cacheCreation":500,"hitRatio":0.9,"warm":true,"costUsd":0.5,"cumInput":1000,"cumOutput":200,"cumCacheRead":9000,"cumCacheCreation":500}
+{"event":"dev-gate","story":"9-1-flaky-retro","cum":5.0,"green":true,"pass":40,"fail":0,"total":40,"baselinePass":40,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"token-usage","phase":"code-review","story":"9-1-flaky-retro","model":"sonnet","input":300,"output":100,"cacheRead":0,"cacheCreation":50,"hitRatio":0.0,"warm":false,"costUsd":0.1,"cumInput":1300,"cumOutput":300,"cumCacheRead":9000,"cumCacheCreation":550}
+{"event":"pr-created","story":"9-1-flaky-retro","branch":"feat/story-9-1-flaky-retro","base":"develop","url":"https://github.com/example/demo-project/pull/99"}
+{"event":"pr-merged","story":"9-1-flaky-retro","base":"develop","pr":"https://github.com/example/demo-project/pull/99"}
+{"event":"retro-start","epic":"9"}
+{"event":"token-usage","phase":"retro-epic-9","model":"opus","input":500,"output":150,"cacheRead":4000,"cacheCreation":100,"hitRatio":0.8889,"warm":true,"costUsd":0.3,"cumInput":1800,"cumOutput":450,"cumCacheRead":13000,"cumCacheCreation":650}
+{"event":"stop","ok":false,"reason":"epic-9 retrospective halted","cum":5.9}

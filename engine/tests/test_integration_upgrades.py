@@ -416,16 +416,61 @@ def test_emit_metrics_appends_metrics_event_at_stop(tmp_path):
 
     events = _events(state / "log.jsonl")
     metrics = [e for e in events if e["event"] == "metrics"]
-    assert len(metrics) == 1
-    m = metrics[0]
+    # one LIVE metrics event per iteration (2 iters) plus the ONE authoritative event at
+    # shutdown -> 3 total. Reducers treat repeated `metrics` events as last-write-wins, so
+    # only the FINAL one (the shutdown fold, which sees the stop event too) is authoritative.
+    assert len(metrics) == 3
+    m = metrics[-1]
     assert "firstTryGreen" in m and "itersToGreen" in m
     assert m["finalGreen"] is True
     # the loop ran two iters and reached green; compute_metrics folds it from the live stream.
     assert m["itersToGreen"] is not None
     assert m["totalIters"] == 2
     assert m["totalCost"] > 0.0
-    # the metrics event is the LAST line (emitted at stop, after the stop event)
+    # the FINAL metrics event is the LAST line (emitted at stop, after the stop event)
     assert events[-1]["event"] == "metrics"
+
+
+def test_live_metrics_event_emitted_after_each_iteration(tmp_path):
+    """A `metrics` event is appended after EVERY iter event (Task 3's live cadence), not only
+    at stop -- so a watching UI gets a fresh run-quality read mid-run instead of only at the end.
+    """
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    cfg = _config(
+        repo,
+        [GateStage(name="test", command=_make_gate(repo))],
+        metrics=MetricsConfig(emit=True),
+    )
+
+    rc = run_loop(cfg, runner=FixOnIter2Runner(repo), state_dir=state, cwd=repo)
+    assert rc == 0
+
+    events = _events(state / "log.jsonl")
+    kinds = [e["event"] for e in events]
+    iter_idxs = [i for i, k in enumerate(kinds) if k == "iter"]
+    assert len(iter_idxs) == 2
+
+    # a live metrics event immediately follows EACH iter event.
+    for iter_i in iter_idxs:
+        assert events[iter_i + 1]["event"] == "metrics", (
+            f"iter event at {iter_i} not immediately followed by a live metrics event: {kinds}"
+        )
+
+    # after iter 1 (not yet green), the live snapshot reflects 1 iteration so far.
+    live_after_iter1 = events[iter_idxs[0] + 1]
+    assert live_after_iter1["totalIters"] == 1
+    assert live_after_iter1["finalGreen"] is False
+
+    # after iter 2 (the green iter), totalIters already reflects it -- but finalGreen is still
+    # False here: the authoritative `stop` event hasn't been emitted yet at this point.
+    live_after_iter2 = events[iter_idxs[1] + 1]
+    assert live_after_iter2["totalIters"] == 2
+    assert live_after_iter2["finalGreen"] is False
+
+    # the FINAL metrics event (the shutdown fold, after the stop event) IS authoritative.
+    assert events[-1]["event"] == "metrics"
+    assert events[-1]["finalGreen"] is True
 
 
 def test_metrics_event_builder_shape_direct():

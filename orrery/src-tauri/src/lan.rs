@@ -38,7 +38,7 @@ use serde_json::Value;
 use tower_http::services::ServeDir;
 
 use crate::control;
-use crate::model::Delta;
+use crate::model::{Activity, Delta};
 
 /// `LanInfo { url, token }` returned by `start_lan_server` — the QR/share payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,6 +340,13 @@ async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String,
     let lf = log_file.clone();
 
     let handle = std::thread::spawn(move || {
+        // Liveness heartbeat → its own Delta over a cloned sender, so the web client gets the same
+        // "actively working" signal as the desktop app even through a silent dev-story.
+        let tx_activity = tx.clone();
+        let on_activity = move |raw: Option<Value>| {
+            let activity = raw.and_then(|v| serde_json::from_value::<Activity>(v).ok());
+            let _ = tx_activity.send(Delta::Activity { activity });
+        };
         let on_events = move |evs: &[Value]| {
             // Forward the raw events for the LAN/web client's live LOG feed, capped to the last 300
             // of a batch (the first drain replays the whole log; the client logStore caps at 300).
@@ -353,7 +360,7 @@ async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String,
             let _ = tx.send(Delta::State { state: st });
         };
         let should_stop = move || stop_thread.load(Ordering::Relaxed);
-        let _ = crate::watcher::watch_loop(&watch_dir, &lp, on_events, should_stop);
+        let _ = crate::watcher::watch_loop(&watch_dir, &lp, on_events, on_activity, should_stop);
     });
 
     // 3) pump deltas to the socket until either side closes.

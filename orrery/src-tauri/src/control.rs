@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::model::{Checkpoint, Delta, GuardStatus, LoopDef, RunState, StartResult, StartSpec};
+use crate::model::{
+    Activity, Checkpoint, Delta, GuardStatus, LoopDef, RunState, StartResult, StartSpec,
+};
 use crate::reducer::Reducer;
 use crate::sprint;
 use crate::watcher;
@@ -169,6 +171,16 @@ pub fn watch_run(
     let log_file2 = log_file.clone();
 
     std::thread::spawn(move || {
+        // The activity heartbeat rides a SEPARATE Delta on its own channel clone (Tauri Channels
+        // are cheap to clone) so a beat surfaces even on a poll with no new log line.
+        let activity_channel = channel.clone();
+        let on_activity = move |raw: Option<Value>| {
+            // Validate/canonicalize into the typed Activity (drops unknown keys, defaults missing);
+            // a malformed activity.json → `None` rather than a wire error.
+            let activity = raw.and_then(|v| serde_json::from_value::<Activity>(v).ok());
+            let _ = activity_channel.send(Delta::Activity { activity });
+        };
+
         // We re-reduce the whole file on each notification; this keeps the wire model a full
         // RunState (frontend always has complete state) and is robust against partial/keyed events.
         let on_events = move |evs: &[Value]| {
@@ -192,7 +204,7 @@ pub fn watch_run(
 
         // state_dir for watching == parent dir of the log file
         let watch_dir = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-        let _ = watcher::watch_loop(&watch_dir, &lp, on_events, should_stop);
+        let _ = watcher::watch_loop(&watch_dir, &lp, on_events, on_activity, should_stop);
     });
 
     // NOTE: the thread runs until the process exits; the stop flag is reserved for a future
@@ -438,6 +450,18 @@ fn checkpoint_file_path(def: &LoopDef, base_dir: &Path) -> PathBuf {
 fn guard_tokens(def: &LoopDef) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
     if let Some(start) = &def.start {
+        // The orchestrator's PROGRAM basename is the key discriminator: it appears in the REAL loop
+        // process's command line but NOT in a bystander that merely references the state dir (a
+        // `tail -f .loop/log.jsonl`, an editor with the log open, a file manager). Without it, a
+        // loop whose args carry no -File/-TaskFile — e.g. the bmad loop's `loop-bmad --state-dir
+        // <path> ...` — fell through to the bare state-dir fallback below, so ANY such bystander
+        // tripped the "AlreadyRunning" guard and silently blocked start/reignite.
+        if let Some(stem) = Path::new(&start.program).file_stem().and_then(|s| s.to_str()) {
+            let s = stem.to_lowercase();
+            if !s.is_empty() {
+                tokens.push(s);
+            }
+        }
         let args = &start.args;
         for (i, a) in args.iter().enumerate() {
             let lower = a.to_lowercase();
@@ -1214,6 +1238,48 @@ mod tests {
         // NOTE: roman's tokens (loop.ps1 + task.md) would substring-match 'task.calc.md'
         // because "task.calc.md" contains "task" then ".md" but not the contiguous "task.md".
         assert!(!cmdline_matches(&t_roman, calc_cmd), "roman must not match calc's cmd");
+    }
+
+    #[test]
+    fn guard_tokens_key_on_program_so_log_readers_dont_block_start() {
+        // The bmad loop's start carries NO -File/-TaskFile (it uses `loop-bmad --state-dir <path>`),
+        // so the guard must key on the PROGRAM name — NOT the bare state-dir path. Otherwise a
+        // bystander that merely references the state dir (a log tailer, an editor) trips the
+        // AlreadyRunning guard and silently blocks Reignite (the exact bug this fixes).
+        let def = LoopDef {
+            id: "bmad".into(),
+            name: "bmad".into(),
+            theme: None,
+            kind: Some("external".into()),
+            state_dir: "D:/dev/loop/orrery/loops/bmad/.loop".into(),
+            adapter: "bmad".into(),
+            log_file: Some("log.jsonl".into()),
+            stop_flag: None,
+            checkpoint: None,
+            start: Some(StartSpec {
+                program: "loop-bmad".into(),
+                args: ["--project-root", "D:/dev/brain2", "--state-dir",
+                       "D:/dev/loop/orrery/loops/bmad/.loop", "--no-smoke"]
+                    .into_iter().map(|s| s.to_string()).collect(),
+            }),
+            engine: None,
+        };
+        let tokens = guard_tokens(&def);
+        assert!(tokens.contains(&"loop-bmad".to_string()), "must key on program: {tokens:?}");
+        // The state-dir path is NOT a standalone token (it would over-match); the program is.
+        assert!(!tokens.contains(&"d:/dev/loop/orrery/loops/bmad/.loop".to_string()), "{tokens:?}");
+
+        // the REAL orchestrator (resolved exe + state-dir on its cmdline) matches → guard works
+        let real = "d:/dev/loop/.venv/scripts/loop-bmad.exe --project-root d:/dev/brain2 \
+                    --state-dir d:/dev/loop/orrery/loops/bmad/.loop --no-smoke";
+        assert!(cmdline_matches(&tokens, real), "real loop-bmad must still match");
+
+        // bystanders that only reference the state dir must NOT match (the fix)
+        let tail = "c:/program files/git/usr/bin/tail.exe -n0 -f \
+                    d:/dev/loop/orrery/loops/bmad/.loop/log.jsonl";
+        assert!(!cmdline_matches(&tokens, tail), "a log tail must NOT trip the guard");
+        let editor = "code.exe d:/dev/loop/orrery/loops/bmad/.loop/log.jsonl";
+        assert!(!cmdline_matches(&tokens, editor), "an editor must NOT trip the guard");
     }
 
     #[test]

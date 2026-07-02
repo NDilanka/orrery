@@ -70,6 +70,18 @@ def reset_hard(cwd, commit_sha: str) -> None:
     _git(["reset", "--hard", commit_sha], cwd)
 
 
+def discard_worktree(cwd) -> None:
+    """Drop all uncommitted changes to tracked files (``git reset --hard HEAD``).
+
+    Restores tracked files to the current HEAD (untracked files are left untouched). Used right
+    before a branch switch where the only thing that can be dirty is throwaway, regenerated
+    output — e.g. a gate that runs ``codegen`` and re-emits tracked generated files, or
+    line-ending normalization — which would otherwise make ``git checkout`` refuse with "your
+    local changes would be overwritten by checkout". Real work is committed by the caller before
+    this point, so nothing of value is lost. Never raises (like :func:`_git`)."""
+    _git(["reset", "--hard", "HEAD"], cwd)
+
+
 def diff_name_only(cwd, base: str, *, max_files: int = 40) -> list[str]:
     """Files changed on this branch vs ``base`` (e.g. a story's ``baseline_commit``), capped.
 

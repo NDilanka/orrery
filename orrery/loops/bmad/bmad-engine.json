@@ -1,0 +1,23 @@
+{
+  "bmad": {
+    "models": {
+      "create": "claude-opus-4-8[1m]",
+      "dev": "claude-opus-4-8[1m]",
+      "review": "claude-opus-4-8[1m]",
+      "smoke": "claude-opus-4-8[1m]",
+      "retro": "claude-opus-4-8[1m]",
+      "decider": "sonnet"
+    },
+    "effort": {
+      "create": "xhigh",
+      "dev": "xhigh",
+      "review": "xhigh",
+      "smoke": "xhigh",
+      "retro": "xhigh",
+      "decider": "low"
+    },
+    "reviewMode": "single-pass",
+    "smokeMode": "single-pass",
+    "retroMode": "single-pass"
+  }
+}
