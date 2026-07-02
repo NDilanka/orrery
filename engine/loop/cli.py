@@ -31,8 +31,10 @@ _MEMORY_UNSET = object()
 def _build_config(args) -> EngineConfig:
     """Build an :class:`EngineConfig`: load ``--loop-json`` if given, then apply CLI overrides.
 
-    Flags that the user explicitly passed override the JSON / defaults. ``--task`` always
-    wins (it has a CLI default of ``TASK.md`` which matches the config default anyway).
+    File config is the base; a CLI flag overrides ONLY when the user explicitly passed it
+    (every override flag defaults to ``None``/unset sentinels). In particular ``--task`` now
+    defaults to ``None`` — its old argparse default of ``"TASK.md"`` silently clobbered a
+    file-provided ``engine.task`` on every run that didn't pass ``--task`` explicitly.
     """
     if args.loop_json:
         config = from_loop_json(args.loop_json)
@@ -69,7 +71,10 @@ def _build_config(args) -> EngineConfig:
 def main(argv: list[str] | None = None) -> int:
     """``loop`` entry point — run the generic fix-until-green loop."""
     parser = argparse.ArgumentParser(prog="loop", description="Run the fix-until-green loop.")
-    parser.add_argument("--task", default="TASK.md", help="task spec the agent reads each iter")
+    parser.add_argument(
+        "--task", default=None,
+        help="task spec the agent reads each iter (default: TASK.md, or the loop.json engine.task)",
+    )
     parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP/...)")
     parser.add_argument("--cwd", default=".", help="repo the gate + git operate on")
     parser.add_argument("--loop-json", default=None, help="optional loop.json engine config")
@@ -200,7 +205,9 @@ def main_bmad(argv: list[str] | None = None) -> int:
         help="optional loop.json with a `bmad` block (per-phase models/effort, gateStages, "
         "review/smoke modes); CLI flags stay authoritative for run-location + toggles",
     )
-    parser.add_argument("--merge-base", default="develop", help="base branch for PRs + merge")
+    parser.add_argument(
+        "--merge-base", default=None, help="base branch for PRs + merge (default: develop)"
+    )
     parser.add_argument("--state-dir", default=".loop", help="state dir (log/checkpoint/STOP/lock)")
     parser.add_argument("--cwd", default=None, help="override dev-server/gate dir (default project-root)")
     parser.add_argument("--runner", default="claude", help="agent backend (default: claude)")
@@ -262,36 +269,73 @@ def main_bmad(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # CLI flags are authoritative for run-location + operational toggles (from_args). An optional
-    # --loop-json `bmad` block supplies the tuning that has NO CLI surface — per-phase `models` /
-    # `effort` / `gate_stages` — plus the phase `review_mode` / `smoke_mode` (a CLI mode flag, if
-    # passed, overrides the file).
-    config = driver.BmadConfig.from_args(args)
+    # File config is the BASE; CLI flags override ONLY when the user explicitly passed them
+    # (every override flag below defaults to `None` — a `store_true` toggle counts as "passed"
+    # only when True, since argparse can't distinguish "absent" from an explicit False for those).
+    # Previously this cherry-picked ~8 fields from the file onto a CLI-built config, silently
+    # discarding everything else the file set (maxStories, mergeBase, timeouts, no-merge/no-retro/
+    # no-smoke, auto-rollback, epic-only/story, quota-wait knobs, ...) — inverted here so a
+    # `--loop-json` config is fully honored except where the CLI explicitly says otherwise.
     if args.loop_json:
         data = json.loads(Path(args.loop_json).read_text(encoding="utf-8"))
         b = data.get("bmad", data) if isinstance(data, dict) else {}
         b = dict(b) if isinstance(b, dict) else {}
         b.setdefault("project_root", args.project_root)  # from_loop_json needs a project_root
-        file_config = driver.BmadConfig.from_loop_json({"bmad": b})
-        config.models = file_config.models
-        config.effort = file_config.effort
-        config.gate_stages = file_config.gate_stages
-        config.gate_flaky_retries = file_config.gate_flaky_retries
-        config.gate_flaky_max_fail = file_config.gate_flaky_max_fail
-        if getattr(args, "review_mode", None) is None:
-            config.review_mode = file_config.review_mode
-        if getattr(args, "smoke_mode", None) is None:
-            config.smoke_mode = file_config.smoke_mode
-        if getattr(args, "retro_mode", None) is None:
-            config.retro_mode = file_config.retro_mode
-        if getattr(args, "create_timeout_min", None) is None:
-            config.create_timeout_min = file_config.create_timeout_min
-        if getattr(args, "dev_timeout_min", None) is None:
-            config.dev_timeout_min = file_config.dev_timeout_min
-        if getattr(args, "review_timeout_min", None) is None:
-            config.review_timeout_min = file_config.review_timeout_min
-        if getattr(args, "retro_timeout_min", None) is None:
-            config.retro_timeout_min = file_config.retro_timeout_min
+        config = driver.BmadConfig.from_loop_json({"bmad": b})
+    else:
+        config = driver.BmadConfig(project_root=args.project_root)
+    # --project-root is REQUIRED on this CLI (always explicitly passed) -> always authoritative,
+    # regardless of any project_root/projectRoot the file itself carries.
+    config.project_root = args.project_root
+    config.loop_json = args.loop_json or ""
+
+    if args.merge_base is not None:
+        config.merge_base = args.merge_base
+    if args.epic_only is not None:
+        config.epic_only = args.epic_only
+    if args.story is not None:
+        config.story = args.story
+    if args.no_merge:
+        config.no_merge = True
+    if args.no_retro:
+        config.no_retro = True
+    if args.no_smoke:
+        config.no_smoke = True
+    if args.auto_rollback:
+        config.auto_rollback = True
+    if args.dry_run:
+        config.dry_run = True
+    if args.max_stories is not None:
+        config.max_stories = args.max_stories
+    if args.max_review_turns is not None:
+        config.max_review_turns = args.max_review_turns
+    if args.max_smoke_iters is not None:
+        config.max_smoke_iters = args.max_smoke_iters
+    if args.smoke_timeout_min is not None:
+        config.smoke_timeout_min = args.smoke_timeout_min
+    if args.max_retro_turns is not None:
+        config.max_retro_turns = args.max_retro_turns
+    if args.create_timeout_min is not None:
+        config.create_timeout_min = args.create_timeout_min
+    if args.dev_timeout_min is not None:
+        config.dev_timeout_min = args.dev_timeout_min
+    if args.review_timeout_min is not None:
+        config.review_timeout_min = args.review_timeout_min
+    if args.retro_timeout_min is not None:
+        config.retro_timeout_min = args.retro_timeout_min
+    if args.default_quota_wait_min is not None:
+        config.default_quota_wait_min = args.default_quota_wait_min
+    if args.max_quota_waits is not None:
+        config.max_quota_waits = args.max_quota_waits
+    if args.merge_wait_sec is not None:
+        config.merge_wait_sec = args.merge_wait_sec
+    if args.review_mode is not None:
+        config.review_mode = args.review_mode
+    if args.smoke_mode is not None:
+        config.smoke_mode = args.smoke_mode
+    if args.retro_mode is not None:
+        config.retro_mode = args.retro_mode
+
     runner = get_runner(args.runner)
     try:
         return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)

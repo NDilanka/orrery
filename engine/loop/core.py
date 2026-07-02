@@ -32,10 +32,10 @@ from pathlib import Path
 
 from loop import gitutil
 from loop.cache import get_cache_usage
-from loop.checkpoint import get_stop_mode
 from loop.config import EngineConfig
 from loop.cost import update_cost_alert
 from loop.decide import decide, update_consecutive_fail
+from loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
 from loop.events import (
     cache_event,
     cooperative_stop_event,
@@ -45,7 +45,6 @@ from loop.events import (
     iter_event,
     metrics_event,
     model_event,
-    new_checkpoint,
     parse_error_event,
     phase_timeout_event,
     plateau_event,
@@ -59,7 +58,6 @@ from loop.feedback import compact_feedback
 from loop.gate import run_gate
 from loop.hashlock import compare_hash_map, test_hash_map
 from loop.heartbeat import Heartbeat
-from loop.lockfile import LOCK_NAME, acquire_lock, release_lock
 from loop.memory import FileMemoryStore, Lesson, NullMemoryStore
 from loop.metrics import compute_metrics
 from loop.verify import (
@@ -73,9 +71,7 @@ from loop.logio import (
     append_event,
     consume_answer,
     read_answer_inbox,
-    read_stop_flag,
     read_text,
-    write_checkpoint,
     write_run_output,
     write_text,
 )
@@ -153,32 +149,24 @@ def run_loop(
     ``lock``; ``cwd`` is the repo the gate + git operate on. ``dry_run`` does INIT + one
     baseline gate, prints a plan, and returns 0 WITHOUT calling the runner.
     """
-    state = Path(state_dir)
     work = Path(cwd)
-    state.mkdir(parents=True, exist_ok=True)
 
-    log_path = state / "log.jsonl"
-    checkpoint_path = state / "checkpoint.json"
-    stop_path = state / "STOP"
-    progress_path = state / "progress.md"
-    answer_path = state / "answer.json"
-    lock_path = state / LOCK_NAME
+    def body(state: Path) -> int:
+        log_path = state / "log.jsonl"
+        checkpoint_path = state / "checkpoint.json"
+        stop_path = state / "STOP"
+        progress_path = state / "progress.md"
+        answer_path = state / "answer.json"
 
-    # Metrics: when enabled, keep an in-memory copy of every event we append to the log so
-    # compute_metrics(events) can fold the whole run at stop. OFF -> no list, no metrics event.
-    emitted: list[dict] | None = [] if config.metrics.emit else None
+        # Metrics: when enabled, keep an in-memory copy of every event we append to the log so
+        # compute_metrics(events) can fold the whole run at stop. OFF -> no list, no metrics event.
+        emitted: list[dict] | None = [] if config.metrics.emit else None
 
-    def emit(event: dict) -> None:
-        append_event(log_path, event)
-        if emitted is not None:
-            emitted.append(event)
+        def emit(event: dict) -> None:
+            append_event(log_path, event)
+            if emitted is not None:
+                emitted.append(event)
 
-    # --- concurrency guard --------------------------------------------------
-    if not acquire_lock(lock_path):
-        print(f"[GUARD] another loop is already running against state dir '{state}'.")
-        return 2
-
-    try:
         return _run_loop_inner(
             config,
             runner=runner,
@@ -193,11 +181,9 @@ def run_loop(
             emitted=emitted,
             dry_run=dry_run,
         )
-    finally:
-        # Release the lock no matter how we exit (mirrors "remove on exit"). Also runs when a
-        # KeyboardInterrupt/other exception unwinds through this try (proc.py has already killed
-        # any child tree by then; cli.py turns a KeyboardInterrupt into a clean exit(130)).
-        release_lock(lock_path)
+
+    # --- concurrency guard (loop.driver_shell — the shared lock/checkpoint/STOP shell) -----
+    return run_driver(state_dir, guard_label="loop", body=body)
 
 
 def _run_loop_inner(
@@ -386,7 +372,7 @@ def _run_loop_body(
         print(f"\n=== iteration {it}/{max_iters}  (cum ${round(cum, 4)}  best {best_pass}/{base_total}) ===")
 
         # 1. cooperative stop-if-requested at the SAFE (between-iteration) boundary.
-        req = get_stop_mode(read_stop_flag(stop_path), scope="story")
+        req = read_stop_request(stop_path, "story")
         if req["honor"]:
             if use_git and gitutil.is_dirty(work):
                 gitutil.add_all(work)
@@ -1065,8 +1051,9 @@ def _resume_command(config: EngineConfig, state: Path, work: Path) -> str:
 def _write_checkpoint(
     checkpoint_path: Path, stage: str, branch, merge_base, cum: float, resume: str
 ) -> None:
-    """Write a PROTOCOL §7 checkpoint.json via the pure builder + the logio writer."""
-    cp = new_checkpoint(
+    """Write a PROTOCOL §7 checkpoint.json (loop.driver_shell — the shared checkpoint shape)."""
+    write_checkpoint_now(
+        checkpoint_path,
         stage=stage,
         story=None,
         branch=branch or "",
@@ -1074,7 +1061,6 @@ def _write_checkpoint(
         cum_usd=cum,
         resume=resume,
     )
-    write_checkpoint(checkpoint_path, cp)
 
 
 # Re-export so a verdict_event symbol exists for callers/tests if they want the shape.

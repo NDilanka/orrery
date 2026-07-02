@@ -38,6 +38,9 @@
     status: string;
     trust: 'verified' | 'unverified' | null;
     current: boolean;
+    // wave U2 Task 3: this body IS runStore.auditTargetKey — the "verifying…" pulse
+    // (formerly the Observatory lighthouse's sweeping beam) renders on its label.
+    auditing: boolean;
   };
   type Labels = {
     cumUsd: number;
@@ -150,12 +153,10 @@
       const horizon = new PIXI.Graphics(); // cost-horizon ring
       const ringsG = new PIXI.Graphics(); // group rings
       const ghostG = new PIXI.Graphics(); // frozen target wireframe
-      const beamG = new PIXI.Graphics(); // lighthouse sweep / refute beam (under planets)
       const corona = new PIXI.Graphics(); // star glow / bloom
       const supernovaG = new PIXI.Graphics(); // transient crimson supernova on crash
       const starG = new PIXI.Graphics(); // star core
       const planetsC = new PIXI.Container(); // planets
-      const lighthouseG = new PIXI.Graphics(); // the off-plane auditor body (Lighthouse)
       const brakeG = new PIXI.Graphics(); // brake-ring "stopping at next <mode>"
       const shimmerG = new PIXI.Graphics(); // Rewind-mode cyan time-shimmer frame
 
@@ -236,13 +237,11 @@
         horizon,
         ringsG,
         ghostG,
-        beamG,
         particlesC,
         corona,
         supernovaG,
         starG,
         planetsC,
-        lighthouseG,
         brakeG,
         shimmerG,
       );
@@ -274,7 +273,6 @@
         night: 0, // 0 day → 1 night
         nightHue: 0, // 0 dusk(ember) → 1 polar(frost)
         restForm: 0, // 0 running → 1 the rest-state silhouette is fully formed
-        lhWake: 0, // lighthouse idle/dim (0) → awake/bright (1)
         rewind: 0, // 0 normal → 1 Rewind-mode cyan time-shimmer fully on
         t: 0,
       };
@@ -295,10 +293,6 @@
       const snapFx = new Map<string, number>();
       let prevErrorStop = false;
       let supernova = 0; // 0..1 decaying transient on a crash stop
-      // the lighthouse sweep: 0..1 progress of the current beam across the target
-      let sweepKey: string | null = null;
-      let sweepProg = 1; // 1 = idle (no sweep)
-      let lastAuditKey: string | null = null;
 
       // hover (set by the mousemove listener; consumed by the planet draw)
       let hoveredKey: string | null = null;
@@ -391,9 +385,10 @@
         if (!reduced) vis.t += 0.016;
         const running = s.run.status === 'running';
         const rest = s.run.restState;
-        // Tier-1 mode (Planetarium OR phone, plan §3/§7): star + cost-horizon +
-        // rest-states + beacon + quota-night ONLY. Planets, rings, the ghost,
-        // the Lighthouse and the brake-ring are dropped; particles are budget-cut.
+        // Tier-1 mode (Ambient/Planetarium ONLY since wave U2 — a phone in
+        // Observatory renders the full scene now): star + cost-horizon +
+        // rest-states + beacon + quota-night ONLY. Planets, rings, the ghost
+        // and the brake-ring are dropped; particles are budget-cut.
         const tierOne = uiStore.tierOne;
 
         // ── A3: edge-detect transient moments from steady state ──────────────
@@ -570,91 +565,15 @@
           }
         }
 
-        // ── THE LIGHTHOUSE (auditor) ─────────────────────────────────────────
-        // Off-plane cold-white body, idle/dim 95% of the time. Wakes only when a
-        // planet is claimed-green-not-certified (something to audit); sweeps a
-        // beam to that planet. PASS → the planet seals itself (handled below);
-        // FAIL/refute → the beam snaps Crimson on the failing criterion.
-        // off-plane auditor: anchored top-RIGHT, clear of the HUD (top-left) and
-        // below the navbar, so its sweep cone never originates under a panel (the
-        // old top-left anchor drew the cone under the HUD → a stray dark wedge).
-        const lhx = w - Math.max(96, w * 0.12);
-        const lhy = Math.max(108, h * 0.2);
+        // ── audit signal (wave U2 Task 3) ─────────────────────────────────────
+        // The lighthouse tower + sweeping beam used to be the only way to see that
+        // a claimed-green item was being audited. It's retired: the SAME state
+        // (runStore.auditTargetKey — claimed-green, not yet certified) now drives a
+        // "verifying…" pulse on that body's on-canvas label (ObservatoryLabels) and
+        // next to the HUD trust chip instead. A refute still auto-opens VerdictPanel
+        // (runStore.latestVerdict, unrelated to this signal) and still gets its own
+        // crimson flush ring in the planet-draw loop below (refuteFx).
         const auditKey = runStore.auditTargetKey;
-        // start a sweep when the audit target changes (a new claimed green appears)
-        if (auditKey && auditKey !== lastAuditKey) {
-          sweepKey = auditKey;
-          sweepProg = reduced ? 1 : 0;
-        }
-        lastAuditKey = auditKey;
-        // refute target overrides: aim at whoever was just refuted
-        const refuted = [...refuteFx.entries()].sort((a, b) => b[1] - a[1])[0];
-        const refuteKey = refuted?.[0] ?? null;
-        const wantWake = !!auditKey || !!refuteKey;
-        vis.lhWake = lerp(vis.lhWake, wantWake ? 1 : 0, 0.06);
-        if (!reduced && sweepProg < 1) sweepProg = Math.min(1, sweepProg + 0.04);
-
-        beamG.clear();
-        lighthouseG.clear();
-        // The auditor + its beam are Tier-2 (an off-plane body sweeping a planet),
-        // so they're dropped entirely in Tier-1/Planetarium.
-        // beam to the target (sweep = brass/auditor-white; refute = crimson)
-        const beamTargetKey = refuteKey ?? sweepKey ?? auditKey;
-        const tp = beamTargetKey ? ppos.get(beamTargetKey) : null;
-        if (!tierOne && tp && vis.lhWake > 0.04) {
-          const isRefute = !!refuteKey && (refuteFx.get(refuteKey) ?? 0) > 0.02;
-          const beamCol = isRefute ? C.crimson : C.auditor;
-          // the sweep "wipes" from the lighthouse toward the planet (prog 0→1)
-          const prog = sweepKey === beamTargetKey ? sweepProg : 1;
-          const ex = lerp(lhx, tp.x, prog);
-          const ey = lerp(lhy, tp.y, prog);
-          const beamA = (isRefute ? 0.5 : 0.16 + vis.lhWake * 0.16) *
-            (isRefute ? 0.4 + (refuteFx.get(refuteKey!) ?? 0) * 0.6 : 1);
-          // a soft cone: two edges + a bright core line. Kept a subtle directional
-          // hint, not a swath — narrow spread + low fill alpha so it never reads as
-          // a gray triangle dominating the scene.
-          const ang = Math.atan2(ey - lhy, ex - lhx);
-          const spread = 0.03 + (1 - prog) * 0.012;
-          const len = Math.hypot(ex - lhx, ey - lhy);
-          beamG
-            .moveTo(lhx, lhy)
-            .lineTo(lhx + Math.cos(ang - spread) * len, lhy + Math.sin(ang - spread) * len)
-            .lineTo(lhx + Math.cos(ang + spread) * len, lhy + Math.sin(ang + spread) * len)
-            .closePath()
-            .fill({ color: beamCol, alpha: beamA * 0.1 });
-          beamG.moveTo(lhx, lhy).lineTo(ex, ey).stroke({ width: isRefute ? 1.4 : 1, color: beamCol, alpha: beamA * 0.7 });
-          if (isRefute) {
-            // snap a crimson burst on the failing criterion (the AC star)
-            const fx = refuteFx.get(refuteKey!) ?? 0;
-            beamG.circle(tp.x, tp.y, 4 + fx * 10).stroke({ width: 1.5, color: C.crimson, alpha: fx });
-          }
-        }
-        // the lighthouse body: a tall cold beacon (distinct silhouette: a stacked
-        // tower, NOT a disc) — dim when idle, lantern lit when awake. Tier-2 only.
-        if (!tierOne) {
-          const baseW = 7;
-          const towerH = 22;
-          const dim = 0.18 + vis.lhWake * 0.5;
-          // tapered tower
-          lighthouseG
-            .moveTo(lhx - baseW, lhy + towerH)
-            .lineTo(lhx - baseW * 0.55, lhy - towerH * 0.4)
-            .lineTo(lhx + baseW * 0.55, lhy - towerH * 0.4)
-            .lineTo(lhx + baseW, lhy + towerH)
-            .closePath()
-            .fill({ color: C.auditor, alpha: 0.1 + vis.lhWake * 0.18 })
-            .stroke({ width: 1, color: C.auditor, alpha: 0.35 + vis.lhWake * 0.4 });
-          // lantern room (the light source)
-          lighthouseG
-            .circle(lhx, lhy - towerH * 0.4, 4.5)
-            .fill({ color: C.auditor, alpha: dim });
-          if (vis.lhWake > 0.3 && !reduced) {
-            const halo = (1 + Math.sin(vis.t * 2)) * 0.5;
-            lighthouseG
-              .circle(lhx, lhy - towerH * 0.4, 7 + halo * 3)
-              .stroke({ width: 1, color: C.auditor, alpha: 0.18 * vis.lhWake });
-          }
-        }
 
         // ── particle stream: emit from the active region → the star ──────────
         // emission ∝ burn; frozen under reduced-motion. cache-teal fraction is
@@ -909,7 +828,8 @@
             g.circle(px, py, pr + 3).stroke({ width: 1.2, color: C.brass, alpha: 0.7 });
           } else if (o.claimedGreen) {
             // A2: CLAIMED green (asserted, not yet audited) — anxious dashed pulse,
-            // NO brass seal. It pulses until the Lighthouse sweeps it.
+            // NO brass seal. It pulses until the verifier certifies or refutes it
+            // (the "verifying…" label + HUD trust chip carry the same signal in text).
             const ap = reduced ? 0.4 : 0.25 + Math.abs(Math.sin(vis.t * 3)) * 0.45;
             const wob = reduced ? 0 : Math.sin(vis.t * 3) * 0.8;
             g.circle(px, py, pr + 2.5 + wob).stroke({ width: 1, color: C.green, alpha: ap });
@@ -974,11 +894,30 @@
           for (const { o } of ppos.values()) {
             ringCounts.set(o.ringIndex, (ringCounts.get(o.ringIndex) ?? 0) + 1);
           }
-          // Tier-1 (phone/Ambient) draws no planets at all (see the planet loop above) — no
+          // Tier-1 (Ambient) draws no planets at all (see the planet loop above) — no
           // labels either, or they'd float over nothing (mirrors the existing !uiStore.ambient
-          // gate around <ObservatoryLabels/> below, extended to the phone's tierOne case too).
+          // gate around <ObservatoryLabels/> below).
           const bodies: BodyLabel[] = [];
-          if (!tierOne) {
+          if (!tierOne && uiStore.isPhone) {
+            // wave U2 Task 4: phone Observatory now draws real planets, but keeps the label
+            // layer to just the current body — a small screen can't carry a full legend too.
+            if (cur) {
+              const pp = ppos.get(cur.key);
+              if (pp) {
+                const o = pp.o;
+                const trust: BodyLabel['trust'] = o.certified ? 'verified' : o.claimedGreen ? 'unverified' : null;
+                bodies.push({
+                  key: cur.key,
+                  x: pp.x,
+                  y: pp.y,
+                  status: o.status,
+                  trust,
+                  current: true,
+                  auditing: cur.key === auditKey,
+                });
+              }
+            }
+          } else if (!tierOne) {
             for (const [key, pp] of ppos) {
               const o = pp.o;
               const isCurrent = cur?.key === key;
@@ -986,7 +925,15 @@
               const flagged = o.status === 'failed' || o.claimedGreen;
               if (dense && !isCurrent && !flagged) continue;
               const trust: BodyLabel['trust'] = o.certified ? 'verified' : o.claimedGreen ? 'unverified' : null;
-              bodies.push({ key, x: pp.x, y: pp.y, status: o.status, trust, current: isCurrent });
+              bodies.push({
+                key,
+                x: pp.x,
+                y: pp.y,
+                status: o.status,
+                trust,
+                current: isCurrent,
+                auditing: key === auditKey,
+              });
             }
           }
           labels = {
@@ -1033,11 +980,17 @@
 </div>
 
 <style>
+  /* wave U2 Task 1: the canvas is now a real grid cell (the System dock's "center"
+     area), not a full-viewport background panels float over — `position: relative`
+     (not `absolute; inset: 0`) so it fills exactly the box the grid gives it and
+     genuinely resizes ("breathes") as the left/right rails collapse or expand.
+     `.ofield`'s `absolute; inset: 0` below still anchors to THIS box. */
   .observatory {
-    position: absolute;
-    inset: 0;
+    position: relative;
     width: 100%;
     height: 100%;
+    min-width: 0;
+    min-height: 0;
     background: var(--void);
   }
   .ofield {

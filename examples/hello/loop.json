@@ -21,7 +21,6 @@
           "lockGlobs": ["**/test_*.py"]
         }
       ],
-      "greenWhen": "exit==0",
       "lockGlobs": ["**/test_*.py"]
     },
     "cost": { "ceilingUsd": 0.5, "alertPct": [50, 80, 100] },

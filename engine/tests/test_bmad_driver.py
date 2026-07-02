@@ -1443,3 +1443,31 @@ def test_loop_json_can_tune_flaky_knobs():
     )
     assert cfg.gate_flaky_retries == 5
     assert cfg.gate_flaky_max_fail == 3
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — the folded bmad/loop.json single-file seed (+ the deprecated but still-working
+# bmad-engine.json) both parse cleanly through BmadConfig.from_loop_json.
+# ---------------------------------------------------------------------------
+
+
+def test_seed_bmad_loop_json_parses_with_namespaced_block(capsys):
+    data = json.loads(Path("orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
+    cfg = driver.BmadConfig.from_loop_json({**data, "bmad": {**data["bmad"], "projectRoot": "/p"}})
+    assert cfg.project_root == "/p"
+    assert cfg.model_for("dev") == "claude-opus-4-8[1m]"
+    assert cfg.effort_for("dev") == "xhigh"
+    assert cfg.review_mode == "single-pass"
+    assert cfg.smoke_mode == "single-pass"
+    assert cfg.retro_mode == "single-pass"
+    # orrery-side top-level keys (id/name/start/stateDir/...) are outside the "bmad" block ->
+    # no unknown-key noise (only the namespaced block is ever inspected).
+    assert capsys.readouterr().err == ""
+
+
+def test_seed_bmad_engine_json_still_parses_deprecated_but_working():
+    data = json.loads(Path("orrery/loops/bmad/bmad-engine.json").read_text(encoding="utf-8"))
+    data["bmad"]["projectRoot"] = "/p"
+    cfg = driver.BmadConfig.from_loop_json(data)
+    assert cfg.model_for("dev") == "claude-opus-4-8[1m]"
+    assert cfg.review_mode == "single-pass"

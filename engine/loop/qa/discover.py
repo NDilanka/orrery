@@ -22,9 +22,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from loop import gitutil, lockfile, proc
+from loop import gitutil, proc
+from loop.configkeys import resolve, warn_unknown_keys
+from loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
+from loop.events import cooperative_stop_event
 from loop.heartbeat import Heartbeat
-from loop.logio import append_event, read_stop_flag, write_checkpoint
+from loop.logio import append_event
 
 # Verdict statuses the agent assigns each AC. Only the first four are "observable" and
 # therefore counted in a story's pass-rate gate; NOT_OBSERVABLE drops out of the denominator.
@@ -34,6 +37,26 @@ _NOT_OBSERVABLE = "not-observable"
 
 # Default browser tool surface + file tools (read ACs/seed, author the spec, write findings).
 DEFAULT_ALLOWED_TOOLS = ("mcp__playwright", "Read", "Write", "Edit", "Glob", "Grep")
+
+# Keys `QaConfig.from_loop_json` actually reads (both spellings) — anything else warns
+# (loop.configkeys.warn_unknown_keys) instead of silently vanishing.
+_QA_KNOWN_KEYS = {
+    "projectRoot", "project_root",
+    "manifest", "manifestPath", "manifest_path",
+    "baseUrl", "base_url",
+    "app",
+    "specDir", "spec_dir",
+    "storageState", "storage_state",
+    "seedSummary", "seed_summary",
+    "model",
+    "effort",
+    "maxTurns", "max_turns",
+    "timeoutSec", "timeout_sec",
+    "costCeilingUsd", "cost_ceiling_usd",
+    "epics",
+    "headless",
+    "caps",
+}
 
 
 @dataclass
@@ -60,24 +83,36 @@ class QaConfig:
 
     @staticmethod
     def from_loop_json(data: dict, *, project_root: str | None = None) -> "QaConfig":
+        """Build from a ``loop.json`` ``qa`` block (or a raw dict of the same fields).
+
+        Accepts the SAME single ``loop.json`` a generic/BMAD loop uses (Task 4 — a namespaced
+        ``qa`` block alongside the orrery-side keys); ``data.get("qa", data)`` extracts just
+        that block, so this never sees (and never warns on) ``id``/``name``/``start``/etc.
+        camelCase keys (the documented wire convention) and snake_case equivalents are both
+        accepted (:func:`loop.configkeys.resolve`); an unrecognized key warns on stderr
+        (:func:`loop.configkeys.warn_unknown_keys`).
+        """
         q = dict(data.get("qa", data) or {})
-        pr = project_root or q.get("projectRoot") or q.get("project_root") or "."
+        warn_unknown_keys(q, _QA_KNOWN_KEYS, "qa")
+        pr = project_root or resolve(q, "projectRoot", "project_root") or "."
         return QaConfig(
             project_root=pr,
-            manifest_path=q.get("manifest", q.get("manifestPath", "ac-manifest.json")),
-            base_url=q.get("baseUrl", "http://localhost:3000"),
-            app=q.get("app", "app"),
-            spec_dir=q.get("specDir", "e2e/functional"),
-            storage_state=q.get("storageState", ""),
-            seed_summary=q.get("seedSummary", ""),
-            model=q.get("model", ""),
-            effort=q.get("effort", ""),
-            max_turns=int(q.get("maxTurns", 120)),
-            timeout_sec=int(q.get("timeoutSec", 1800)),
-            cost_ceiling_usd=q.get("costCeilingUsd"),
-            epics=q.get("epics"),
-            headless=bool(q.get("headless", True)),
-            caps=q.get("caps", "devtools"),
+            manifest_path=resolve(
+                q, "manifest", "manifestPath", "manifest_path", default="ac-manifest.json"
+            ),
+            base_url=resolve(q, "baseUrl", "base_url", default="http://localhost:3000"),
+            app=resolve(q, "app", default="app"),
+            spec_dir=resolve(q, "specDir", "spec_dir", default="e2e/functional"),
+            storage_state=resolve(q, "storageState", "storage_state", default=""),
+            seed_summary=resolve(q, "seedSummary", "seed_summary", default=""),
+            model=resolve(q, "model", default=""),
+            effort=resolve(q, "effort", default=""),
+            max_turns=int(resolve(q, "maxTurns", "max_turns", default=120)),
+            timeout_sec=int(resolve(q, "timeoutSec", "timeout_sec", default=1800)),
+            cost_ceiling_usd=resolve(q, "costCeilingUsd", "cost_ceiling_usd"),
+            epics=resolve(q, "epics"),
+            headless=bool(resolve(q, "headless", default=True)),
+            caps=resolve(q, "caps", default="devtools"),
         )
 
 
@@ -384,20 +419,16 @@ def run(
 ) -> int:
     """Run the discovery pass across the configured epics. Returns a process exit code.
 
-    Acquires the SAME single-flight lock (:mod:`loop.lockfile`) every other driver
-    (``loop`` / ``loop-bmad``) uses, so a QA pass can't race a generic or BMAD run (or another
-    QA run) against the same state dir. Returns ``2`` when a live lock already exists.
+    Acquires the SAME single-flight lock (:mod:`loop.lockfile`, via :mod:`loop.driver_shell`)
+    every other driver (``loop`` / ``loop-bmad``) uses, so a QA pass can't race a generic or BMAD
+    run (or another QA run) against the same state dir. Returns ``2`` when a live lock already
+    exists.
     """
-    state = Path(state_dir)
-    state.mkdir(parents=True, exist_ok=True)
-    lock_path = state / lockfile.LOCK_NAME
-    if not lockfile.acquire_lock(lock_path):
-        print(f"[GUARD] another loop is already running against state dir '{state}'.")
-        return 2
-    try:
+
+    def body(state: Path) -> int:
         return _run_inner(config, state=state, invoke=invoke, emit=emit)
-    finally:
-        lockfile.release_lock(lock_path)
+
+    return run_driver(state_dir, guard_label="loop", body=body)
 
 
 def _run_inner(
@@ -438,10 +469,24 @@ def _run_inner(
     stop_reason = "all epics complete"
 
     for i, epic in enumerate(epics, start=1):
-        if read_stop_flag(stop_flag) is not None:
+        # Between-epic is QA's only safe boundary — analogous to BMAD's "story" scope (coarse,
+        # between units of work), not "phase" (mid-unit). Any flag content is honored here,
+        # matching the prior (scope-blind) behavior exactly: read_stop_request(scope="story")
+        # only HOLDS a "story"-moded request at a "phase" scope, so at this "story" scope every
+        # mode (phase/story/now/empty) is honored — see loop.checkpoint.get_stop_mode.
+        req = read_stop_request(stop_flag, "story")
+        if req["honor"]:
             stop_reason = "cooperative stop"
-            emit({"event": "cooperative-stop", "scope": "phase", "stage": f"epic-{epic['epic']}",
-                  "story": None, "branch": branch, "cum": round(cum, 4)})
+            emit(
+                cooperative_stop_event(
+                    scope="story",
+                    mode=req["mode"],
+                    stage=f"epic-{epic['epic']}",
+                    story=None,
+                    branch=branch,
+                    cum=round(cum, 4),
+                )
+            )
             break
 
         n = epic["epic"]
@@ -500,11 +545,14 @@ def _run_inner(
              "verdicts": findings.get("verdicts", []), "specFile": findings.get("specFile", spec_rel)}
         )
 
-        write_checkpoint(
+        write_checkpoint_now(
             state / "checkpoint.json",
-            {"updatedAt": "", "stage": f"epic-{n}", "story": f"epic-{n}", "branch": branch,
-             "mergeBase": branch, "cumUsd": round(cum, 4),
-             "resume": f"loop-qa --state-dir {state}"},
+            stage=f"epic-{n}",
+            story=f"epic-{n}",
+            branch=branch,
+            merge_base=branch,
+            cum_usd=cum,
+            resume=f"loop-qa --state-dir {state}",
         )
 
         if config.cost_ceiling_usd is not None and cum >= config.cost_ceiling_usd:

@@ -102,7 +102,7 @@
 
 <style>
   .transport {
-    /* positioned by the parent .bottom-dock (sits just above the cost strip) */
+    /* placed by the System dock's bottom row (+page.svelte .g-bottom) */
     display: flex;
     align-items: center;
     gap: var(--space-2);
@@ -112,7 +112,6 @@
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
-    z-index: 12;
   }
   /* Rewind mode: grow + frame in the cyan time-shimmer */
   .transport.rewind {

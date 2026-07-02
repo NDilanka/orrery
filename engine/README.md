@@ -99,13 +99,15 @@ audit, run-quality metrics, and an anti-false-green verifier.
 loop/
   core.py        generic fix-until-green loop (the driver)
   cli.py         loop / loop-bmad / loop-qa / loop-stop / loop-supervise entrypoints
-  decide.py      pure decision core (port of Get-LoopDecision)
+  driver_shell.py shared driver lifecycle: lock -> body -> release; checkpoint + STOP helpers
+  decide.py      pure decision cores (Get-LoopDecision port + the shared regression floor)
   events.py      single source of truth for log.jsonl event shapes
   gate.py        multi-stage external gate (exit code is truth)
   quota.py       quota parsing + wait-and-resume survival
   hashlock.py    per-file test hash-lock (anti-tamper)
   lockfile.py    shared single-flight concurrency lock (loop / loop-bmad / loop-qa)
   supervise.py   restart-on-failure wrapper (loop-supervise; replaces supervise.ps1)
+  configkeys.py  shared config-key loader: camel/snake resolve + unknown-key warnings
   cost.py cache.py verdict.py checkpoint.py config.py   pure helpers
   proc.py        cross-platform spawn + process-tree kill (replaces taskkill)
   logio.py       log.jsonl / checkpoint / answer-inbox / STOP-flag I/O
@@ -116,6 +118,46 @@ loop/
   qa/            AC-driven QA discovery driver (loop-qa)
   memory/ verify.py feedback.py metrics.py   the default-off capabilities
 ```
+
+## Writing a new loop driver
+
+All three shipped drivers (`loop`, `loop-bmad`, `loop-qa`) run inside the same shell —
+`loop.driver_shell.run_driver` — and a new driver should too. The full contract lives in
+`loop/driver_shell.py`'s module docstring; the short version:
+
+1. **Entry shape.** Parse your config, then hand your orchestration to the shell:
+
+   ```python
+   from loop.driver_shell import run_driver
+
+   def run(config, *, state_dir, ...) -> int:
+       def body(state: Path) -> int:
+           ...  # your orchestration; return 0 (ok / clean stop) or 1 (halt / handoff)
+       return run_driver(state_dir, guard_label="my-driver", body=body)
+   ```
+
+   The shell creates the state dir, takes the shared single-flight lock (`<stateDir>/lock` —
+   the ONE name every driver uses, so racing drivers serialize), runs `body` with the lock
+   held, and releases it on every exit path. A refused lock returns **exit code 2** without
+   calling `body`; never return 2 yourself.
+2. **State files** (PROTOCOL §1) live in `state_dir`: append events to `log.jsonl` via
+   `loop.logio.append_event` (compact JSON, one per line; reducers ignore unknown events, so
+   adapter-specific events are fine — emit the §2 core set where your run maps onto it); write
+   `checkpoint.json` ONLY through `loop.driver_shell.write_checkpoint_now` (one shape,
+   consistent `updatedAt`/`cumUsd` rounding, a real `resume` command string).
+3. **Cooperative stop.** Poll the `STOP` flag at your own safe boundaries with
+   `loop.driver_shell.read_stop_request(stop_path, scope)`; when it says honor, write a
+   checkpoint, emit `cooperative-stop`, delete the flag, and return 0. Nothing kills you
+   mid-step — honoring promptly is your job.
+4. **Liveness.** Wrap every long blocking agent call in `loop.heartbeat.Heartbeat`
+   (`activity.json`) so a watcher can tell working from hung.
+5. **Config.** Read your tuning from a namespaced block of the loop's `loop.json`
+   (`{"myadapter": {...}}` — see PROTOCOL §7), resolving keys with `loop.configkeys.resolve`
+   (camelCase AND snake_case both accepted) and warning on unrecognized keys with
+   `loop.configkeys.warn_unknown_keys`.
+6. **Keep decisions pure.** Put any go/no-go logic in pure functions with injected inputs
+   (see `loop.decide`) and inject every side effect (runner, gate, emit) so your driver is
+   testable with mocks — no network, no real agent.
 
 ## Tests
 

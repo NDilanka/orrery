@@ -7,11 +7,26 @@
   //
   // It is deliberately simple: no Pixi, no orbit. The System view's Observatory
   // is what you fly out to; this is the work-item dossier.
+  //
+  // wave U2 Task 5: rendered as a right-side drawer over the (already dimmed —
+  // see +page.svelte .layer.out-near) System canvas on desktop, a full-screen
+  // sheet on phone. Escape and the breadcrumb both already route back through
+  // +page.svelte's existing nav (onKeydown / the crumb button) — unchanged here.
+  // The slide-in animation + reduced-motion gate mirror DecisionSheet's contract.
 
+  import { onMount } from 'svelte';
   import { runStore } from '../stores/run.svelte';
+  import { uiStore } from '../stores/ui.svelte';
   import type { WorkItem } from '../types';
 
   let { itemKey, onBack }: { itemKey: string; onBack?: () => void } = $props();
+
+  let dialogEl = $state<HTMLDivElement | null>(null);
+  onMount(() => {
+    // land keyboard focus inside the drawer on open (a minimal a11y contract —
+    // the back button/breadcrumb/Escape all already close it).
+    dialogEl?.focus();
+  });
 
   const s = $derived(runStore.state);
   const item = $derived<WorkItem | null>(s.items[itemKey] ?? null);
@@ -22,7 +37,15 @@
   }
 </script>
 
-<div class="body">
+<div
+  class="body"
+  class:reduced={uiStore.reducedMotion}
+  role="dialog"
+  aria-modal="true"
+  aria-label="Body dossier — {itemKey}"
+  tabindex="-1"
+  bind:this={dialogEl}
+>
   {#if onBack}
     <button class="back" type="button" onclick={() => onBack?.()}>
       <span class="back-glyph" aria-hidden="true">←</span> system
@@ -144,23 +167,53 @@
 </div>
 
 <style>
+  /* wave U2 Task 5: a right-side drawer (desktop) — full height, slides in from
+     the edge over the dimmed System canvas (see +page.svelte .layer.out-near). */
   .body {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(560px, 92vw);
-    max-height: 78vh;
+    inset: 0 0 0 auto;
+    width: min(420px, 100vw);
+    max-height: none;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-5);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    backdrop-filter: blur(10px);
+    padding: var(--space-5);
+    /* clear the floating breadcrumb pill (navbar: top 18px, ~42px tall) which
+       overlays the drawer's top-right and doubles as its Cosmos > loop > item header */
+    padding-top: 76px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
+    border-left: 1px solid var(--panel-edge);
+    border-radius: 0;
+    box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5);
     z-index: 9;
+    animation: drawerIn var(--dur-zoom) var(--ease-out);
+  }
+  @keyframes drawerIn {
+    from {
+      transform: translateX(28px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  .body.reduced {
+    animation: none;
+  }
+  .body:focus-visible {
+    outline: none; /* a dialog landing-focus, not a clickable control */
+  }
+  /* full-screen sheet on phone — same slide, just edge-to-edge. The navbar pill
+     wraps to two rows on a 390px width, so the sheet clears a taller header. */
+  @media (max-width: 640px) {
+    .body {
+      inset: 0;
+      width: auto;
+      border-left: none;
+      padding-top: 100px;
+    }
   }
   .empty {
     color: var(--text-dim);

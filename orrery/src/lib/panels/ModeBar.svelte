@@ -38,10 +38,9 @@
 
 <style>
   .modebar {
-    position: absolute;
-    top: var(--chrome-inset);
-    left: 50%;
-    transform: translateX(-50%);
+    /* wave U2 Task 1: placed by the System dock's top bar (grid-area: topbar,
+       centered column) instead of floating over the canvas at a hand-picked
+       top/left offset — this is internal styling only now. */
     display: flex;
     gap: var(--space-1);
     padding: 5px 6px;
@@ -49,7 +48,6 @@
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
-    z-index: 18;
   }
   .mbtn {
     display: inline-flex;
@@ -90,12 +88,9 @@
     opacity: 0.32;
     cursor: default;
   }
-  /* tablet/narrow: collapse to glyphs AND drop below the top navbar so the
-     centred mode toggle and the right-anchored navbar never overlap. */
+  /* tablet/narrow: collapse to glyphs — the top bar's own layout (+page.svelte
+     .g-topbar) reserves room so this never runs under the floating navbar pill. */
   @media (max-width: 860px) {
-    .modebar {
-      top: 64px;
-    }
     .mbtn .lbl {
       display: none;
     }

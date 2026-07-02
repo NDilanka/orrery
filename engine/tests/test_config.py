@@ -63,7 +63,7 @@ def test_load_hello_loop_json():
     assert stage.command == "pytest -q"
     assert stage.pass_pattern == r"(\d+) passed"
     assert stage.fail_pattern == r"(\d+) failed"
-    assert cfg.gate.green_when == "exit==0"
+    assert not hasattr(cfg.gate, "green_when")  # removed (Task 5) — gate green is exit==0, always
     assert cfg.gate.lock_globs == ["**/test_*.py"]
 
     # cost
@@ -115,7 +115,7 @@ def test_empty_engine_uses_loop_ps1_defaults():
     # default gate stage is the single bun-test stage from loopcore.ps1
     assert len(cfg.gate.stages) == 1
     assert cfg.gate.stages[0].command == "bun test"
-    assert cfg.gate.green_when == "exit==0"
+    assert not hasattr(cfg.gate, "green_when")  # removed (Task 5) — gate green is exit==0, always
     assert cfg.gate.lock_globs == ["*.test.ts"]
 
 
@@ -189,3 +189,50 @@ def test_iter_timeout_min_zero_disables():
 
 def test_loop_json_field_default_empty():
     assert EngineConfig().loop_json == ""
+
+
+# =====================================================================
+# Task 3/5 — unknown-key warnings + the retired gate.greenWhen field
+# =====================================================================
+
+
+def test_green_when_removed_from_gate_config():
+    """gate.greenWhen was parsed but never consulted (real green = every stage exit 0,
+    loop.gate.run_gate) — the field is gone; GateConfig has no such attribute."""
+    from loop.config import GateConfig
+
+    cfg = GateConfig()
+    assert not hasattr(cfg, "green_when")
+
+
+def test_green_when_in_json_warns_retired_not_unrecognized(capsys):
+    from_loop_json({"engine": {"gate": {"greenWhen": "exit==0"}}})
+    err = capsys.readouterr().err
+    assert "retired" in err
+    assert "greenWhen" in err
+    assert "unrecognized" not in err
+
+
+def test_unknown_top_level_engine_key_warns(capsys):
+    from_loop_json({"engine": {"maxTurnz": 5}})
+    err = capsys.readouterr().err
+    assert "maxTurnz" in err
+    assert "unrecognized" in err
+
+
+def test_known_engine_keys_produce_no_warning(capsys):
+    from_loop_json(HELLO)
+    assert capsys.readouterr().err == ""
+
+
+# =====================================================================
+# Task 4 — the brain2-regression seed (single-file, no adapter block) still parses
+# =====================================================================
+
+
+def test_load_brain2_regression_seed():
+    cfg = from_loop_json(Path("orrery/loops/brain2-regression/loop.json"))
+    assert cfg.task.endswith("TASK.md")
+    assert cfg.gate.stages[0].name == "e2e"
+    assert cfg.cost.ceiling_usd == 2.0
+    assert not hasattr(cfg.gate, "green_when")
