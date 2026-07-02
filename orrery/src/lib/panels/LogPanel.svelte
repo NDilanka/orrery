@@ -228,10 +228,11 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    /* docked rail — flat surface-panel + hairline, no shadow, no blur (glass is
+       reserved for overlays above the scene, plan §1 principle 6) */
+    background: var(--surface-panel);
+    border: 1px solid var(--border-hairline);
     border-radius: var(--radius);
-    backdrop-filter: blur(8px);
     overflow: hidden;
   }
   .log.closed {
@@ -242,17 +243,24 @@
     align-items: center;
     gap: var(--space-2);
     width: 100%;
-    padding: 7px 11px;
+    padding: var(--space-2) var(--space-3);
     background: transparent;
     border: none;
     color: var(--text-meta);
-    font-size: 10.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     cursor: pointer;
     text-align: left;
+    transition:
+      color var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard);
   }
   .loghdr:hover {
     color: var(--starlight);
+    background: var(--surface-hover);
+  }
+  .loghdr:active {
+    background: color-mix(in srgb, var(--surface-hover) 80%, white 10%);
   }
   .dot {
     width: 7px;
@@ -284,7 +292,7 @@
   }
   .count {
     color: var(--text-meta);
-    font-size: 10.5px;
+    font-size: var(--text-2xs);
   }
   .chev {
     margin-left: auto;
@@ -294,9 +302,9 @@
   .activity {
     display: flex;
     align-items: baseline;
-    gap: 5px;
-    padding: 0 11px 7px;
-    font-size: 10.5px;
+    gap: var(--space-1);
+    padding: 0 var(--space-3) var(--space-2);
+    font-size: var(--text-2xs);
     line-height: 1.3;
     color: var(--plasma-green);
     white-space: nowrap;
@@ -343,16 +351,16 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding: 0 11px 9px;
+    padding: 0 var(--space-3) var(--space-2);
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--space-1);
   }
   .empty {
     font-size: var(--text-xs);
     color: var(--text-meta);
     font-style: italic;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
   }
   .row {
     display: flex;
@@ -365,9 +373,11 @@
     flex: 0 0 auto;
     color: var(--text-meta);
     border: 1px solid var(--hairline);
-    border-radius: 4px;
-    padding: 0 5px;
-    font-size: 10.5px;
+    /* no --radius token below --radius-sm (6px) exists for a chip this small;
+       nearest used (was a literal 4px) */
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-1);
+    font-size: var(--text-2xs);
   }
   .ev.good {
     color: var(--plasma-green);
@@ -390,7 +400,7 @@
     border: none;
     text-align: left;
     font: inherit;
-    font-size: 10.5px;
+    font-size: var(--text-2xs);
     color: var(--text-meta);
     cursor: pointer;
     /* collapsed: up to 3 wrapped lines, then clamp — long identifiers/URLs still can't blow out
@@ -401,7 +411,7 @@
     line-clamp: 3;
     overflow: hidden;
     overflow-wrap: break-word;
-    transition: color var(--dur-fast) var(--ease-standard);
+    transition: color var(--dur-feedback) var(--ease-standard);
   }
   .detail:hover {
     color: var(--starlight);
@@ -420,37 +430,51 @@
   .ts {
     flex: 0 0 auto;
     margin-left: auto;
-    padding-left: 4px;
-    font-size: 10px;
+    padding-left: var(--space-1);
+    font-size: var(--text-2xs);
     color: var(--text-faint);
     white-space: nowrap;
   }
   .jump {
     position: absolute;
-    right: 11px;
-    bottom: 11px;
-    padding: 3px var(--space-2);
-    font-size: 10.5px;
+    right: var(--space-3);
+    bottom: var(--space-3);
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     color: var(--void);
     background: var(--plasma-cyan);
     border: none;
-    border-radius: 10px;
+    border-radius: var(--radius);
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    transition: background var(--dur-feedback) var(--ease-standard);
+  }
+  .jump:hover {
+    background: color-mix(in srgb, var(--plasma-cyan) 85%, white 15%);
+  }
+  .jump:active {
+    background: color-mix(in srgb, var(--plasma-cyan) 70%, white 10%);
   }
   /* phone peek (wave U2 Task 4): a tappable 2-line preview shown while collapsed,
      instead of nothing — a glance at the latest activity without an extra tap. */
   .peek {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--space-1);
     width: 100%;
-    padding: 0 11px 9px;
+    padding: 0 var(--space-3) var(--space-2);
     background: transparent;
     border: none;
     text-align: left;
     cursor: pointer;
+    transition: background var(--dur-feedback) var(--ease-standard);
+  }
+  .peek:hover {
+    background: var(--surface-hover);
+  }
+  .peek:active {
+    background: color-mix(in srgb, var(--surface-hover) 80%, white 10%);
   }
   .peekrow {
     display: flex;
@@ -466,7 +490,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-meta);
-    font-size: 10.5px;
+    font-size: var(--text-2xs);
   }
   /* phone (wave U2 Task 4): the dock row is content-sized (not a 1fr rail), so
      height:100% would collapse — size to content, and bound the expanded list

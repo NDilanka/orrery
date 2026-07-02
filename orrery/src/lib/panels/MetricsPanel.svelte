@@ -66,6 +66,16 @@
          not the event stream — surfacing them needs a new protocol event. A lessons
          panel would mount here once that event exists (out of scope; see report). -->
   {:else}
+    <!-- M1.5: a subtle skeleton-shimmer placeholder alongside the explanatory text, so the
+         panel reads as "waiting for data" rather than blank while the loop spins up. -->
+    <div class="grid" aria-hidden="true">
+      {#each Array(6) as _, i (i)}
+        <div class="cell">
+          <span class="skel-bar skel-label"></span>
+          <span class="skel-bar skel-val"></span>
+        </div>
+      {/each}
+    </div>
     <p class="placeholder mono">
       no run-quality data yet — updates each iteration when metrics are enabled; final report at
       stop.
@@ -76,7 +86,9 @@
 <style>
   .metrics {
     /* wave U2 Task 1: docked in the right rail (a scrollable flex column with
-       VerdictPanel/QAConsole) — the grid places it, this is internal styling only. */
+       VerdictPanel/QAConsole) — the grid places it, this is internal styling only.
+       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
+       border (no shadow, no glass on docked rails per plan §1.6). */
     width: 100%;
     flex: none;
     box-sizing: border-box;
@@ -84,15 +96,14 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    background: var(--surface-panel);
+    border: 1px solid var(--hairline);
     border-radius: var(--radius);
-    backdrop-filter: blur(8px);
     font-size: var(--text-sm);
   }
   .mhead {
     margin: 0;
-    font-size: var(--text-2xs);
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.14em;
@@ -124,14 +135,16 @@
     font-family: var(--num, var(--font-mono));
   }
   .mval.warn {
-    /* warning is ONE hue across System view; --amber is reserved elsewhere */
-    color: var(--horizon-rose);
+    /* warning is ONE hue across System view — now enforced by the two-tier status
+       system itself (--status-warn-core) rather than a hand-picked literal; --amber
+       stays reserved for the identity/override uses elsewhere. */
+    color: var(--status-warn-core);
   }
   .cell.good .mval {
-    color: var(--plasma-green);
+    color: var(--status-ok-core);
   }
   .cell.miss .mval {
-    color: var(--crimson);
+    color: var(--status-err-core);
   }
   .foot {
     font-size: var(--text-2xs);
@@ -145,10 +158,31 @@
     line-height: 1.4;
     margin: 0;
   }
-  /* the panel is static; no animation to respect, but keep the contract explicit */
-  @media (prefers-reduced-motion: reduce) {
-    .metrics {
-      backdrop-filter: none;
+
+  /* ── M1.5 empty-state skeleton shimmer ── reduced motion is handled globally
+     (tokens.css freezes all animation-duration to ~0, leaving a static bar). */
+  .skel-bar {
+    display: block;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(90deg, var(--n3) 25%, var(--n4) 50%, var(--n3) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  .skel-label {
+    width: 55%;
+    height: 8px;
+  }
+  .skel-val {
+    width: 35%;
+    height: 16px;
+    margin-top: 2px;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
     }
   }
 </style>

@@ -123,7 +123,9 @@
   .qa {
     /* wave U2 Task 1: docked in the right rail (below Metrics/Verdict) instead of
        floating independently at the vertical center of the viewport — the grid
-       + the rail's own scroll now own placement; this is internal styling only. */
+       + the rail's own scroll now own placement; this is internal styling only.
+       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
+       border (no shadow, no glass on docked rails per plan §1.6). */
     width: 100%;
     flex: none;
     box-sizing: border-box;
@@ -131,21 +133,21 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 16px 18px;
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--surface-panel);
+    border: 1px solid var(--hairline);
     border-left: var(--accent-border-w) solid var(--plasma-cyan);
     border-radius: var(--radius);
-    backdrop-filter: blur(10px);
   }
   .qa.answered {
-    border-left-color: var(--plasma-green);
+    /* pass state on a small element (border accent) → the two-tier system's -core */
+    border-left-color: var(--status-ok-core);
   }
   .qhead {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: var(--space-2);
   }
   .qmote {
     display: inline-flex;
@@ -157,23 +159,22 @@
     background: color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
     color: var(--plasma-cyan);
     font-weight: 700;
-    font-size: 13px;
+    font-size: var(--text-md);
+    --glow: var(--plasma-cyan);
+    --breathe-r: 14px;
+    /* was an opacity-blink; the shared `breathe` keyframe (primitives.css) instead —
+       one attention grammar app-wide (plan §1: "never blinking"). Reduced motion is
+       handled globally in tokens.css. */
     animation: breathe 2.4s ease-in-out infinite;
   }
   .qmote.done {
-    background: color-mix(in srgb, var(--plasma-green) 18%, transparent);
-    color: var(--plasma-green);
+    background: color-mix(in srgb, var(--status-ok-core) 18%, transparent);
+    color: var(--status-ok-core);
+    --glow: var(--status-ok-core);
     animation: none;
   }
-  @keyframes breathe {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .qmote { animation: none; }
-  }
   .qtitle {
-    font-size: var(--text-2xs);
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     color: var(--plasma-cyan);
     flex: 1;
@@ -185,7 +186,7 @@
   .qcard {
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: var(--space-2);
     padding-top: 10px;
     border-top: 1px solid var(--hairline);
   }
@@ -196,8 +197,8 @@
   .qmeta {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 9.5px;
+    gap: var(--space-2);
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-meta);
@@ -217,7 +218,7 @@
     border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
   }
   .qbody {
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 1.5;
     color: var(--starlight);
     white-space: pre-wrap;
@@ -226,26 +227,34 @@
     overflow-y: auto;
   }
   .qbody.small {
-    font-size: 11.5px;
+    font-size: var(--text-xs);
     color: var(--text-dim);
   }
   .qinput {
     width: 100%;
     resize: vertical;
-    background: var(--void-3);
+    background: var(--n1);
     border: 1px solid var(--hairline);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--starlight);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.45;
     padding: 9px 11px;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
+  }
+  .qinput:hover:not(:disabled) {
+    /* +1 surface step on hover (plan §M1.4) */
+    background: var(--n2);
   }
   .qinput:focus {
     /* keep the global :focus-visible ring — only accent the border */
     border-color: color-mix(in srgb, var(--plasma-cyan) 50%, transparent);
   }
   .qinput:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   .qactions {
     display: flex;
@@ -253,7 +262,7 @@
   }
   .send {
     font-family: var(--font-grotesk);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.04em;
     padding: 7px 16px;
@@ -262,15 +271,20 @@
     background: color-mix(in srgb, var(--plasma-cyan) 10%, transparent);
     color: var(--plasma-cyan);
     cursor: pointer;
-    transition: background 0.18s, transform 0.1s;
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      transform var(--dur-feedback) var(--ease-standard);
   }
   .send:hover:not(:disabled) {
     background: color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
     transform: translateY(-1px);
   }
+  .send:active:not(:disabled) {
+    transform: translateY(0);
+  }
   .send:disabled {
     opacity: 0.4;
-    cursor: default;
+    cursor: not-allowed;
   }
   .observe {
     font-size: var(--text-2xs);

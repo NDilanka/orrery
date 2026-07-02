@@ -125,7 +125,8 @@
   }
   .ident {
     position: absolute;
-    top: 22px;
+    /* was 22px — nearest space step is --space-5 (24px, a 2px round per plan §M1.1) */
+    top: var(--space-5);
     left: 0;
     right: 0;
     text-align: center;
@@ -143,7 +144,10 @@
   .ident .rate {
     color: var(--text-meta);
   }
-  /* what the loop is working on right now — the other load-bearing fact */
+  /* what the loop is working on right now — the other load-bearing fact.
+     top:44px is `.ident`'s offset + its own line height, not a standalone design
+     position — no --space-* step fits it without breaking that relationship, so it's
+     kept literal. */
   .curitem {
     position: absolute;
     top: 44px;
@@ -166,7 +170,7 @@
     bottom: 16%;
     text-align: center;
     font-family: var(--font-grotesk);
-    font-size: 15px;
+    font-size: var(--text-lg);
     font-weight: 600;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -193,8 +197,12 @@
     transform: translateX(-50%);
     width: max-content;
     max-width: calc(100vw - 2 * var(--space-5));
-    font-size: 14px;
-    padding: 10px 20px;
+    /* was 14px — pairs with `.needs` below (both "loud" chips share a size, one step
+       down from the base --text-lg threshold) */
+    font-size: var(--text-md);
+    /* was 10px 20px — equidistant between --space-* steps either way; rounded down
+       (--space-2 / --space-4) to keep the loud chip tight rather than growing it */
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
     border: 1px solid var(--glow);
     background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
@@ -221,12 +229,13 @@
     align-items: center;
     gap: var(--space-2);
     font-family: var(--font-grotesk);
-    font-size: 14px;
+    font-size: var(--text-md);
     font-weight: 700;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--starlight);
-    padding: 12px 22px;
+    /* was 12px 22px — 12 is exact (--space-3); 22 rounds up 2px to --space-5 */
+    padding: var(--space-3) var(--space-5);
     border-radius: var(--radius-pill);
     border: 1px solid var(--glow);
     background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
@@ -239,11 +248,11 @@
   }
   .needs-glyph {
     color: var(--crimson);
-    font-size: 16px;
+    font-size: var(--text-lg);
   }
   .needs-n {
     color: var(--crimson);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 700;
   }
   /* the shared `breathe` keyframe now lives in primitives.css (a slow tightening of the glow
@@ -255,21 +264,25 @@
 
   .exit {
     position: absolute;
-    bottom: 20px;
+    /* was 20px — nearest available step is --chrome-inset (18px, the canonical
+       viewport gutter), closer than either --space-4/-5 */
+    bottom: var(--chrome-inset);
     left: 50%;
     transform: translateX(-50%);
     pointer-events: auto;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    padding: 7px 16px;
+    /* was 7px 16px — 16 is exact (--space-4); 7 rounds to --space-2 */
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
     border: 1px solid var(--hairline);
     background: color-mix(in srgb, var(--void-3) 70%, transparent);
     color: var(--text-faint);
     cursor: pointer;
     backdrop-filter: blur(6px);
-    transition: color 0.2s, border-color 0.2s;
+    transition: color var(--dur-feedback) var(--ease-standard),
+      border-color var(--dur-feedback) var(--ease-standard);
   }
   .exit:hover {
     color: var(--starlight);

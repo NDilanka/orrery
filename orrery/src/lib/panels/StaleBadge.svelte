@@ -148,7 +148,9 @@
     .txt,
     .att,
     .obs {
-      font-size: 9.5px;
+      /* was 9.5px — part of the 9/9.5/10/10.5/11px micro-size cluster the plan collapses
+         onto the scale; nearest step is --text-2xs (10px) */
+      font-size: var(--text-2xs);
     }
     .obs {
       padding-left: var(--space-1);

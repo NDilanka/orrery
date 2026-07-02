@@ -185,7 +185,12 @@
     background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
     border-left: 1px solid var(--panel-edge);
     border-radius: 0;
-    box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5);
+    /* the drawer is one of the two places shadows are allowed (plan M1.2: rails go flat,
+       drawer + modals keep depth); no dedicated drawer-shadow token exists yet in tokens.css
+       (off-limits to this pass), so the alpha is matched to --floating-card-shadow's 0.6 —
+       one shadow "language" shared by every overlay surface instead of a one-off 0.5. */
+    --drawer-shadow: -24px 0 60px rgba(0, 0, 0, 0.6);
+    box-shadow: var(--drawer-shadow);
     z-index: var(--z-drawer);
     animation: drawerIn var(--dur-zoom) var(--ease-out);
   }
@@ -203,7 +208,12 @@
     animation: none;
   }
   .body:focus-visible {
-    outline: none; /* a dialog landing-focus, not a clickable control */
+    /* a dialog landing-focus, not a clickable control — bare outline:none left it with
+       zero affordance (audit #8). A subtle inset hairline instead of the bare 2px ring
+       (the drawer isn't a button; a full outline would read as a control's focus, not
+       "focus landed here"), layered alongside the drawer's own edge shadow. */
+    outline: none;
+    box-shadow: var(--drawer-shadow), inset 0 0 0 1px var(--border-focus);
   }
   /* full-screen sheet on phone — same slide, just edge-to-edge. The navbar pill
      wraps to two rows on a 390px width, so the sheet clears a taller header. */
@@ -352,7 +362,7 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     padding: var(--space-1) var(--space-2);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--hairline);
     font-family: var(--font-mono);
   }

@@ -229,19 +229,20 @@
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 16px 18px;
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    gap: var(--space-2);
+    padding: var(--space-4);
+    /* docked rail — flat surface-panel + hairline, no shadow, no blur (glass is
+       reserved for overlays above the scene, plan §1 principle 6) */
+    background: var(--surface-panel);
+    border: 1px solid var(--border-hairline);
     border-radius: var(--radius);
-    backdrop-filter: blur(8px);
     pointer-events: none;
     user-select: none;
   }
   .row.top {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   /* named .status-pill (not .pill) to avoid colliding with the shared .pill primitive
@@ -250,10 +251,10 @@
   .status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 4px 11px;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-pill);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.12em;
     border: 1px solid transparent;
@@ -264,57 +265,56 @@
     border-radius: 50%;
     background: currentColor;
   }
+  /* status colors now come from the two-tier --status-*-core/-base pairs (tokens.css
+     tier 1): core (small/bright) on the text + dot + border rim, base (large/muted)
+     on the background fill — the chroma-budget-by-area rule (plan §1 principle 2). */
   .status-pill.running {
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
-    background: color-mix(in srgb, var(--amber) 10%, transparent);
+    color: var(--status-run-core);
+    border-color: color-mix(in srgb, var(--status-run-core) 40%, transparent);
+    background: color-mix(in srgb, var(--status-run-base) 16%, transparent);
   }
   .status-pill.done {
-    color: var(--plasma-green);
-    border-color: color-mix(in srgb, var(--plasma-green) 45%, transparent);
-    background: color-mix(in srgb, var(--plasma-green) 10%, transparent);
+    color: var(--status-ok-core);
+    border-color: color-mix(in srgb, var(--status-ok-core) 45%, transparent);
+    background: color-mix(in srgb, var(--status-ok-base) 16%, transparent);
   }
   .status-pill.ember {
-    color: var(--ember);
-    border-color: color-mix(in srgb, var(--ember) 45%, transparent);
-    background: color-mix(in srgb, var(--ember) 10%, transparent);
+    color: var(--status-warn-core);
+    border-color: color-mix(in srgb, var(--status-warn-core) 45%, transparent);
+    background: color-mix(in srgb, var(--status-warn-base) 16%, transparent);
   }
+  /* quota-frost keeps its own literal --frost — it's one of the five triple-coded
+     rest-state silhouettes (a keeper, plan §0) with no equivalent in the generic
+     run/ok/warn/err/idle status set; nearest would be --status-idle-*, which would
+     erase the frost hue this rest-state is specifically identified by. */
   .status-pill.frost {
     color: var(--frost);
     border-color: color-mix(in srgb, var(--frost) 45%, transparent);
     background: color-mix(in srgb, var(--frost) 12%, transparent);
   }
   .status-pill.beacon {
-    color: var(--crimson);
+    color: var(--status-err-core);
     /* the loudest state. Urgency reads as a slow breathing GLOW, never an opacity
        blink; the static border+shadow stays high-contrast so reduced-motion
-       (which freezes the animation) never makes the state disappear. */
-    border-color: var(--crimson);
-    background: color-mix(in srgb, var(--crimson) 16%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 45%, transparent);
-    animation: beaconBreathe 2.2s ease-in-out infinite;
+       (which freezes the animation) never makes the state disappear. Now consumes
+       the shared `breathe` keyframe (primitives.css) instead of a bespoke one — one
+       attention grammar app-wide (plan §1 principle 5). */
+    border-color: var(--status-err-core);
+    background: color-mix(in srgb, var(--status-err-base) 20%, transparent);
+    --glow: var(--status-err-core);
+    --breathe-r: 14px;
+    animation: breathe 2.2s var(--ease-standard) infinite;
   }
-  /* the crashed state — crimson like beacon, but STEADY (no breathing). failed-dark
+  /* the crashed state — same err hue as beacon, but STEADY (no breathing). failed-dark
      reads as dim/dead (no glow), not an urgent call to act right now. */
   .status-pill.failed {
-    color: var(--crimson);
-    border-color: var(--crimson);
-    background: color-mix(in srgb, var(--crimson) 14%, transparent);
+    color: var(--status-err-core);
+    border-color: var(--status-err-core);
+    background: color-mix(in srgb, var(--status-err-base) 18%, transparent);
   }
   .status-pill.idle {
-    color: var(--text-dim);
+    color: var(--status-idle-core);
     border-color: var(--hairline);
-  }
-  @keyframes beaconBreathe {
-    0%,
-    100% {
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 35%, transparent),
-        0 0 6px color-mix(in srgb, var(--crimson) 18%, transparent);
-    }
-    50% {
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 65%, transparent),
-        0 0 14px color-mix(in srgb, var(--crimson) 45%, transparent);
-    }
   }
   /* compact phase strip (wave U2 Task 2) — six static dots + the plain-text phase
      name, one line. The active dot is tinted by the model's spectral color; the
@@ -322,13 +322,13 @@
   .phasestrip {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--space-2);
     margin-top: -2px;
   }
   .pdots {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .pdot {
     width: 5px;
@@ -348,7 +348,7 @@
     background: var(--spectral-opus);
   }
   .pname {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-dim);
     letter-spacing: 0.04em;
   }
@@ -357,14 +357,14 @@
     font-size: var(--text-2xs);
     color: var(--text-meta);
     letter-spacing: 0.02em;
-    margin-top: -4px;
+    margin-top: calc(var(--space-1) * -1);
   }
   /* wall-clock anchors (Task 4): "started HH:MM · running 2h 12m" / "ended 5m ago" */
   .timeline {
     font-size: var(--text-2xs);
     color: var(--text-meta);
     letter-spacing: 0.02em;
-    margin-top: -4px;
+    margin-top: calc(var(--space-1) * -1);
   }
   /* model spectral chip — heat color is decorative; the text label always carries
      the meaning (status never by hue alone). */
@@ -372,7 +372,9 @@
     font-size: var(--text-2xs);
     text-transform: lowercase;
     letter-spacing: 0.06em;
-    padding: 1px 6px;
+    /* 1px vertical pad has no --space-* equivalent (scale floors at 4px) on a chip
+       this small; left literal rather than distorting its proportions. */
+    padding: 1px var(--space-2);
     border-radius: var(--radius-pill);
     border: 1px solid currentColor;
     line-height: 1.4;
@@ -389,11 +391,11 @@
   .cost {
     display: flex;
     align-items: baseline;
-    gap: 9px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   .big {
-    font-size: 30px;
+    font-size: var(--text-display);
     font-weight: 600;
     color: var(--starlight);
     line-height: 1;
@@ -405,9 +407,9 @@
     color: var(--text-meta);
   }
   .horizon {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--amber);
-    font-family: var(--num);
+    font-family: var(--font-mono);
   }
   .horizon.warn { color: var(--horizon-rose); }
   .horizon.crit { color: var(--crimson); }
@@ -415,11 +417,11 @@
   .forecast {
     display: flex;
     align-items: baseline;
-    gap: 5px;
+    gap: var(--space-1);
     font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     color: var(--text-meta);
-    margin-top: -4px;
+    margin-top: calc(var(--space-1) * -1);
   }
   .forecast .num {
     color: var(--text-dim);
@@ -429,13 +431,13 @@
   .quota {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .key {
     color: var(--starlight);
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .gate.green { color: var(--plasma-green); }
   .gate.red { color: var(--crimson); }
@@ -446,8 +448,8 @@
   .trust {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 1px 8px;
+    gap: var(--space-1);
+    padding: 1px var(--space-2);
     border-radius: var(--radius-pill);
     font-size: var(--text-2xs);
     letter-spacing: 0.08em;
@@ -473,7 +475,7 @@
   .cache {
     display: inline-flex;
     align-items: baseline;
-    gap: 3px;
+    gap: var(--space-1);
     color: var(--cache-teal);
   }
   .cache .num {

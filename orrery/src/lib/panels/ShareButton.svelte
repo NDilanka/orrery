@@ -145,7 +145,7 @@
     align-items: center;
     gap: 6px;
     font-family: var(--font-grotesk);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
     padding: 6px 13px;
@@ -154,7 +154,8 @@
     background: var(--void-3);
     color: var(--starlight);
     cursor: pointer;
-    transition: border-color 0.18s, transform 0.1s;
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      transform var(--dur-feedback) var(--ease-standard);
   }
   .trigger:hover {
     border-color: var(--brass);
@@ -190,7 +191,9 @@
     justify-content: space-between;
   }
   .ptitle {
-    font-size: var(--text-2xs);
+    /* unified header pattern (M1.2): 11px caps-spaced --text-xs label, matching
+       DecisionSheet's meta row and HelpOverlay's section labels. */
+    font-size: var(--text-xs);
     letter-spacing: 0.14em;
     color: var(--text-meta);
   }
@@ -201,8 +204,10 @@
     border-radius: var(--radius-pill);
     width: 22px;
     height: 22px;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .pclose:hover {
     border-color: var(--crimson);
@@ -232,6 +237,7 @@
     background: var(--surface-2);
     color: var(--starlight);
     cursor: pointer;
+    transition: border-color var(--dur-feedback) var(--ease-standard);
   }
   .retry:hover {
     border-color: var(--brass);
@@ -242,13 +248,16 @@
     color: var(--amber);
     padding: 6px 9px;
     border: 1px dashed color-mix(in srgb, var(--amber) 45%, transparent);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
   }
   .qrwrap {
     align-self: center;
     padding: 10px;
+    /* CORRECT to keep literal — QR needs a light quiet zone + dark-on-light contrast
+       to scan reliably regardless of the app's dark theme (see file header note).
+       Only the container's radius (an exact --radius match) moves onto the scale. */
     background: #ffffff;
-    border-radius: 10px;
+    border-radius: var(--radius);
     line-height: 0;
   }
   .qr {
@@ -265,9 +274,11 @@
     min-width: 0;
     background: var(--void-3);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--starlight);
-    font-size: 10.5px;
+    /* 10.5px was one of the audit's near-duplicate micro-sizes (#1); collapsed onto
+       --text-2xs alongside TransportBar's matching .pos readout. */
+    font-size: var(--text-2xs);
     padding: 7px 9px;
   }
   .copy {
@@ -281,6 +292,7 @@
     background: color-mix(in srgb, var(--brass) 14%, transparent);
     color: var(--brass);
     cursor: pointer;
+    transition: background var(--dur-feedback) var(--ease-standard);
   }
   .copy:hover {
     background: color-mix(in srgb, var(--brass) 24%, transparent);
@@ -305,6 +317,7 @@
     background: color-mix(in srgb, var(--crimson) 10%, transparent);
     color: var(--crimson);
     cursor: pointer;
+    transition: background var(--dur-feedback) var(--ease-standard);
   }
   .stop:hover {
     background: color-mix(in srgb, var(--crimson) 20%, transparent);

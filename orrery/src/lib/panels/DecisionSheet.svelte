@@ -150,7 +150,9 @@
     align-items: baseline;
     flex-wrap: wrap;
     gap: 6px;
-    font-size: var(--text-2xs);
+    /* unified header pattern (M1.2): 11px caps-spaced --text-xs label, matching
+       HelpOverlay's section labels and ShareButton's popover title. */
+    font-size: var(--text-xs);
     letter-spacing: 0.1em;
     color: var(--text-meta);
     text-transform: uppercase;
@@ -174,8 +176,10 @@
     width: 24px;
     height: 24px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--text-xs);
     flex: none;
+    transition: border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
   }
   .x:hover {
     border-color: var(--crimson);
@@ -185,7 +189,9 @@
   .qtext {
     margin: 0;
     font-family: var(--font-grotesk);
-    font-size: 14px;
+    /* 14px sat exactly between --text-md(13)/--text-lg(15); rounded up — this is the
+       question prompt itself, the most important line in the sheet. */
+    font-size: var(--text-lg);
     line-height: 1.5;
     color: var(--starlight);
   }
@@ -194,14 +200,14 @@
     width: 100%;
     background: var(--void-3);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--starlight);
     font-family: var(--font-grotesk);
-    font-size: 13px;
+    font-size: var(--text-md);
     line-height: 1.5;
     padding: 9px 11px;
     resize: vertical;
-    transition: border-color 0.18s;
+    transition: border-color var(--dur-fast) var(--ease-standard);
     box-sizing: border-box;
   }
   .answer:focus {
@@ -214,7 +220,7 @@
     color: var(--text-meta);
     padding: 9px 11px;
     border: 1px dashed var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
   }
 
   .actions {
@@ -228,8 +234,9 @@
     color: var(--text-dim);
     border-radius: var(--radius-pill);
     padding: 8px 16px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     cursor: pointer;
+    transition: color var(--dur-feedback) var(--ease-standard);
   }
   .ghost:hover {
     color: var(--starlight);
@@ -240,11 +247,11 @@
     color: var(--brass);
     border-radius: var(--radius-pill);
     padding: 8px 20px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.08em;
     cursor: pointer;
-    transition: all 0.16s;
+    transition: all var(--dur-fast) var(--ease-standard);
   }
   .send:hover:not(:disabled) {
     background: color-mix(in srgb, var(--brass) 24%, transparent);
@@ -252,6 +259,6 @@
   }
   .send:disabled {
     opacity: 0.4;
-    cursor: default;
+    cursor: not-allowed;
   }
 </style>
