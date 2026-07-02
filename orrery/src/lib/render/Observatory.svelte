@@ -4,17 +4,29 @@
   // prerender time. Data mutates the store; a single rAF loop eases visual
   // props toward store targets (the tiny data rate is decoupled from 60fps).
   //
-  // Renders (A1 base + A2 living motion):
+  // Renders (A1 base + A2 living motion + M2 canvas-premium pass):
   //   Void background · central Star (radius←cumUsd, bloom/pulse←cost.ratePerMin,
   //   color←run.status) · a pooled PixiJS particle stream flowing from the active
   //   region INTO the star (emission ∝ cost rate; cache-hits tinted cache-teal) ·
   //   one ring per group · a planet per item (eased angle + radius) · the frozen
   //   ghost-target wireframe · the cost-horizon ring animating 50/80/100 ·
-  //   dusk (warm ember bank) vs polar-night (frost desaturation) quota transition.
+  //   dusk (warm ember bank) vs polar-night (frost desaturation) quota transition ·
+  //   a two-tier parallax starfield · a corner vignette · a ring-buffer trail on
+  //   the current body.
   //
   // §F restraint: prefers-reduced-motion freezes ALL decorative motion (orbits,
-  // pulse, particles, spin) — only the eased state targets cross-fade. Steady
-  // state is never animated; urgency = tightening/slowing, not blinking.
+  // pulse, particles, spin, starfield drift/twinkle, trails) — only the eased
+  // state targets cross-fade. Steady state is never animated; urgency =
+  // tightening/slowing, not blinking.
+  //
+  // M2 canvas-premium pass (docs/ui-modernization-plan.md §M2): glow is now a
+  // pre-rendered texture (fx.ts) tinted/scaled per use instead of stacked alpha
+  // circles; colors split into a muted "base" tier (large fills/halos) and a
+  // saturated "core" tier (small accents/rims) fed by theme.ts's status pairs;
+  // a cached vignette sits above the scene; the starfield is two parallax
+  // layers with per-star twinkle; rings are flat hairlines except the CURRENT
+  // one, which gets a segmented per-arc alpha gradient; every lerp is dt-
+  // corrected off the real frame delta; planet Graphics are pooled by key.
 
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
@@ -22,6 +34,16 @@
   import { uiStore } from '../stores/ui.svelte';
   import { restColor } from '../palette';
   import { initTheme, FALLBACK } from '../theme';
+  import {
+    makeGlowTexture,
+    makeVignetteTexture,
+    makeStarfieldLayers,
+    drawSegmentedRing,
+    muteColor,
+    mixColor,
+    sizeGlowSprite,
+    type GlowTexture,
+  } from './fx';
   import ObservatoryLabels from './ObservatoryLabels.svelte';
 
   let host: HTMLDivElement;
@@ -62,7 +84,10 @@
   // palette — resolved from tokens.css via theme.ts (the single color source, plan §M0.4)
   // as soon as onMount runs, below; starts as the static fallback (== today's literal
   // hex) so there's a valid value even for the instant before that resolution happens.
-  let C = {
+  // `status` (added M2.2) carries the two-tier {core,base} pairs the canvas now consumes
+  // for planets/rings: large fills/halos take `.base` (muted), small
+  // rims/cores/accents take `.core` (saturated) — plan §1 "chroma budget by area".
+  let C: typeof FALLBACK = {
     void: FALLBACK.void,
     brass: FALLBACK.brass,
     starlight: FALLBACK.starlight,
@@ -80,6 +105,8 @@
     haiku: FALLBACK.haiku,
     sonnet: FALLBACK.sonnet,
     opus: FALLBACK.opus,
+    hairline: FALLBACK.hairline,
+    status: FALLBACK.status,
   };
 
   function modelColor(m: string): number {
@@ -87,27 +114,36 @@
     if (m === 'opus') return C.opus;
     return C.sonnet;
   }
-  function ringColor(status: string): number {
-    if (status === 'done') return C.green;
+  // M2.2: ring stroke color. 'done'/backlog map onto the theme status pair's BASE (muted)
+  // tier; 'in-progress' keeps literal brass — brass is the identity/certification accent
+  // (plan §1 principle 3), not a status hue, so it's never muted.
+  function ringBaseColor(status: string): number {
+    if (status === 'done') return C.status.ok.base;
     if (status === 'in-progress') return C.brass;
-    return 0x3a3f5c; // backlog — dim indigo-grey
+    return C.status.idle.base; // backlog
   }
-  function planetColor(o: { status: string; certified: boolean; merged: boolean }): number {
-    if (o.certified || o.merged) return C.green;
+  // M2.2: a planet's two-tier status pair. `.base` drives the disc fill (large area);
+  // `.core` drives rims/notches/pulses (small accents). 'ready' stays literal brass (an
+  // identity marker, not a status hue) for both tiers — unchanged from before.
+  function planetPair(o: { status: string; certified: boolean; merged: boolean }): {
+    core: number;
+    base: number;
+  } {
+    if (o.certified || o.merged) return C.status.ok;
     switch (o.status) {
       case 'done':
-        return C.green;
+        return C.status.ok;
       case 'review':
-        return C.amber;
+        return C.status.warn;
       case 'in-progress':
-        return C.cyan;
+        return C.status.run;
       case 'blocked':
       case 'failed':
-        return C.crimson;
+        return C.status.err;
       case 'ready':
-        return C.brass;
+        return { core: C.brass, base: C.brass };
       default:
-        return 0x556089; // backlog
+        return C.status.idle; // backlog
     }
   }
 
@@ -139,9 +175,22 @@
       haiku: t.haiku,
       sonnet: t.sonnet,
       opus: t.opus,
+      hairline: t.hairline,
+      status: t.status,
     };
 
     // reduced-motion comes from the single uiStore source (read per-frame in tick)
+
+    // M2.2: how far a large fill/halo is muted toward void relative to its "core" hue —
+    // used for hues outside theme.ts's 5 fixed status pairs (the star's rest-state
+    // silhouettes: ember/frost/crimson/green/starlight are a per-silhouette identity, not
+    // the generic run/ok/warn/err/idle vocabulary). See fx.ts `muteColor`. Two strengths:
+    // the star's own disc is the one deliberate "this is a light source" identity element
+    // of the whole scene (plan §M2 acceptance: "reads as a light source in an atmosphere"),
+    // so it's only LIGHTLY muted; the corona/glow tint (already at ≤~12% alpha from the
+    // glow texture itself) can take the fuller mute without going dark.
+    const MUTE_FILL = 0.16;
+    const MUTE_GLOW = 0.4;
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -161,21 +210,34 @@
       }
       host.appendChild(app.canvas);
 
+      // ── shared fx: glow texture (plan §M2.1), built once against the real renderer ──
+      const glowTex: GlowTexture = makeGlowTexture(PIXI, app.renderer);
+
       // ── scene graph ─────────────────────────────────────────────────────
       const world = new PIXI.Container();
       app.stage.addChild(world);
 
-      const starfield = new PIXI.Graphics(); // backdrop dust
+      const starfieldFar = new PIXI.Graphics(); // backdrop dust, far layer (M2.4)
+      const starfieldNear = new PIXI.Graphics(); // backdrop dust, near layer (M2.4)
       const nightG = new PIXI.Graphics(); // dusk/polar-night wash + frost creep
       const horizon = new PIXI.Graphics(); // cost-horizon ring
       const ringsG = new PIXI.Graphics(); // group rings
       const ghostG = new PIXI.Graphics(); // frozen target wireframe
-      const corona = new PIXI.Graphics(); // star glow / bloom
+      const trailG = new PIXI.Graphics(); // M2.6: current-body ring-buffer trail
+      const coronaGlow = new PIXI.Sprite(glowTex.texture); // M2.1: star halo (glow-texture sprite)
+      const starFlareG = new PIXI.Graphics(); // M2.1: 4-point cross-flare, running only
       const supernovaG = new PIXI.Graphics(); // transient crimson supernova on crash
       const starG = new PIXI.Graphics(); // star core
-      const planetsC = new PIXI.Container(); // planets
+      const planetsC = new PIXI.Container(); // pooled per-planet containers (M2.7)
       const brakeG = new PIXI.Graphics(); // brake-ring "stopping at next <mode>"
       const shimmerG = new PIXI.Graphics(); // Rewind-mode cyan time-shimmer frame
+
+      // M2.1: glow discipline — corona reads as an atmosphere (screen), never a hard
+      // additive hotspot; 'add' is reserved for true transient moments below.
+      coronaGlow.anchor.set(0.5);
+      coronaGlow.blendMode = 'screen';
+      starFlareG.blendMode = 'screen';
+      supernovaG.blendMode = 'add';
 
       // ── particle stream (pooled ParticleContainer) ──────────────────────
       // A budget of pre-allocated particle sprites flow from the active region
@@ -192,6 +254,7 @@
       const particlesC = new PIXI.ParticleContainer({
         dynamicProperties: { position: true, vertex: true, color: true },
       });
+      particlesC.blendMode = 'screen'; // M2.1: corona/particle containers are screen-blended
       type Mote = {
         sprite: any;
         active: boolean;
@@ -248,14 +311,51 @@
         }
       }
 
+      // ── M2.7: pooled per-planet visuals, keyed by o.key ─────────────────────
+      // Replaces the old per-frame `planetsC.removeChildren()` + `new Graphics()`: each
+      // key gets ONE small container (created once) holding three leaf renderables —
+      // `glow` (glow-texture sprite, screen-blended, only visible for the current/
+      // selected/alert bodies — plan §M2.1 "only the star, current/selected body, and
+      // alert states get true glow"), `disc` (normal-blended: fill + rims + notches), and
+      // `fx` (add-blended: transient seal/refute/rollback blooms only). Stale keys (a
+      // run reset onto a different item set) are pruned; a key merely hidden by Tier-1 is
+      // kept pooled (`visible=false`) so re-entering Observatory doesn't rebuild it.
+      type PlanetVisual = {
+        container: any;
+        glow: any;
+        disc: any;
+        fx: any;
+      };
+      const planetPool = new Map<string, PlanetVisual>();
+      function getPlanetVisual(key: string): PlanetVisual {
+        let v = planetPool.get(key);
+        if (v) return v;
+        const container = new PIXI.Container();
+        const glow = new PIXI.Sprite(glowTex.texture);
+        glow.anchor.set(0.5);
+        glow.blendMode = 'screen';
+        glow.visible = false;
+        const disc = new PIXI.Graphics();
+        const fxG = new PIXI.Graphics();
+        fxG.blendMode = 'add';
+        container.addChild(glow, disc, fxG);
+        planetsC.addChild(container);
+        v = { container, glow, disc, fx: fxG };
+        planetPool.set(key, v);
+        return v;
+      }
+
       world.addChild(
-        starfield,
+        starfieldFar,
+        starfieldNear,
         nightG,
         horizon,
         ringsG,
         ghostG,
+        trailG,
         particlesC,
-        corona,
+        coronaGlow,
+        starFlareG,
         supernovaG,
         starG,
         planetsC,
@@ -263,20 +363,25 @@
         shimmerG,
       );
 
-      // static starfield dust
-      function drawStarfield(w: number, h: number) {
-        starfield.clear();
-        let seed = 1337;
-        const rnd = () => {
-          seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-          return seed / 0x7fffffff;
-        };
-        for (let i = 0; i < 220; i++) {
-          const x = rnd() * w;
-          const y = rnd() * h;
-          const r = rnd() * 1.1 + 0.2;
-          const a = rnd() * 0.5 + 0.05;
-          starfield.circle(x, y, r).fill({ color: C.starlight, alpha: a });
+      // ── two-tier parallax starfield data (plan §M2.4) — populated below once w/h are
+      //    first measured, and regenerated on resize; the PER-FRAME twinkle/drift redraw
+      //    lives in tick(). ──
+      let starData: ReturnType<typeof makeStarfieldLayers>;
+      // far layer reads slightly cool (a touch toward frost) vs. the near layer's neutral
+      // starlight — computed once against the resolved theme, not per-star.
+      const farTint = mixColor(C.starlight, C.frost, 0.35);
+
+      // ── M2.3: cached vignette (rebuild on resize only) ──
+      let vignetteSprite: any = null;
+      function rebuildVignette(vw: number, vh: number) {
+        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh);
+        if (vignetteSprite) {
+          const old = vignetteSprite.texture;
+          vignetteSprite.texture = tex;
+          old.destroy(true);
+        } else {
+          vignetteSprite = new PIXI.Sprite(tex);
+          world.addChild(vignetteSprite); // top-most non-transient layer, below DOM labels
         }
       }
 
@@ -316,6 +421,11 @@
       // throttle for publishing the label snapshot out of the rAF
       let labelFrame = 0;
 
+      // M2.6: ring-buffer trail on the CURRENT body only — [0]=oldest .. [last]=newest.
+      const TRAIL_N = 16;
+      const trailBuf: { x: number; y: number }[] = [];
+      let trailKey: string | null = null; // resets the buffer when the current body changes
+
       function lerp(a: number, b: number, k: number) {
         return a + (b - a) * k;
       }
@@ -331,15 +441,23 @@
         const bl = Math.round(lerp(ab, bb, k));
         return (r << 16) | (g << 8) | bl;
       }
+      // M2.7: dt-correct a per-60fps-frame lerp constant against the REAL frame delta
+      // (`dt`, ms) so easing speed no longer depends on the display's refresh rate.
+      // k_dt = 1 − (1 − k60)^(dt/16.67); reduces to exactly k60 at a nominal 60fps frame.
+      function kdt(k60: number, dt: number): number {
+        return 1 - Math.pow(1 - k60, dt / 16.67);
+      }
 
       let w = host.clientWidth || 800;
       let h = host.clientHeight || 600;
-      drawStarfield(w, h);
+      starData = makeStarfieldLayers(w, h);
+      rebuildVignette(w, h);
 
       const onResize = () => {
         w = host.clientWidth || 800;
         h = host.clientHeight || 600;
-        drawStarfield(w, h);
+        starData = makeStarfieldLayers(w, h);
+        rebuildVignette(w, h);
       };
       const ro = new ResizeObserver(onResize);
       ro.observe(host);
@@ -392,14 +510,21 @@
 
       // ── render loop ──────────────────────────────────────────────────────
       const PXPER = 1; // geometry units → px (rings already in px-ish units)
+      let lastTime = 0; // real ms timestamp of the previous frame (dt-correction, §M2.7)
       const tick = () => {
         if (destroyed) return;
+        const now = performance.now();
+        // clamp a huge gap (backgrounded tab) so returning doesn't produce one giant step
+        const dt = lastTime ? Math.min(64, now - lastTime) : 16.67;
+        lastTime = now;
+
         // single reduced-motion source (uiStore); read fresh each frame
         const reduced = uiStore.reducedMotion;
         const s = runStore.state;
         const cx = w / 2;
         const cy = h / 2;
-        if (!reduced) vis.t += 0.016;
+        if (!reduced) vis.t += dt / 1000; // real elapsed seconds — every sin(vis.t*…) below
+        // is therefore already dt-correct without further changes.
         const running = s.run.status === 'running';
         const rest = s.run.restState;
         // Tier-1 mode (Ambient/Planetarium ONLY since wave U2 — a phone in
@@ -408,10 +533,30 @@
         // and the brake-ring are dropped; particles are budget-cut.
         const tierOne = uiStore.tierOne;
 
+        // ── M2.4: two-tier parallax starfield (far: dim/cool/small, near: bigger/
+        //   brighter) — per-star twinkle phase + a slow differential drift between
+        //   layers; both freeze under reduced-motion. ──
+        const driftFar = reduced ? 0 : (vis.t * 3) % w;
+        const driftNear = reduced ? 0 : (vis.t * 5.5) % w;
+        starfieldFar.clear();
+        for (const st of starData.far) {
+          const tw = reduced ? 1 : 0.4 + Math.abs(Math.sin(vis.t * 0.9 + st.phase)) * 0.6;
+          let x = st.x + driftFar;
+          if (x > w) x -= w;
+          starfieldFar.circle(x, st.y, st.r).fill({ color: farTint, alpha: st.alpha * tw });
+        }
+        starfieldNear.clear();
+        for (const st of starData.near) {
+          const tw = reduced ? 1 : 0.4 + Math.abs(Math.sin(vis.t * 0.9 + st.phase)) * 0.6;
+          let x = st.x + driftNear;
+          if (x > w) x -= w;
+          starfieldNear.circle(x, st.y, st.r).fill({ color: C.starlight, alpha: st.alpha * tw });
+        }
+
         // ── A3: edge-detect transient moments from steady state ──────────────
         // (idempotent w.r.t. scrubbing: a moment fires once per real transition;
         //  re-reducing the same prefix produces the same booleans, no re-fire.)
-        const fxDecay = reduced ? 1 : 0.018; // reduced-motion: snap, don't animate
+        const fxDecay = reduced ? 1 : 0.018 * (dt / 16.67); // reduced-motion: snap, don't animate
         for (const it of Object.values(s.items)) {
           const pc = prevCertified.get(it.key);
           if (pc !== undefined && !pc && it.certified) sealFlash.set(it.key, 1); // PASS seal
@@ -442,11 +587,12 @@
 
         // rest-state form factor: 1 when the system is at rest (so the four
         // silhouettes "set" rather than animate), 0 while running.
-        vis.restForm = lerp(vis.restForm, rest ? 1 : 0, 0.05);
+        vis.restForm = lerp(vis.restForm, rest ? 1 : 0, kdt(0.05, dt));
 
         // ── resolve every planet's eased screen position ONCE (shared by the
         //   beam, ghost, snapback shimmer & the planet draw below) ──────────
-        const spin = vis.t * 0.06; // global slow orbital advance
+        const spin = vis.t * 0.06; // global slow orbital advance — strictly linear in real
+        // elapsed time (vis.t), so angular velocity never depends on frame rate.
         // fit all rings/orbits inside the viewport AND the cost-horizon: one shared
         // scale so the fixed RING_BASE/GAP geometry never overflows a small/short
         // window or a many-group run (planets, rings & ghost all consult it).
@@ -458,7 +604,7 @@
         for (const o of runStore.orbits) {
           const target = o.angle + (running && !reduced ? spin : 0);
           const prev = planetAngle.get(o.key);
-          const a = prev === undefined ? target : lerp(prev, target, 0.06);
+          const a = prev === undefined ? target : lerp(prev, target, kdt(0.06, dt));
           planetAngle.set(o.key, a);
           const r = o.ringRadius * fitScale;
           ppos.set(o.key, { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, r, o });
@@ -466,16 +612,16 @@
 
         // ── eased global signals ──
         const targetR = STAR_R0 + STAR_K * Math.log1p(Math.max(0, s.run.cumUsd));
-        vis.starR = lerp(vis.starR, targetR, 0.08);
+        vis.starR = lerp(vis.starR, targetR, kdt(0.08, dt));
         const targetColor = restColor(s.run.status, s.run.restState, C.starlight);
-        vis.starColor = lerpColor(vis.starColor, targetColor, 0.08);
-        vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), 0.06);
-        vis.burn = lerp(vis.burn, running ? runStore.burn : 0, 0.05);
+        vis.starColor = lerpColor(vis.starColor, targetColor, kdt(0.08, dt));
+        vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), kdt(0.06, dt));
+        vis.burn = lerp(vis.burn, running ? runStore.burn : 0, kdt(0.05, dt));
 
         // night transition (dusk ember vs polar frost), keyed off resetType
         const night = runStore.nightType;
-        vis.night = lerp(vis.night, night ? 1 : 0, 0.04);
-        vis.nightHue = lerp(vis.nightHue, night === 'polar' ? 1 : 0, 0.03);
+        vis.night = lerp(vis.night, night ? 1 : 0, kdt(0.04, dt));
+        vis.nightHue = lerp(vis.nightHue, night === 'polar' ? 1 : 0, kdt(0.03, dt));
 
         // breathing pulse scaled by burn (telemetry liveness; frozen if reduced)
         const pulseAmt = 0.03 + vis.burn * 0.12;
@@ -514,20 +660,41 @@
         }
 
         // ── rings (one per group, colored by status) — Tier-2, hidden in Tier-1 ──
+        // M2.5: every ring drops to a flat hairline (~0.18 alpha) EXCEPT the ring the
+        // current body orbits, which gets a segmented per-arc alpha gradient brightening
+        // toward that body's current angle (visually "attaches" the ring to its planet).
         ringsG.clear();
         if (!tierOne) {
+          const cur0 = runStore.current;
+          const curRingIndex = cur0 ? ppos.get(cur0.key)?.o.ringIndex : undefined;
+          const curAngle = cur0 ? planetAngle.get(cur0.key) : undefined;
           for (const ring of runStore.rings) {
             const r = ring.radius * fitScale;
-            ringsG
-              .circle(cx, cy, r)
-              .stroke({ width: ring.status === 'in-progress' ? 1.6 : 1, color: ringColor(ring.status), alpha: 0.5 });
+            const col = ringBaseColor(ring.status);
+            if (curRingIndex !== undefined && ring.ringIndex === curRingIndex && curAngle !== undefined) {
+              drawSegmentedRing(ringsG, cx, cy, r, col, {
+                segments: 44,
+                width: ring.status === 'in-progress' ? 1.6 : 1.2,
+                alphaAt: (ang) => {
+                  let d = Math.abs(((ang - curAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
+                  const t = 1 - d / Math.PI; // 1 at the body, 0 at the opposite side
+                  return 0.14 + t * 0.55;
+                },
+              });
+            } else {
+              ringsG.circle(cx, cy, r).stroke({ width: 1, color: col, alpha: 0.18 });
+            }
           }
         }
 
         // ── cost horizon (Roche ring) — invisible <50%, tightens toward star ──
+        // M2.5: exact thresholds/ladder/pulse math is unchanged — only the base ring
+        // stroke is restyled from one continuous circle into the same segmented-arc
+        // technique used above (uniform alpha here; there's no single body to brighten
+        // toward). Tick marks are untouched.
         horizon.clear();
         const frac = runStore.horizonFrac;
-        vis.horizonFrac = lerp(vis.horizonFrac, frac, 0.06);
+        vis.horizonFrac = lerp(vis.horizonFrac, frac, kdt(0.06, dt));
         if (vis.horizonFrac >= 0.5) {
           const maxR = Math.min(w, h) * 0.46;
           const hr = maxR * (1.05 - Math.min(1, vis.horizonFrac) * 0.55);
@@ -542,7 +709,8 @@
             pulseA = reduced ? 0 : (1 + Math.sin(vis.t * 1.1)) * 0.5;
           }
           const a = 0.35 + Math.min(0.4, (vis.horizonFrac - 0.5) * 0.8) + pulseA * 0.18;
-          horizon.circle(cx, cy, hr).stroke({ width: 2 + pulseA * 1.2, color: col, alpha: a });
+          const hw = 2 + pulseA * 1.2;
+          drawSegmentedRing(horizon, cx, cy, hr, col, { segments: 48, width: hw, alphaAt: () => a });
           // ticks
           for (let i = 0; i < 48; i++) {
             const ang = (i / 48) * Math.PI * 2;
@@ -592,6 +760,37 @@
         // crimson flush ring in the planet-draw loop below (refuteFx).
         const auditKey = runStore.auditTargetKey;
 
+        // ── M2.6: ring-buffer trail on the current body only — off under reduced
+        //   motion AND in Tier-1/Ambient (tierOne === uiStore.ambient in this store).
+        //   Reset immediately if the current body itself changes (a different item
+        //   became current) so the trail never jump-cuts between two bodies' paths. ──
+        trailG.clear();
+        const curPp = cur ? ppos.get(cur.key) : undefined;
+        if (!reduced && !tierOne && cur && curPp) {
+          if (trailKey !== cur.key) {
+            trailBuf.length = 0;
+            trailKey = cur.key;
+          }
+          trailBuf.push({ x: curPp.x, y: curPp.y });
+          while (trailBuf.length > TRAIL_N) trailBuf.shift();
+        } else {
+          trailBuf.length = 0;
+          trailKey = null;
+        }
+        if (trailBuf.length > 1 && curPp) {
+          const n = trailBuf.length;
+          const trailColor = planetPair(curPp.o).core;
+          for (let i = 1; i < n; i++) {
+            const tt = i / n;
+            const p0 = trailBuf[i - 1];
+            const p1 = trailBuf[i];
+            trailG
+              .moveTo(p0.x, p0.y)
+              .lineTo(p1.x, p1.y)
+              .stroke({ width: Math.max(0.4, 2.4 * tt), color: trailColor, alpha: tt * tt * 0.4 });
+          }
+        }
+
         // ── particle stream: emit from the active region → the star ──────────
         // emission ∝ burn; frozen under reduced-motion. cache-teal fraction is
         // a share of motes drawn from the recycled-fuel reservoir.
@@ -599,7 +798,7 @@
           const teal = runStore.cacheFrac;
           // Tier-1/Planetarium cuts the particle budget hard (plan §7): a thin
           // trickle into the star, not the full Observatory stream.
-          emitAccrue += vis.burn * (tierOne ? 0.7 : 4.2); // up to ~4 motes/frame at full burn
+          emitAccrue += vis.burn * (tierOne ? 0.7 : 4.2) * (dt / 16.67); // up to ~4 motes/frame@60fps at full burn
           while (emitAccrue >= 1) {
             emitAccrue -= 1;
             const jx = activeX + (Math.random() - 0.5) * 18;
@@ -618,7 +817,7 @@
             m.sprite.y = m.y;
             continue;
           }
-          m.prog += m.speed * (0.6 + vis.burn);
+          m.prog += m.speed * (0.6 + vis.burn) * (dt / 16.67);
           if (m.prog >= 1) {
             m.active = false;
             m.sprite.alpha = 0;
@@ -635,22 +834,53 @@
           m.sprite.alpha = (m.prog < 0.15 ? m.prog / 0.15 : 1 - (m.prog - 0.15) / 0.85) * 0.85;
         }
 
-        // ── corona + star (bloom scaled by burn) ──
-        corona.clear();
+        // ── corona/halo (M2.1: glow-texture sprite, replaces stacked alpha circles) +
+        //    star (bloom scaled by burn) ──
         const coronaR = vis.starR * pulse;
-        const bloom = 1 + vis.burn * 1.4;
         // corona is suppressed for the cold frost state (it should read "cold"); a
         // crashed run gets NO glow at all (failed-dark reads as dead, not radiant)
         const coronaAlpha = rest === 'quota-frost' ? 0.4 : rest === 'failed-dark' ? 0.1 : 1;
-        // layer count scales with burn so a quiet/idle loop is cheaper to draw
-        const coronaLayers = rest ? 4 : Math.max(2, Math.round(2 + vis.burn * 3));
-        for (let i = coronaLayers; i >= 1; i--) {
-          corona
-            .circle(cx, cy, coronaR + i * 6 * bloom)
-            .fill({
-              color: vis.starColor,
-              alpha: 0.05 * (coronaLayers + 1 - i) * 0.4 * (0.6 + vis.burn * 0.7) * coronaAlpha,
-            });
+        // M2.2: the star's OWN disc fill is only lightly muted (it's the one deliberate
+        // "light source" identity element — plan acceptance: "reads as a light source in
+        // an atmosphere"); the corona/glow sprite tint takes the fuller mute (M2.2 "glow
+        // tint always = base tier"), safe since the glow texture itself tops out ~12% alpha.
+        const starFill = muteColor(vis.starColor, C.void, MUTE_FILL);
+        const glowTint = muteColor(vis.starColor, C.void, MUTE_GLOW);
+        if (coronaAlpha > 0.01) {
+          coronaGlow.visible = true;
+          const haloR = coronaR * (3 + Math.min(1, vis.burn) * 3); // 3–6× core radius
+          sizeGlowSprite(coronaGlow, glowTex, cx, cy, haloR);
+          coronaGlow.tint = glowTint;
+          // the glow texture's own stops (peak 0.12) already ARE the intended falloff
+          // alpha — modulate lightly by burn/suppression rather than crushing it further.
+          coronaGlow.alpha = coronaAlpha * (0.75 + Math.min(1, vis.burn) * 0.25);
+        } else {
+          coronaGlow.visible = false;
+        }
+
+        // ── M2.1: 4-point cross-flare, central star ONLY while actively running ──
+        starFlareG.clear();
+        if (running && !tierOne) {
+          const flareColor = lerpColor(vis.starColor, C.starlight, 0.5);
+          const flareLen = coronaR * 2.6;
+          const arms: [number, number][] = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ];
+          const segs = 5;
+          for (const [dx, dy] of arms) {
+            for (let i = 0; i < segs; i++) {
+              const t0 = i / segs;
+              const t1 = (i + 1) / segs;
+              const fade = (1 - t0) * 0.15 * pulse;
+              starFlareG
+                .moveTo(cx + dx * flareLen * t0, cy + dy * flareLen * t0)
+                .lineTo(cx + dx * flareLen * t1, cy + dy * flareLen * t1)
+                .stroke({ width: 1, color: flareColor, alpha: Math.max(0, fade) });
+            }
+          }
         }
 
         // ── transient crimson SUPERNOVA on a crash stop (E? error) ──
@@ -667,6 +897,10 @@
         // amber→crimson wedge · failed-dark = a dim crimson disc, no glow, cut by a
         // jagged fracture. Each differs by SHAPE + motion + color (greyscale
         // separable per §F). restForm eases the transition so it "sets" at rest.
+        // M2.2: the big disc FILLS below use `starFill` (lightly muted); small accents (the
+        // frost/ember core dot, brass seal ticks, crack lines) keep the full-saturation
+        // hue — the same two-tier split as the planets, applied to the star's own
+        // per-silhouette identity color instead of the fixed 5-slot status vocabulary.
         starG.clear();
         const rf = vis.restForm;
         if (rest === 'failed-dark') {
@@ -680,7 +914,7 @@
           const flicker = reduced ? 1 : 0.82 + Math.sin(vis.t * 0.55) * 0.18;
           starG
             .circle(cx, cy, coronaR)
-            .fill({ color: C.crimson, alpha: (0.24 + rf * 0.1) * flicker });
+            .fill({ color: starFill, alpha: (0.24 + rf * 0.1) * flicker });
           starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.void, alpha: 0.5 * rf });
           // the fracture: a fixed jagged crack through the disc, plus a short branch
           const crack: [number, number][] = [
@@ -714,11 +948,11 @@
             const rr = i % 2 === 0 ? rr0 : rr0 * 0.5;
             starG.lineTo(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr);
           }
-          starG.fill({ color: vis.starColor, alpha: 0.9 });
+          starG.fill({ color: starFill, alpha: 0.9 });
           starG.circle(cx, cy, rr0 * 0.35).fill({ color: C.frost, alpha: 0.5 });
         } else if (rest === 'stopped-ember') {
           // banked ember: a warm DOME (flat-bottomed half-disc) — coasted, parked.
-          starG.circle(cx, cy, coronaR).fill({ color: vis.starColor, alpha: 0.5 + rf * 0.45 });
+          starG.circle(cx, cy, coronaR).fill({ color: starFill, alpha: 0.5 + rf * 0.45 });
           // the "bank" line: a horizontal ember bar across the dome
           starG
             .rect(cx - coronaR, cy + coronaR * 0.15, coronaR * 2, coronaR * 0.5)
@@ -735,24 +969,24 @@
           }
         } else if (rest === 'handoff-beacon') {
           // distress beacon: a rotating amber→crimson wedge sweeping like a siren.
-          starG.circle(cx, cy, coronaR).fill({ color: vis.starColor, alpha: 0.92 });
+          starG.circle(cx, cy, coronaR).fill({ color: starFill, alpha: 0.92 });
           const sweep = reduced ? 0 : vis.t * 1.1; // slow rotation (urgency=slowing not blinking)
           const wedge = 0.6;
           const beamR = coronaR * 3.4;
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep - wedge / 2, sweep + wedge / 2);
           starG.closePath();
-          starG.fill({ color: C.crimson, alpha: 0.16 });
+          starG.fill({ color: muteColor(C.crimson, C.void, MUTE_FILL), alpha: 0.16 });
           // opposite wedge (two-armed beacon) in amber
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep + Math.PI - wedge / 2, sweep + Math.PI + wedge / 2);
           starG.closePath();
-          starG.fill({ color: C.amber, alpha: 0.12 });
+          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.12 });
           starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.crimson, alpha: 0.7 });
         } else if (rest === 'certified-done') {
           // sealed: calm green disc with a brass certification seal (concentric
           // brass rings + a notch) — steady, NOT animated (it's done).
-          starG.circle(cx, cy, coronaR).fill({ color: vis.starColor, alpha: 0.96 });
+          starG.circle(cx, cy, coronaR).fill({ color: starFill, alpha: 0.96 });
           starG.circle(cx, cy, coronaR * 0.62).fill({ color: C.starlight, alpha: 0.45 });
           starG.circle(cx, cy, coronaR + 5).stroke({ width: 2, color: C.brass, alpha: 0.8 * rf });
           starG.circle(cx, cy, coronaR + 9).stroke({ width: 1, color: C.brass, alpha: 0.5 * rf });
@@ -768,7 +1002,7 @@
           }
         } else {
           // running / idle: live star, hot inner ring tinted by the active model
-          starG.circle(cx, cy, coronaR).fill({ color: vis.starColor, alpha: 0.98 });
+          starG.circle(cx, cy, coronaR).fill({ color: starFill, alpha: 0.98 });
           starG.circle(cx, cy, coronaR * 0.6).fill({ color: C.starlight, alpha: 0.5 });
           if (vis.burn > 0.05) {
             starG
@@ -794,80 +1028,108 @@
         // ── planets ── (positions already eased into `ppos`)
         // Tier-1/Planetarium drops the planets entirely (plan §7): the star, the
         // cost-horizon, the rest-state silhouette + beacon and the quota-night are
-        // the whole picture. Clear children + the hit-map so taps don't drill.
-        planetsC.removeChildren();
+        // the whole picture. M2.7: pooled per-key visuals — hide (don't destroy) when
+        // Tier-1 hides all planets; prune only keys no longer in runStore.orbits at all.
+        const activeKeys = new Set(runStore.orbits.map((o) => o.key));
+        for (const [key, v] of planetPool) {
+          if (!activeKeys.has(key)) {
+            v.container.destroy({ children: true });
+            planetPool.delete(key);
+          }
+        }
         lastPpos.clear();
-        for (const o of tierOne ? [] : runStore.orbits) {
-          const pp = ppos.get(o.key);
-          if (!pp) continue;
-          const px = pp.x;
-          const py = pp.y;
-          lastPpos.set(o.key, { x: px, y: py, r: pp.r });
-          const a = planetAngle.get(o.key) ?? o.angle;
-          const r = pp.r;
-          const g = new PIXI.Graphics();
-          const col = planetColor(o);
-          const pr = 5 + (o.merged ? 1.5 : 0);
-          const snap = snapFx.get(o.key) ?? 0; // rollback time-shimmer 0..1
-          const seal = sealFlash.get(o.key) ?? 0; // certification chime 0..1
-          const refute = refuteFx.get(o.key) ?? 0;
+        if (tierOne) {
+          for (const v of planetPool.values()) v.container.visible = false;
+        } else {
+          for (const o of runStore.orbits) {
+            const pp = ppos.get(o.key);
+            if (!pp) continue;
+            const px = pp.x;
+            const py = pp.y;
+            lastPpos.set(o.key, { x: px, y: py, r: pp.r });
+            const a = planetAngle.get(o.key) ?? o.angle;
+            const r = pp.r;
+            const pv = getPlanetVisual(o.key);
+            pv.container.visible = true;
+            const pair = planetPair(o);
+            const pr = 5 + (o.merged ? 1.5 : 0);
+            const snap = snapFx.get(o.key) ?? 0; // rollback time-shimmer 0..1
+            const seal = sealFlash.get(o.key) ?? 0; // certification chime 0..1
+            const refute = refuteFx.get(o.key) ?? 0;
 
-          // rollback snapback: cyan time-shimmer ghost rewinding to best form
-          if (snap > 0.02) {
-            const ringR = pr + 4 + (1 - snap) * 10;
-            g.circle(px, py, ringR).stroke({ width: 1.5, color: C.cyan, alpha: snap * 0.8 });
-            g.circle(px, py, ringR + 4).stroke({ width: 1, color: C.cyan, alpha: snap * 0.4 });
-          }
-
-          g.circle(px, py, pr).fill({ color: col, alpha: 0.95 });
-
-          // selection ring — the planet whose VerdictPanel/dossier is open (mouse
-          // click or the keyboard work-item list both set runStore.selectedItem)
-          if (o.key === runStore.selectedItem) {
-            g.circle(px, py, pr + 6).stroke({ width: 1.5, color: C.cyan, alpha: 0.9 });
-          }
-
-          // hover highlight — a subtle ring on the planet under the pointer (kept
-          // dimmer than the selection ring so the two never read as the same).
-          if (o.key === hoveredKey && o.key !== runStore.selectedItem) {
-            g.circle(px, py, pr + 5).stroke({ width: 1, color: C.cyan, alpha: 0.4 });
-          }
-
-          // A2: CERTIFIED green (sealed) — a solid brass certification ring; calm.
-          if (o.certified) {
-            g.circle(px, py, pr + 3).stroke({ width: 1.4, color: C.brass, alpha: 0.9 });
-            if (seal > 0.02) {
-              // seal "chime": a brass ring blooms outward once on certification
-              const bloomR = pr + 3 + (1 - seal) * 14;
-              g.circle(px, py, bloomR).stroke({ width: 1.5, color: C.brass, alpha: seal * 0.85 });
+            // M2.1: true glow only on the star, current/selected body, and alert states
+            // (blocked/failed/claimed-green) — every other planet is a flat fill.
+            const isCurrent = cur?.key === o.key;
+            const isSelected = o.key === runStore.selectedItem;
+            const isAlert = o.status === 'blocked' || o.status === 'failed' || o.claimedGreen;
+            if (isCurrent || isSelected || isAlert) {
+              pv.glow.visible = true;
+              sizeGlowSprite(pv.glow, glowTex, px, py, pr * 4.2);
+              pv.glow.tint = pair.base;
+              pv.glow.alpha = isAlert && !isCurrent && !isSelected ? 0.55 : 0.8;
+            } else {
+              pv.glow.visible = false;
             }
-          } else if (o.merged) {
-            g.circle(px, py, pr + 3).stroke({ width: 1.2, color: C.brass, alpha: 0.7 });
-          } else if (o.claimedGreen) {
-            // A2: CLAIMED green (asserted, not yet audited) — anxious dashed pulse,
-            // NO brass seal. It pulses until the verifier certifies or refutes it
-            // (the "verifying…" label + HUD trust chip carry the same signal in text).
-            const ap = reduced ? 0.4 : 0.25 + Math.abs(Math.sin(vis.t * 3)) * 0.45;
-            const wob = reduced ? 0 : Math.sin(vis.t * 3) * 0.8;
-            g.circle(px, py, pr + 2.5 + wob).stroke({ width: 1, color: C.green, alpha: ap });
-          }
 
-          // refute drain: a crimson flush as the false-green drains back
-          if (refute > 0.02) {
-            g.circle(px, py, pr + 1).stroke({ width: 1.5, color: C.crimson, alpha: refute });
-          }
+            // ── disc (normal blend): fill, rims, notches ──
+            const g = pv.disc;
+            g.clear();
+            g.circle(px, py, pr).fill({ color: pair.base, alpha: 0.95 });
 
-          // crimson strike-notches on the ring (one per rollback), per budget
-          const budget = Math.max(o.strikeBudget, o.strikes);
-          for (let i = 0; i < Math.min(o.strikes, Math.max(budget, 3)); i++) {
-            const na = a - 0.18 + (i / Math.max(1, budget - 1 || 1)) * 0.36;
-            const nx = px + Math.cos(na + Math.PI / 2) * (pr + 6);
-            const ny = py + Math.sin(na + Math.PI / 2) * (pr + 6);
-            g.moveTo(nx, ny)
-              .lineTo(nx + Math.cos(na) * 3, ny + Math.sin(na) * 3)
-              .stroke({ width: 1.4, color: C.crimson, alpha: 0.9 });
+            // selection ring — the planet whose VerdictPanel/dossier is open (mouse
+            // click or the keyboard work-item list both set runStore.selectedItem)
+            if (isSelected) {
+              g.circle(px, py, pr + 6).stroke({ width: 1.5, color: C.cyan, alpha: 0.9 });
+            }
+
+            // hover highlight — a subtle ring on the planet under the pointer (kept
+            // dimmer than the selection ring so the two never read as the same).
+            if (o.key === hoveredKey && !isSelected) {
+              g.circle(px, py, pr + 5).stroke({ width: 1, color: C.cyan, alpha: 0.4 });
+            }
+
+            // A2: CERTIFIED green (sealed) — a solid brass certification ring; calm.
+            if (o.certified) {
+              g.circle(px, py, pr + 3).stroke({ width: 1.4, color: C.brass, alpha: 0.9 });
+            } else if (o.merged) {
+              g.circle(px, py, pr + 3).stroke({ width: 1.2, color: C.brass, alpha: 0.7 });
+            } else if (o.claimedGreen) {
+              // A2: CLAIMED green (asserted, not yet audited) — anxious dashed pulse,
+              // NO brass seal. It pulses until the verifier certifies or refutes it
+              // (the "verifying…" label + HUD trust chip carry the same signal in text).
+              const ap = reduced ? 0.4 : 0.25 + Math.abs(Math.sin(vis.t * 3)) * 0.45;
+              const wob = reduced ? 0 : Math.sin(vis.t * 3) * 0.8;
+              g.circle(px, py, pr + 2.5 + wob).stroke({ width: 1, color: C.status.ok.core, alpha: ap });
+            }
+
+            // crimson strike-notches on the ring (one per rollback), per budget
+            const budget = Math.max(o.strikeBudget, o.strikes);
+            for (let i = 0; i < Math.min(o.strikes, Math.max(budget, 3)); i++) {
+              const na = a - 0.18 + (i / Math.max(1, budget - 1 || 1)) * 0.36;
+              const nx = px + Math.cos(na + Math.PI / 2) * (pr + 6);
+              const ny = py + Math.sin(na + Math.PI / 2) * (pr + 6);
+              g.moveTo(nx, ny)
+                .lineTo(nx + Math.cos(na) * 3, ny + Math.sin(na) * 3)
+                .stroke({ width: 1.4, color: C.status.err.core, alpha: 0.9 });
+            }
+
+            // ── fx (add blend): transient blooms only — seal chime, rollback
+            //    snapback, refute drain (plan §M2.1 "'add' reserved for … transients") ──
+            const fxG = pv.fx;
+            fxG.clear();
+            if (seal > 0.02) {
+              const bloomR = pr + 3 + (1 - seal) * 14;
+              fxG.circle(px, py, bloomR).stroke({ width: 1.5, color: C.brass, alpha: seal * 0.85 });
+            }
+            if (snap > 0.02) {
+              const ringR = pr + 4 + (1 - snap) * 10;
+              fxG.circle(px, py, ringR).stroke({ width: 1.5, color: C.cyan, alpha: snap * 0.8 });
+              fxG.circle(px, py, ringR + 4).stroke({ width: 1, color: C.cyan, alpha: snap * 0.4 });
+            }
+            if (refute > 0.02) {
+              fxG.circle(px, py, pr + 1).stroke({ width: 1.5, color: C.status.err.core, alpha: refute });
+            }
           }
-          planetsC.addChild(g);
         }
 
         // ── Rewind-mode cyan time-shimmer frame (plan §3) ────────────────────
@@ -875,7 +1137,7 @@
         // whole orrery while you scrub time. Eased on/off so entering Rewind
         // reads as "stepping into the timeline". Steady-state safe: the scan
         // drift is suppressed under reduced-motion (only the frame shows).
-        vis.rewind = lerp(vis.rewind, uiStore.rewind ? 1 : 0, 0.08);
+        vis.rewind = lerp(vis.rewind, uiStore.rewind ? 1 : 0, kdt(0.08, dt));
         shimmerG.clear();
         if (vis.rewind > 0.01) {
           const a = vis.rewind;
