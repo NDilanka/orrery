@@ -97,6 +97,30 @@ def kill_tree(pid: int, *, include_parent: bool = True) -> None:
     psutil.wait_procs(alive, timeout=_GRACE_SEC)
 
 
+def _group_kwargs() -> dict:
+    """``Popen`` kwargs that put a child in its own process group/session.
+
+    POSIX: ``start_new_session`` so a group-level signal (``os.killpg``) reaches grandchildren.
+    Windows: ``CREATE_NEW_PROCESS_GROUP`` so the child gets a distinct group. Shared by every
+    spawn path in this module (:func:`run_with_timeout`, :func:`spawn_tree`) so the WHOLE tree
+    is always killable via :func:`kill_tree`, regardless of which one launched it.
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def spawn_tree(argv, *, cwd=None, env=None) -> subprocess.Popen:
+    """Spawn ``argv`` as a detached, killable process tree — NO capture, inherits stdio.
+
+    For long-running supervisory callers (:mod:`loop.supervise`) that need to ``.wait()`` on the
+    child themselves rather than go through the blocking, output-capturing
+    :func:`run_with_timeout`. Placed in its own process group/session exactly like
+    ``run_with_timeout`` so :func:`kill_tree` reaches its whole descendant tree.
+    """
+    return subprocess.Popen(list(argv), cwd=cwd, env=env, **_group_kwargs())
+
+
 def run_with_timeout(
     argv,
     *,
@@ -118,14 +142,8 @@ def run_with_timeout(
         "universal_newlines": True,
         "encoding": "utf-8",
         "errors": "replace",
+        **_group_kwargs(),
     }
-
-    # Put the child in its own process group/session so a group-level kill on POSIX
-    # reaches grandchildren, and Windows gets a distinct group (CREATE_NEW_PROCESS_GROUP).
-    if os.name == "nt":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        popen_kwargs["start_new_session"] = True
 
     proc = subprocess.Popen(argv, **popen_kwargs)
 
@@ -152,6 +170,18 @@ def run_with_timeout(
             except OSError:
                 pass
             stdout, stderr = "", ""
+    except BaseException:
+        # ANY other escape from communicate() — KeyboardInterrupt (Ctrl+C / a supervisor signal
+        # mid-wait), OSError, or anything else — must not leak the child (or its whole tree)
+        # running unattended. Kill it first, THEN propagate the original exception so the caller
+        # (cli.py) can still report/exit cleanly; we never swallow the exception here.
+        if os.name != "nt":
+            try:
+                os.killpg(os.getpgid(proc.pid), 15)  # SIGTERM the group
+            except (OSError, ProcessLookupError):
+                pass
+        kill_tree(proc.pid, include_parent=True)
+        raise
 
     return ProcResult(
         returncode=proc.returncode if proc.returncode is not None else -1,

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -485,11 +485,24 @@ fn guard_tokens(def: &LoopDef) -> Vec<String> {
             }
         }
     }
-    // Fallback: if a loop.json had no usable script token, key on the stateDir so we at
-    // least don't treat *everything* as a match (mirrors the engine's stateDir intent).
-    if tokens.is_empty() {
-        tokens.push(def.state_dir.to_lowercase());
-    }
+    // No usable tokens could be derived from the start spec (no program stem, no
+    // -File/-TaskFile/-Command args). We used to fall back to substring-matching the raw
+    // `stateDir` against every process cmdline — but that over-matched: ANY bystander process
+    // whose command line merely REFERENCES the state dir (a `tail -f .loop/log.jsonl`, an editor
+    // with the log open, a file manager) tripped "AlreadyRunning" and silently blocked
+    // Start/Reignite. That was a real bug we hit (see `guard_tokens_key_on_program_...` above).
+    //
+    // We now return NO tokens instead. `cmdline_matches` treats an empty token list as "no
+    // match", so `find_running_pid` returns `None` and the scan-based guard allows the spawn.
+    // This trades a rare false-negative (two near-simultaneous starts for a tokenless loop could
+    // both pass this scan) for never producing a false-positive block — and the false-negative is
+    // caught downstream anyway: the Python engine holds its own authoritative pid lockfile in the
+    // state dir and exits with code 2 when another instance already holds it
+    // (engine/loop/core.py `_acquire_lock`; the BMAD driver does the equivalent), so a duplicate
+    // spawn fails fast there. A false-positive "AlreadyRunning" here has no such downstream
+    // recovery — it just silently blocks the user, which is the historically worse failure mode.
+    // The per-loop-id lock in `start_with_spec` (`loop_lock`/`LOOP_LOCKS`) separately closes the
+    // check-then-spawn race for same-process near-simultaneous calls, independent of this scan.
     tokens
 }
 
@@ -595,6 +608,28 @@ fn spawn_detached(
     Ok(child.id())
 }
 
+/// Global registry of per-loop-id locks. `start_with_spec`'s guard-then-spawn (sysinfo scan,
+/// THEN `Command::spawn`) is a check-then-act race: two near-simultaneous calls for the SAME loop
+/// (a desktop double-click, or a desktop click racing the LAN `/api/control` route — `lan.rs`
+/// calls `start_loop_core`/`resume_loop_core` directly, with no `AppHandle`) can both observe "not
+/// running" before either has spawned, and both spawn — a double-spawned engine. A `static` is the
+/// only thing both call paths can share: the LAN handlers have no Tauri-managed state to reach
+/// into, so this can't be `tauri::State`. Keyed per loop id (not one global lock) so unrelated
+/// loops never serialize against each other.
+static LOOP_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+/// Get (or lazily create) the lock for `loop_id`. Repeated calls with the same id return clones
+/// of the SAME `Arc`, so locking it actually serializes callers; different ids get independent
+/// `Arc`s that never contend. The registry mutex itself is only held for the map lookup/insert,
+/// not across the caller's critical section.
+fn loop_lock(loop_id: &str) -> Arc<Mutex<()>> {
+    let registry = LOOP_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    map.entry(loop_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 /// Shared start path: run the guard, spawn, record PID. `spec` is taken from loop.json (or
 /// a resume command); never from arbitrary frontend input. `pids` is optional so the LAN route
 /// (which has no desktop `LoopPids` state) can reuse the same guard+spawn path.
@@ -605,6 +640,15 @@ fn start_with_spec(
     base_dir: &Path,
     spec: &StartSpec,
 ) -> Result<StartResult, String> {
+    // Hold this loop's lock across the ENTIRE check-then-spawn critical section below (scan +
+    // spawn + PID record), covering both the desktop Tauri commands and the LAN control routes
+    // (both funnel through this function). A poisoned lock (a prior panic while held) must not
+    // permanently wedge future starts, so we recover the inner guard rather than propagate the
+    // panic. `start_with_spec` is synchronous, so holding a std `Mutex` guard across it is fine —
+    // no `.await` point exists to hold it across.
+    let lock = loop_lock(loop_id);
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let tokens = guard_tokens(def);
     if let Some(_existing) = find_running_pid(&tokens) {
         return Err("AlreadyRunning".to_string());
@@ -1280,6 +1324,105 @@ mod tests {
         assert!(!cmdline_matches(&tokens, tail), "a log tail must NOT trip the guard");
         let editor = "code.exe d:/dev/loop/orrery/loops/bmad/.loop/log.jsonl";
         assert!(!cmdline_matches(&tokens, editor), "an editor must NOT trip the guard");
+    }
+
+    #[test]
+    fn guard_tokens_tokenless_spec_yields_no_match_not_state_dir_fallback() {
+        // A loop with no start spec at all (or one whose program has no usable stem and no
+        // -File/-TaskFile/-Command args) can derive NO discriminating tokens. The old behavior
+        // fell back to matching the raw stateDir substring against every process cmdline; that
+        // fallback is now GONE — `guard_tokens` must return an empty Vec, and `cmdline_matches`
+        // treats an empty token list as "no match" (allow the spawn) rather than the reverse.
+        let def = LoopDef {
+            id: "tokenless".into(),
+            name: "tokenless".into(),
+            theme: None,
+            kind: Some("generic".into()),
+            state_dir: "D:/dev/loop/orrery/loops/tokenless/.loop".into(),
+            adapter: "generic".into(),
+            log_file: Some("log.jsonl".into()),
+            stop_flag: None,
+            checkpoint: None,
+            start: None, // no start spec -> nothing to derive tokens from
+            engine: None,
+        };
+        let tokens = guard_tokens(&def);
+        assert!(tokens.is_empty(), "tokenless spec must yield NO tokens: {tokens:?}");
+
+        // A bystander whose cmdline merely references the state dir must NOT match — the exact
+        // over-match this removal fixes (a log tail, an editor with the log open, etc).
+        let bystander = "tail -f d:/dev/loop/orrery/loops/tokenless/.loop/log.jsonl";
+        assert!(!cmdline_matches(&tokens, bystander), "empty tokens must never match anything");
+        // Even a cmdline containing the exact stateDir string verbatim must not match — proves
+        // the old "key on stateDir" fallback is really gone, not just weakened.
+        assert!(!cmdline_matches(&tokens, &def.state_dir.to_lowercase()));
+
+        // A start spec whose program has no derivable stem (e.g. empty) and no discriminating
+        // args also yields no tokens — same no-match behavior, not a stateDir fallback.
+        let def2 = LoopDef {
+            start: Some(StartSpec { program: String::new(), args: vec![] }),
+            ..def
+        };
+        assert!(guard_tokens(&def2).is_empty());
+    }
+
+    #[test]
+    fn loop_lock_same_id_same_arc_distinct_id_distinct_arc() {
+        // LOOP_LOCKS is a process-global static shared with other tests; use ids unique to this
+        // test (and this process) so it can't collide with anything else touching the registry.
+        let pid = std::process::id();
+        let id_a = format!("lock-test-a-{pid}");
+        let id_b = format!("lock-test-b-{pid}");
+
+        let a1 = loop_lock(&id_a);
+        let a2 = loop_lock(&id_a);
+        assert!(Arc::ptr_eq(&a1, &a2), "the SAME loop id must hand back the SAME Arc");
+
+        let b1 = loop_lock(&id_b);
+        assert!(!Arc::ptr_eq(&a1, &b1), "DIFFERENT loop ids must get DISTINCT Arcs");
+
+        // Sanity: the returned Arc really is a working lock.
+        let _g = a1.lock().unwrap();
+        drop(_g);
+        let _g2 = b1.lock().unwrap();
+    }
+
+    #[test]
+    fn loop_lock_serializes_concurrent_starts_for_the_same_id() {
+        // Simulates two near-simultaneous start_with_spec calls for the SAME loop id: both
+        // threads race to acquire loop_lock(id) and hold it across a short "critical section",
+        // mirroring the real check-then-spawn window. Overlap must never exceed 1 holder.
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        use std::thread;
+        use std::time::Duration;
+
+        let id = format!("lock-test-serialize-{}", std::process::id());
+        let concurrent = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let id = id.clone();
+                let concurrent = concurrent.clone();
+                let max_concurrent = max_concurrent.clone();
+                thread::spawn(move || {
+                    let lock = loop_lock(&id);
+                    let _guard = lock.lock().unwrap();
+                    let now = concurrent.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                    max_concurrent.fetch_max(now, AtomicOrdering::SeqCst);
+                    thread::sleep(Duration::from_millis(20));
+                    concurrent.fetch_sub(1, AtomicOrdering::SeqCst);
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            max_concurrent.load(AtomicOrdering::SeqCst),
+            1,
+            "same-loop-id critical sections must never overlap"
+        );
     }
 
     #[test]

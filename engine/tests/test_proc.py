@@ -7,12 +7,13 @@ verifies via psutil that BOTH the child and the grandchild PIDs are actually gon
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 
 import psutil
 
-from loop.proc import ProcResult, kill_tree, run_with_timeout
+from loop.proc import ProcResult, kill_tree, run_with_timeout, spawn_tree
 
 # A child program that: prints its own PID and the spawned grandchild's PID (so the test
 # can verify the WHOLE tree died), then sleeps long enough that only a kill ends it.
@@ -133,6 +134,55 @@ def test_kill_by_name_scoped_to_within_dir(monkeypatch):
 
     assert killed_pids == [101]
     assert n == 1
+
+
+def test_run_with_timeout_kills_tree_on_keyboard_interrupt(monkeypatch):
+    """Task 2: ANY exception escaping communicate() — not just TimeoutExpired — must kill the
+    WHOLE child tree before propagating. A KeyboardInterrupt hitting the harness while blocked
+    in run_with_timeout must not leak a hung child process."""
+    real_communicate = subprocess.Popen.communicate
+    calls = {"n": 0}
+
+    def flaky_communicate(self, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise KeyboardInterrupt()
+        return real_communicate(self, *a, **kw)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", flaky_communicate)
+
+    pid_holder: dict = {}
+    real_kill_tree = kill_tree
+
+    def spying_kill_tree(pid, **kw):
+        pid_holder["pid"] = pid
+        return real_kill_tree(pid, **kw)
+
+    monkeypatch.setattr("loop.proc.kill_tree", spying_kill_tree)
+
+    raised = False
+    try:
+        run_with_timeout([sys.executable, "-c", "import time; time.sleep(30)"], timeout_sec=10)
+    except KeyboardInterrupt:
+        raised = True
+    assert raised is True, "the original exception must propagate, never be swallowed"
+    assert "pid" in pid_holder, "kill_tree must be called on the escaping-exception path"
+
+    # confirm the real child is actually gone (kill_tree really worked, not just called).
+    _wait_gone([pid_holder["pid"]])
+    assert not _pid_running(pid_holder["pid"]), "child survived a KeyboardInterrupt mid-communicate"
+
+
+def test_spawn_tree_returns_a_killable_detached_process():
+    """spawn_tree (used by loop.supervise) spawns without capturing output and can be
+    kill_tree'd like any run_with_timeout child."""
+    proc = spawn_tree([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert _pid_running(proc.pid)
+    finally:
+        kill_tree(proc.pid, include_parent=True)
+        _wait_gone([proc.pid])
+        assert not _pid_running(proc.pid)
 
 
 def test_timeout_zero_runs_to_completion():

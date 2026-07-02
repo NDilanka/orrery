@@ -378,9 +378,14 @@ export function composeLoopDef(input: ConsoleInput): LoopDefDraft {
     logFile: 'log.jsonl',
     stopFlag,
     checkpoint,
+    // Mirror the seeded generic loops exactly (orrery/loops/hello/loop.json): the
+    // Python engine's `loop` console entrypoint, not the retired loop.ps1 script.
+    // Args are relative — the Rust side resolves them against the loop's own dir
+    // (loops/<id>/), same as stateDir/stopFlag/checkpoint above, so `.` (cwd) and
+    // `loop.json` land in the right place regardless of the app's own cwd.
     start: {
-      program: 'pwsh',
-      args: ['-NoProfile', '-File', 'loop.ps1', '-TaskFile', input.task],
+      program: 'loop',
+      args: ['--loop-json', 'loop.json', '--cwd', '.', '--state-dir', input.stateDir],
     },
     engine,
   };

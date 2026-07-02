@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from loop import gitutil, proc
+from loop import gitutil, lockfile, proc
 from loop.heartbeat import Heartbeat
 from loop.logio import append_event, read_stop_flag, write_checkpoint
 
@@ -382,9 +382,31 @@ def run(
     invoke: Callable[..., InvokeResult] | None = None,
     emit: Callable[[dict], None] | None = None,
 ) -> int:
-    """Run the discovery pass across the configured epics. Returns a process exit code."""
+    """Run the discovery pass across the configured epics. Returns a process exit code.
+
+    Acquires the SAME single-flight lock (:mod:`loop.lockfile`) every other driver
+    (``loop`` / ``loop-bmad``) uses, so a QA pass can't race a generic or BMAD run (or another
+    QA run) against the same state dir. Returns ``2`` when a live lock already exists.
+    """
     state = Path(state_dir)
     state.mkdir(parents=True, exist_ok=True)
+    lock_path = state / lockfile.LOCK_NAME
+    if not lockfile.acquire_lock(lock_path):
+        print(f"[GUARD] another loop is already running against state dir '{state}'.")
+        return 2
+    try:
+        return _run_inner(config, state=state, invoke=invoke, emit=emit)
+    finally:
+        lockfile.release_lock(lock_path)
+
+
+def _run_inner(
+    config: QaConfig,
+    *,
+    state: Path,
+    invoke: Callable[..., InvokeResult] | None = None,
+    emit: Callable[[dict], None] | None = None,
+) -> int:
     log_path = state / "log.jsonl"
     activity_path = state / "activity.json"
     stop_flag = state / "STOP"
@@ -482,7 +504,7 @@ def run(
             state / "checkpoint.json",
             {"updatedAt": "", "stage": f"epic-{n}", "story": f"epic-{n}", "branch": branch,
              "mergeBase": branch, "cumUsd": round(cum, 4),
-             "resume": f"loop-qa --state-dir {state_dir}"},
+             "resume": f"loop-qa --state-dir {state}"},
         )
 
         if config.cost_ceiling_usd is not None and cum >= config.cost_ceiling_usd:

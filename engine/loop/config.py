@@ -28,6 +28,9 @@ _MODEL_DEFAULTS = {
 # Defaults from the loop.ps1 param block (~79-105) + loopcore gate default (~113-117).
 _DEFAULT_MAX_TURNS = 30
 _DEFAULT_MAX_ITERS = 15
+# Per-iteration execute wall-clock cap (minutes; 0 = disabled/unbounded). Guards against a hung
+# runner process silently blocking an unattended overnight run forever (Wave A1 "don't hang").
+_DEFAULT_ITER_TIMEOUT_MIN = 60
 _DEFAULT_STAGNATION_LIMIT = 2
 _DEFAULT_PLATEAU_LIMIT = 3
 _DEFAULT_REGRESS_LIMIT = 3
@@ -195,6 +198,10 @@ class EngineConfig:
     task: str = "TASK.md"
     models: dict[str, str] = field(default_factory=dict)
     max_turns: int = _DEFAULT_MAX_TURNS
+    # Per-iteration execute wall-clock cap in MINUTES (0 = disabled/unbounded). Threaded into the
+    # execute `runner.run(..., timeout_sec=...)` call; a hung agent process is killed and the
+    # iteration follows the existing phase-timeout path (loop.core._run_loop_body).
+    iter_timeout_min: int = _DEFAULT_ITER_TIMEOUT_MIN
     allowed_tools: list[str] = field(default_factory=lambda: list(_DEFAULT_ALLOWED_TOOLS))
     permission_mode: str = _DEFAULT_PERMISSION_MODE
     gate: GateConfig = field(default_factory=GateConfig)
@@ -204,6 +211,12 @@ class EngineConfig:
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
+    # The --loop-json path THIS run was launched with, if any. Not sourced from the JSON content
+    # itself (a file doesn't know its own path) — cli.py sets it after loading, mirroring
+    # loop.bmad.driver.BmadConfig.loop_json. A resume/Reignite must re-point at it (loop.core's
+    # checkpoint `resume` string) or per-run tuning that has no other CLI surface (e.g. custom
+    # gate stages) silently reverts to defaults. "" = none.
+    loop_json: str = ""
 
     def model_for(self, phase: str) -> str:
         """Resolve a phase to its model tier through this config's ``models`` map."""
@@ -288,7 +301,7 @@ def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
     """Parse the ``engine`` block of a ``loop.json`` into an :class:`EngineConfig`.
 
     Accepts a path to a ``loop.json`` file, an already-parsed full loop dict, or just the
-    ``engine`` sub-dict. camelCase JSON keys (``maxTurns``, ``allowedTools``,
+    ``engine`` sub-dict. camelCase JSON keys (``maxTurns``, ``iterTimeoutMin``, ``allowedTools``,
     ``permissionMode``, ``passPattern``, ``failPattern``, ``lockGlobs``, ``greenWhen``,
     ``ceilingUsd``, ``alertPct``, ``maxIters``, ``stagnationLimit``, ``plateauLimit``,
     ``regressLimit``, ``gracefulAtPhase``, ``judgeModel``) are accepted, as are snake_case
@@ -308,6 +321,9 @@ def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
         task=_first(eng, "task", default="TASK.md"),
         models=dict(_first(eng, "models", default={})),
         max_turns=int(_first(eng, "maxTurns", "max_turns", default=_DEFAULT_MAX_TURNS)),
+        iter_timeout_min=int(
+            _first(eng, "iterTimeoutMin", "iter_timeout_min", default=_DEFAULT_ITER_TIMEOUT_MIN)
+        ),
         allowed_tools=list(
             _first(eng, "allowedTools", "allowed_tools", default=list(_DEFAULT_ALLOWED_TOOLS))
         ),

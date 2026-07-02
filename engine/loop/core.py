@@ -59,6 +59,7 @@ from loop.feedback import compact_feedback
 from loop.gate import run_gate
 from loop.hashlock import compare_hash_map, test_hash_map
 from loop.heartbeat import Heartbeat
+from loop.lockfile import LOCK_NAME, acquire_lock, release_lock
 from loop.memory import FileMemoryStore, Lesson, NullMemoryStore
 from loop.metrics import compute_metrics
 from loop.verify import (
@@ -81,10 +82,6 @@ from loop.logio import (
 from loop.quota import survive
 from loop.verdict import contract_criteria, parse_verdict, question_marker
 from loop.verdict import read_answer_inbox as match_answer_inbox
-
-# Concurrency lock filename inside the state dir.
-_LOCK_NAME = "lock"
-
 
 def _stages_for_gate(config: EngineConfig) -> list[dict]:
     """Render the typed ``GateStage`` list into the dict shape ``run_gate`` expects.
@@ -130,39 +127,6 @@ def _hash_map_over(globs: list[str], work: Path) -> dict[str, str]:
     return merged
 
 
-def _pid_alive(pid: int) -> bool:
-    """True if a process with ``pid`` is currently alive (best-effort, cross-platform)."""
-    try:
-        import psutil
-
-        return psutil.pid_exists(pid)
-    except Exception:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return False
-        except Exception:
-            return True
-        return True
-
-
-def _acquire_lock(lock_path: Path) -> bool:
-    """Write a pid lockfile; refuse (return False) if a LIVE lock already exists.
-
-    A stale lock (its pid is gone) is reclaimed. Mirrors the intent of ``loop.ps1``'s
-    concurrency guard (~314-361) without scanning the process table.
-    """
-    if lock_path.exists():
-        try:
-            existing = int((read_text(lock_path) or "0").strip() or "0")
-        except ValueError:
-            existing = 0
-        if existing and existing != os.getpid() and _pid_alive(existing):
-            return False
-    write_text(lock_path, str(os.getpid()))
-    return True
-
-
 def _read_first_line(path: Path) -> str:
     """First line of a text file (``""`` when absent/empty) — for the ``BLOCKED:`` probe."""
     txt = read_text(path)
@@ -198,7 +162,7 @@ def run_loop(
     stop_path = state / "STOP"
     progress_path = state / "progress.md"
     answer_path = state / "answer.json"
-    lock_path = state / _LOCK_NAME
+    lock_path = state / LOCK_NAME
 
     # Metrics: when enabled, keep an in-memory copy of every event we append to the log so
     # compute_metrics(events) can fold the whole run at stop. OFF -> no list, no metrics event.
@@ -210,7 +174,7 @@ def run_loop(
             emitted.append(event)
 
     # --- concurrency guard --------------------------------------------------
-    if not _acquire_lock(lock_path):
+    if not acquire_lock(lock_path):
         print(f"[GUARD] another loop is already running against state dir '{state}'.")
         return 2
 
@@ -230,12 +194,10 @@ def run_loop(
             dry_run=dry_run,
         )
     finally:
-        # Release the lock no matter how we exit (mirrors "remove on exit").
-        try:
-            if lock_path.exists() and (read_text(lock_path) or "").strip() == str(os.getpid()):
-                os.remove(lock_path)
-        except OSError:
-            pass
+        # Release the lock no matter how we exit (mirrors "remove on exit"). Also runs when a
+        # KeyboardInterrupt/other exception unwinds through this try (proc.py has already killed
+        # any child tree by then; cli.py turns a KeyboardInterrupt into a clean exit(130)).
+        release_lock(lock_path)
 
 
 def _run_loop_inner(
@@ -319,6 +281,15 @@ def _run_loop_body(
     dry_run: bool,
     memory,
 ) -> int:
+    # --- crash recovery: restore any leftover mutation-audit backup from a hard-killed prior
+    # run BEFORE the baseline gate reads the tree (Task 3 — a mutated source file left behind by
+    # a SIGKILL/power-loss mid-audit must never be mistaken for the user's real code).
+    _recover_mutation_backups(state, work, progress_path)
+
+    # The checkpoint `resume` string for THIS run — computed once, reused at every checkpoint
+    # write (Task 5: carries the real task/cwd/state-dir + --loop-json, not a hardcoded default).
+    resume_cmd = _resume_command(config, state, work)
+
     stages = _stages_for_gate(config)
     execute_model = config.model_for("execute")
     judge_model = config.model_for("judge")
@@ -389,11 +360,12 @@ def _run_loop_body(
     # Already green at baseline -> a clean green stop (loop.ps1 ~583).
     if base["green"]:
         emit(stop_event("already green at baseline", True, 0, 0.0, best_pass))
-        _write_checkpoint(checkpoint_path, "done", branch, merge_base, 0.0)
+        _write_checkpoint(checkpoint_path, "done", branch, merge_base, 0.0, resume_cmd)
         return 0
 
     # --- loop state ---------------------------------------------------------
-    iter_timeout_sec = 0  # per-iter wall-clock cap (0 = disabled); no config field today.
+    # Per-iter wall-clock cap (config.iter_timeout_min, minutes; 0 = disabled/unbounded).
+    iter_timeout_sec = config.iter_timeout_min * 60 if config.iter_timeout_min > 0 else 0
     cum = 0.0
     stale = 0
     plateau = 0
@@ -420,7 +392,7 @@ def _run_loop_body(
                 gitutil.add_all(work)
                 gitutil.commit(work, f"loop: cooperative stop ({req['mode']}) at iter {it}")
                 branch = gitutil.current_branch(work)
-            _write_checkpoint(checkpoint_path, f"iter {it}", branch, merge_base, cum)
+            _write_checkpoint(checkpoint_path, f"iter {it}", branch, merge_base, cum, resume_cmd)
             emit(
                 cooperative_stop_event(
                     scope="story",
@@ -475,7 +447,7 @@ def _run_loop_body(
                 # restState reads 'stopped-ember' (a stop) and not 'handoff-beacon'.
                 # TODO(parity): reconsider raising a deliberate beacon here as an improvement.
                 emit(stop_event("quota limit — could not resume", False, it, cum, best_pass))
-                _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum)
+                _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum, resume_cmd)
                 return 1
             if result.parse_failed:
                 # Agent output did NOT parse to JSON ($parsed -eq $null, loop.ps1:662) — even a
@@ -483,7 +455,7 @@ def _run_loop_body(
                 # parse_error and STOP (green=False).
                 emit(parse_error_event(it))
                 emit(stop_event("could not parse runner output", False, it, cum, best_pass))
-                _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum)
+                _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum, resume_cmd)
                 return 1
             break  # productive (or a non-quota error result we fall through with)
 
@@ -561,7 +533,7 @@ def _run_loop_body(
             green_seen += 1
             every = max(1, config.verify.mutation_every)
             if green_seen % every == 0:
-                _run_mutation_audit(config, stages, work, it, emit)
+                _run_mutation_audit(config, stages, work, it, emit, state)
 
         # update drift counters before the verdict.
         if not changed:
@@ -708,7 +680,7 @@ def _run_loop_body(
                 gitutil.reset_hard(work, best_commit)
             emit(stop_event(reason, green, it, cum, best_pass))
             _write_checkpoint(
-                checkpoint_path, "done" if green else "handoff", branch, merge_base, cum
+                checkpoint_path, "done" if green else "handoff", branch, merge_base, cum, resume_cmd
             )
             return 0 if green else 1
 
@@ -751,7 +723,7 @@ def _run_loop_body(
     )
     if use_git and best_commit:
         gitutil.reset_hard(work, best_commit)
-    _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum)
+    _write_checkpoint(checkpoint_path, "handoff", branch, merge_base, cum, resume_cmd)
     return 1
 
 
@@ -879,20 +851,79 @@ def _write_feedback_steer(
     )
 
 
+def _mutation_backup_path(state: Path, work: Path, target: Path) -> Path:
+    """Where the durable, crash-safe backup of ``target`` lives (mirrors its position under
+    ``work`` so :func:`_recover_mutation_backups` can restore it to the exact right path)."""
+    try:
+        rel = target.relative_to(work)
+    except ValueError:
+        rel = Path(target.name)
+    return state / "mutation-backup" / rel
+
+
+def _recover_mutation_backups(state: Path, work: Path, progress_path: Path) -> None:
+    """INIT-time recovery for a mutation-audit backup left behind by a hard crash (Task 3).
+
+    :func:`_run_mutation_audit` writes a durable ON-DISK backup before mutating a file and
+    deletes it after a clean restore. If a backup still exists here, the previous run was killed
+    (SIGKILL / power loss / OOM) before its in-process ``finally`` could restore the file from
+    it — the target may still hold mutated (broken) text. Restore every leftover backup to its
+    original path, delete it, and note the recovery so it's visible before anything else runs
+    (in particular before the baseline gate reads the tree).
+    """
+    backup_root = state / "mutation-backup"
+    if not backup_root.is_dir():
+        return
+    restored: list[str] = []
+    for backup_file in backup_root.rglob("*"):
+        if not backup_file.is_file():
+            continue
+        rel = backup_file.relative_to(backup_root)
+        target = work / rel
+        try:
+            content = backup_file.read_text(encoding="utf-8")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            backup_file.unlink()
+            restored.append(rel.as_posix())
+        except OSError:
+            continue  # best-effort — leave it for the next INIT to retry
+    if restored:
+        msg = (
+            "restored " + ", ".join(restored) + " from a leftover mutation-audit backup "
+            "(a previous run crashed mid-mutation)."
+        )
+        print(f"[RECOVER] {msg}")
+        _append_progress(progress_path, f"\n## Mutation-audit recovery\n{msg}\n")
+    # Best-effort cleanup of now-empty backup directories.
+    try:
+        dirs = sorted((p for p in backup_root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True)
+        for d in dirs:
+            if not any(d.iterdir()):
+                d.rmdir()
+        if backup_root.is_dir() and not any(backup_root.iterdir()):
+            backup_root.rmdir()
+    except OSError:
+        pass
+
+
 def _run_mutation_audit(
     config: EngineConfig,
     stages: list[dict],
     work: Path,
     it: int,
     emit,
+    state: Path,
 ) -> float | None:
     """Run the advisory mutation-strength audit over the changed implementation file.
 
     The ``source`` is the changed implementation file's text. ``run_tests(mutated_source)``
     writes the mutated text to the file, runs the gate, returns gate-green, and ALWAYS restores
-    the original file in a ``finally`` (bulletproof — the file is never left mutated, even on an
-    exception). Returns the mutation score (``killed / mutants``), or ``None`` when no target
-    file could be identified. Advisory only: it never gates the run.
+    the original file in a ``finally`` from a DURABLE ON-DISK backup (Task 3) — not just an
+    in-memory string — so a hard kill mid-mutant leaves a recoverable backup rather than a
+    corrupted user source file (see :func:`_recover_mutation_backups`, run at the next INIT).
+    Returns the mutation score (``killed / mutants``), or ``None`` when no target file could be
+    identified. Advisory only: it never gates the run.
     """
     target = _impl_target_file(config, work)
     if target is None:
@@ -902,17 +933,36 @@ def _run_mutation_audit(
     except OSError:
         return None
 
+    backup_path = _mutation_backup_path(state, work, target)
+    try:
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path.write_text(original, encoding="utf-8")
+    except OSError:
+        # Can't guarantee a crash-safe restore for this file -> skip the (advisory-only) audit
+        # this iteration rather than risk mutating it with no durable way back.
+        return None
+
     def run_tests(mutated_source: str) -> bool:
-        """Write the mutant, run the gate, ALWAYS restore the original (bulletproof)."""
+        """Write the mutant, run the gate, ALWAYS restore from the durable on-disk backup."""
         try:
             target.write_text(mutated_source, encoding="utf-8")
             g = run_gate(stages, str(work))
             return bool(g["green"])
         finally:
-            # Restore unconditionally — never leave the file mutated, even on exception.
-            target.write_text(original, encoding="utf-8")
+            # Restore from the ON-DISK backup (not the in-memory `original` string) — the file on
+            # disk, not the process's memory, is what survives a hard kill.
+            target.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    audit = mutation_audit(original, run_tests)
+    try:
+        audit = mutation_audit(original, run_tests)
+    finally:
+        # Every run_tests call already restored `target` from the backup; the audit is now done
+        # (or raised) with the file back to `original`. Delete the backup — a SURVIVING backup is
+        # exactly the signal _recover_mutation_backups looks for on the next INIT.
+        try:
+            backup_path.unlink()
+        except OSError:
+            pass
     score = audit["score"]
     # Additive `mutation` log event (NOT in the golden corpus; reducer ignores unknown events).
     emit(
@@ -994,7 +1044,27 @@ def _append_progress(progress_path: Path, text: str) -> None:
     write_text(progress_path, existing + text)
 
 
-def _write_checkpoint(checkpoint_path: Path, stage: str, branch, merge_base, cum: float) -> None:
+def _resume_command(config: EngineConfig, state: Path, work: Path) -> str:
+    """Reconstruct the ``loop`` command that resumes THIS run (checkpoint ``resume``, PROTOCOL
+    §7). Mirrors :func:`loop.bmad.driver._resume_command`: carries the REAL task/cwd/state-dir
+    (not a hardcoded placeholder) and, when the run was launched with one, re-points at
+    ``--loop-json`` so tuning that has no other CLI surface (e.g. custom gate stages, verify
+    contract) survives a resume/Reignite instead of silently reverting to defaults.
+    """
+
+    def q(value: object) -> str:
+        s = str(value)
+        return f'"{s}"' if (" " in s or "\t" in s) else s
+
+    parts = ["loop", "--task", q(config.task), "--cwd", q(work), "--state-dir", q(state)]
+    if config.loop_json:
+        parts += ["--loop-json", q(config.loop_json)]
+    return " ".join(parts)
+
+
+def _write_checkpoint(
+    checkpoint_path: Path, stage: str, branch, merge_base, cum: float, resume: str
+) -> None:
     """Write a PROTOCOL §7 checkpoint.json via the pure builder + the logio writer."""
     cp = new_checkpoint(
         stage=stage,
@@ -1002,7 +1072,7 @@ def _write_checkpoint(checkpoint_path: Path, stage: str, branch, merge_base, cum
         branch=branch or "",
         merge_base=merge_base or "",
         cum_usd=cum,
-        resume="loop --task TASK.md",
+        resume=resume,
     )
     write_checkpoint(checkpoint_path, cp)
 

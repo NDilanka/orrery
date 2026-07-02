@@ -10,12 +10,13 @@
   type Pill = { label: string; cls: string };
   const pill = $derived.by<Pill>((): Pill => {
     const rest = s.run.restState;
+    if (rest === 'failed-dark') return { label: 'FAILED', cls: 'failed' };
     if (rest === 'certified-done') return { label: 'CERTIFIED DONE', cls: 'done' };
     if (rest === 'stopped-ember') return { label: 'BANKED EMBER', cls: 'ember' };
     if (rest === 'quota-frost') return { label: 'POLAR NIGHT', cls: 'frost' };
     if (rest === 'handoff-beacon') return { label: 'NEEDS A HUMAN', cls: 'beacon' };
     if (s.run.status === 'running') return { label: 'RUNNING', cls: 'running' };
-    if (s.run.status === 'error') return { label: 'CRASHED', cls: 'beacon' };
+    if (s.run.status === 'error') return { label: 'FAILED', cls: 'failed' };
     if (s.run.status === 'quota-wait') return { label: 'POLAR NIGHT', cls: 'frost' };
     return { label: 'IDLE', cls: 'idle' };
   });
@@ -200,6 +201,13 @@
     background: color-mix(in srgb, var(--crimson) 16%, transparent);
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--crimson) 45%, transparent);
     animation: beaconBreathe 2.2s ease-in-out infinite;
+  }
+  /* the crashed state — crimson like beacon, but STEADY (no breathing). failed-dark
+     reads as dim/dead (no glow), not an urgent call to act right now. */
+  .pill.failed {
+    color: var(--crimson);
+    border-color: var(--crimson);
+    background: color-mix(in srgb, var(--crimson) 14%, transparent);
   }
   .pill.idle {
     color: var(--text-dim);

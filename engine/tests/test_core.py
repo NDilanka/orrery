@@ -18,6 +18,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from loop import core
 from loop.config import (
     CostConfig,
     EngineConfig,
@@ -276,3 +277,277 @@ def test_concurrency_lock_refuses_second_run(tmp_path):
     finally:
         holder.terminate()
         holder.wait()
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — checkpoint resume-command fidelity (loop.core._resume_command)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_command_carries_real_task_cwd_state_dir():
+    config = EngineConfig(task="TASK.md")
+    cmd = core._resume_command(config, Path("D:/state"), Path("D:/work"))
+    assert cmd.startswith("loop ")
+    assert "--task TASK.md" in cmd
+    assert "--cwd" in cmd and str(Path("D:/work")) in cmd
+    assert "--state-dir" in cmd and str(Path("D:/state")) in cmd
+    assert "--loop-json" not in cmd  # none configured -> stays off the command
+
+
+def test_resume_command_includes_loop_json_when_configured():
+    config = EngineConfig(task="TASK.md")
+    config.loop_json = "D:/cfg/my engine.json"  # a path with a space, needs quoting
+    cmd = core._resume_command(config, Path("D:/state"), Path("D:/work"))
+    assert '--loop-json "D:/cfg/my engine.json"' in cmd
+
+
+def test_checkpoint_resume_string_roundtrips_loop_json_end_to_end(tmp_path):
+    """A launch with --loop-json must survive into the checkpoint's `resume` string (Task 5) —
+    the SAME gap BMAD's _resume_command had, fixed the same way for the generic driver."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+    config.loop_json = str(tmp_path / "my-engine.json")
+
+    rc = run_loop(config, runner=FixOnIter2Runner(repo), state_dir=state, cwd=repo)
+    assert rc == 0
+
+    cp = json.loads((state / "checkpoint.json").read_text(encoding="utf-8"))
+    assert "--loop-json" in cp["resume"]
+    assert str(tmp_path / "my-engine.json").replace("\\", "/") in cp["resume"].replace("\\", "/")
+    assert f"--state-dir {state}" in cp["resume"] or f'--state-dir "{state}"' in cp["resume"]
+
+
+def test_checkpoint_resume_string_omits_loop_json_when_none_used(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)  # config.loop_json defaults to ""
+
+    rc = run_loop(config, runner=FixOnIter2Runner(repo), state_dir=state, cwd=repo)
+    assert rc == 0
+    cp = json.loads((state / "checkpoint.json").read_text(encoding="utf-8"))
+    assert "--loop-json" not in cp["resume"]
+
+
+# ---------------------------------------------------------------------------
+# Task 1a — per-iteration wall-clock timeout threaded into the execute call
+# ---------------------------------------------------------------------------
+
+
+class RecordingTimeoutRunner(AgentRunner):
+    """Fixes target.txt on call 2 (like FixOnIter2Runner) but records timeout_sec per call."""
+
+    name = "mock-record-timeout"
+
+    def __init__(self, repo: Path):
+        self.repo = repo
+        self.calls = 0
+        self.timeouts: list[int] = []
+
+    def run(self, *, prompt, model, allowed_tools, permission_mode, max_turns, cwd,
+            timeout_sec=0, resume_session=None, output_format="json"):
+        self.calls += 1
+        self.timeouts.append(timeout_sec)
+        if self.calls >= 2:
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")
+        return AgentResult(raw="{}", text="worked", cost_usd=0.01)
+
+
+def test_iter_timeout_min_default_threads_3600_sec_to_runner(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+    assert config.iter_timeout_min == 60  # the EngineConfig default
+    runner = RecordingTimeoutRunner(repo)
+
+    rc = run_loop(config, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+    assert runner.timeouts == [60 * 60, 60 * 60]
+
+
+def test_iter_timeout_min_zero_disables_the_cap(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+    config.iter_timeout_min = 0
+    runner = RecordingTimeoutRunner(repo)
+
+    rc = run_loop(config, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+    assert runner.timeouts == [0, 0]
+
+
+def test_iter_timeout_min_custom_value_threads_through(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+    config.iter_timeout_min = 5
+    runner = RecordingTimeoutRunner(repo)
+
+    rc = run_loop(config, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+    assert runner.timeouts == [300, 300]
+
+
+def test_iter_timeout_hit_follows_the_existing_phase_timeout_path(tmp_path):
+    """A runner that reports timed_out=True follows the SAME existing path a hung-runner
+    timeout always did (phase-timeout event, iteration treated as unproductive) — Task 1a only
+    threads the real config value in; the timeout-handling semantics are untouched."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=3)
+    config.iter_timeout_min = 1
+
+    class TimingOutRunner(AgentRunner):
+        name = "mock-timeout"
+
+        def run(self, *, prompt, model, allowed_tools, permission_mode, max_turns, cwd,
+                timeout_sec=0, resume_session=None, output_format="json"):
+            return AgentResult(raw="", text="", timed_out=True)
+
+    rc = run_loop(config, runner=TimingOutRunner(), state_dir=state, cwd=repo)
+    assert rc == 1
+    events = _events(state / "log.jsonl")
+    timeouts = [e for e in events if e["event"] == "phase-timeout"]
+    assert len(timeouts) == 3
+    assert timeouts[0]["timeoutSec"] == 60
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — crash-safe mutation audit (durable on-disk backup + INIT recovery)
+# ---------------------------------------------------------------------------
+
+
+def _mutation_gate_stages():
+    """Gate stages for the mutation-audit tests: always green (so every mutant 'survives'
+    unless the caller's probe raises), used with a callable command like _make_gate."""
+    return [{"name": "test", "command": lambda: ("1 pass 0 fail", 0)}]
+
+
+def test_mutation_audit_writes_a_durable_backup_then_cleans_it_up(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    target = repo / "target.txt"
+    target.write_text("x = 1\nif x == 1:\n    pass\n", encoding="utf-8")
+
+    seen_backup: dict = {}
+
+    def probe_gate():
+        # Called from inside run_tests -> the on-disk backup must exist here, holding the
+        # ORIGINAL content, while `target` itself has just been overwritten with the mutant.
+        backup = core._mutation_backup_path(state, repo, target)
+        seen_backup["exists_during"] = backup.exists()
+        seen_backup["content_during"] = backup.read_text(encoding="utf-8") if backup.exists() else None
+        return ("1 pass 0 fail", 0)  # green -> the mutant "survives"
+
+    stages = [{"name": "test", "command": probe_gate}]
+    config = EngineConfig(task="TASK.md")
+
+    score = core._run_mutation_audit(config, stages, repo, 1, lambda e: None, state)
+
+    assert seen_backup["exists_during"] is True
+    assert seen_backup["content_during"] == "x = 1\nif x == 1:\n    pass\n"
+    assert score is not None
+    # cleaned up: no leftover backup, target restored to its original content
+    backup = core._mutation_backup_path(state, repo, target)
+    assert not backup.exists()
+    assert target.read_text(encoding="utf-8") == "x = 1\nif x == 1:\n    pass\n"
+
+
+def test_mutation_audit_restores_target_even_when_the_gate_raises(tmp_path):
+    """Any exception inside run_tests still restores from the ON-DISK backup via `finally` —
+    proving the backup (not the in-memory `original` string) is what's used for the restore."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    target = repo / "target.txt"
+    original = "x = 1\nif x == 1:\n    pass\n"
+    target.write_text(original, encoding="utf-8")
+
+    def boom_gate():
+        raise RuntimeError("simulated gate crash mid-mutation")
+
+    stages = [{"name": "test", "command": boom_gate}]
+    config = EngineConfig(task="TASK.md")
+
+    try:
+        core._run_mutation_audit(config, stages, repo, 1, lambda e: None, state)
+    except RuntimeError:
+        pass  # the gate's own exception is allowed to propagate; what matters is the restore
+
+    assert target.read_text(encoding="utf-8") == original
+    backup = core._mutation_backup_path(state, repo, target)
+    assert not backup.exists()  # the outer finally still cleaned it up
+
+
+def test_recover_mutation_backups_restores_a_leftover_backup_at_init(tmp_path):
+    """Simulates a hard-kill mid-mutation: a backup was written but never cleaned up because
+    the process died before its in-process `finally` ran. The NEXT INIT must restore it."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    progress_path = state / "progress.md"
+
+    target = repo / "target.txt"
+    original = "ORIGINAL\n"
+    target.write_text(original, encoding="utf-8")
+
+    backup = state / "mutation-backup" / "target.txt"
+    backup.parent.mkdir(parents=True)
+    backup.write_text(original, encoding="utf-8")
+    # simulate the crash: the file was left mutated on disk
+    target.write_text("MUTATED-AND-BROKEN\n", encoding="utf-8")
+
+    core._recover_mutation_backups(state, repo, progress_path)
+
+    assert target.read_text(encoding="utf-8") == original
+    assert not backup.exists()
+    assert "Mutation-audit recovery" in (progress_path.read_text(encoding="utf-8") or "")
+
+
+def test_recover_mutation_backups_is_a_no_op_when_none_exist(tmp_path):
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    progress_path = state / "progress.md"
+    core._recover_mutation_backups(state, repo, progress_path)  # must not raise
+    assert not progress_path.exists()
+
+
+def test_run_loop_recovers_leftover_mutation_backup_before_baseline_gate(tmp_path):
+    """End-to-end: a leftover backup from a previous hard crash is restored at INIT, BEFORE the
+    baseline gate reads the tree — so a stale-mutated target.txt doesn't corrupt the baseline."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+
+    # target.txt already contains "FIXED" in the real repo (a crash happened AFTER the agent's
+    # real fix landed, but mid a later mutation-audit pass that mutated it back to something
+    # broken and never got to restore it).
+    (repo / "target.txt").write_text("FIXED\n", encoding="utf-8")
+    backup = state / "mutation-backup" / "target.txt"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("FIXED\n", encoding="utf-8")
+    (repo / "target.txt").write_text("BROKEN-BY-CRASHED-MUTATION\n", encoding="utf-8")
+
+    gate = _make_gate(repo)
+    config = _config(repo, gate, max_iters=5)
+
+    # Already-green baseline (once recovered) -> a clean green stop with NO runner calls.
+    class ExplodingRunner(AgentRunner):
+        name = "boom"
+
+        def run(self, **kwargs):  # pragma: no cover - must not be called
+            raise AssertionError("runner must not run: baseline should already be green")
+
+    rc = run_loop(config, runner=ExplodingRunner(), state_dir=state, cwd=repo)
+    assert rc == 0
+    assert (repo / "target.txt").read_text(encoding="utf-8") == "FIXED\n"
+    assert not backup.exists()

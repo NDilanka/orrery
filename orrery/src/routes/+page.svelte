@@ -233,6 +233,35 @@
     e.preventDefault();
   }
 
+  // ── Cosmos auto-refresh ─────────────────────────────────────────────────
+  // load() used to run only on mount + backToCosmos, so a roster left open
+  // overnight (a real desktop app, not a one-shot preview) went stale — a loop
+  // could finish, crash, or need a human and the Cosmos would never say so.
+  // Poll gently while actually AT the Cosmos and the source is live (never
+  // replay/dev fixtures, which don't change); skip while the Tuning Console is
+  // open (an editing user shouldn't have the roster churn under them) and
+  // never overlap an in-flight load.
+  const COSMOS_POLL_MS = 5000;
+  function cosmosShouldPoll(): boolean {
+    return (
+      browser && view === 'cosmos' && cosmosStore.source === 'tauri' && !cosmosStore.console
+    );
+  }
+  function refreshCosmosIfDue() {
+    if (cosmosShouldPoll() && !cosmosStore.loading) void cosmosStore.load();
+  }
+  $effect(() => {
+    if (!cosmosShouldPoll()) return;
+    const id = setInterval(refreshCosmosIfDue, COSMOS_POLL_MS);
+    return () => clearInterval(id);
+  });
+  // also catch up the instant the window regains focus (e.g. after being away)
+  $effect(() => {
+    if (!browser) return;
+    window.addEventListener('focus', refreshCosmosIfDue);
+    return () => window.removeEventListener('focus', refreshCosmosIfDue);
+  });
+
   onMount(() => {
     mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
     const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
@@ -325,7 +354,7 @@
 
         <!-- mode toggle + ws freshness badge (System altitude only) -->
         <ModeBar canRewind={!!playback} />
-        <StaleBadge status={wsStatus} />
+        <StaleBadge status={wsStatus} {transportKind} />
         {/if}
       </div>
     {/if}
