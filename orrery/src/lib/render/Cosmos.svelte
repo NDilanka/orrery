@@ -31,6 +31,15 @@
   import { fmtRelative } from '../timefmt';
   import { restColor, stateKey, stateGlyph, stateLabel } from '../palette';
   import { initTheme, FALLBACK } from '../theme';
+  import {
+    makeGlowTexture,
+    makeVignetteTexture,
+    makeStarfieldLayers,
+    muteColor,
+    mixColor,
+    sizeGlowSprite,
+    type GlowTexture,
+  } from './fx';
 
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
@@ -156,29 +165,59 @@
       }
       host.appendChild(app.canvas);
 
+      // ── shared fx (plan §M2.9 "Cosmos parity"): the SAME glow-texture builder
+      // Observatory uses (fx.ts), built once against the real renderer — every glyph's
+      // halo below is a tinted/scaled Sprite draw instead of the old fixed 3-ring
+      // stacked-alpha-circle falloff.
+      const glowTex: GlowTexture = makeGlowTexture(PIXI, app.renderer);
+
       const world = new PIXI.Container();
       app.stage.addChild(world);
-      const starfield = new PIXI.Graphics();
-      const g = new PIXI.Graphics(); // all glyphs, redrawn each frame
-      world.addChild(starfield, g);
+      const starfieldFar = new PIXI.Graphics(); // M2.9: two-layer parallax field, far (dim/cool/small)
+      const starfieldNear = new PIXI.Graphics(); // near (brighter/bigger)
+      const glowsC = new PIXI.Container(); // pooled per-glyph glow sprites (screen blend), BEHIND the discs
+      const g = new PIXI.Graphics(); // all glyph discs/silhouettes/rings, redrawn each frame
+      world.addChild(starfieldFar, starfieldNear, glowsC, g);
+
+      // M2.9: pooled glow sprite per loop id — mirrors Observatory's per-planet glow pool
+      // (plan §M2.7 "pool Graphics keyed by o.key") so glow sprites aren't torn down/rebuilt
+      // every frame; stale ids (a loop removed from the roster) get pruned in tick().
+      const glowPool = new Map<string, any>();
+      function getGlowSprite(id: string) {
+        let s = glowPool.get(id);
+        if (!s) {
+          s = new PIXI.Sprite(glowTex.texture);
+          s.anchor.set(0.5);
+          s.blendMode = 'screen';
+          glowsC.addChild(s);
+          glowPool.set(id, s);
+        }
+        return s;
+      }
 
       let w = host.clientWidth || 800;
       let h = host.clientHeight || 600;
 
-      function drawStarfield(W: number, H: number) {
-        starfield.clear();
-        let seed = 9173;
-        const rnd = () => {
-          seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-          return seed / 0x7fffffff;
-        };
-        for (let i = 0; i < 260; i++) {
-          starfield
-            .circle(rnd() * W, rnd() * H, rnd() * 1.1 + 0.2)
-            .fill({ color: C.starlight, alpha: rnd() * 0.45 + 0.04 });
+      // ── M2.9: two-tier parallax starfield data (fx.ts, same params as Observatory) —
+      // regenerated on resize; the per-frame twinkle/drift redraw lives in tick(). ──
+      let starData: ReturnType<typeof makeStarfieldLayers>;
+      const farTint = mixColor(C.starlight, C.frost, 0.35); // far layer reads slightly cool
+
+      // ── M2.9: cached vignette (rebuild on resize only) ──
+      let vignetteSprite: any = null;
+      function rebuildVignette(vw: number, vh: number) {
+        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh);
+        if (vignetteSprite) {
+          const old = vignetteSprite.texture;
+          vignetteSprite.texture = tex;
+          old.destroy(true);
+        } else {
+          vignetteSprite = new PIXI.Sprite(tex);
+          world.addChild(vignetteSprite); // top-most layer, below the DOM station labels
         }
       }
-      drawStarfield(w, h);
+      starData = makeStarfieldLayers(w, h);
+      rebuildVignette(w, h);
 
       // ── layout: a balanced, CENTRED constellation that reflows on resize ──
       // Cell size is CAPPED so a couple of loops cluster together in the middle
@@ -224,7 +263,8 @@
       const onResize = () => {
         w = host.clientWidth || 800;
         h = host.clientHeight || 600;
-        drawStarfield(w, h);
+        starData = makeStarfieldLayers(w, h);
+        rebuildVignette(w, h);
         layout();
       };
       const ro = new ResizeObserver(onResize);
@@ -282,11 +322,32 @@
           Math.round(lerp(ab, bb, k))
         );
       }
+      // M2.9/M2.7: dt-correct a per-60fps-frame lerp constant against the REAL frame delta
+      // (`dt`, ms) so easing speed no longer depends on the display's refresh rate — same
+      // recipe as Observatory. k_dt = 1 − (1 − k60)^(dt/16.67); reduces to exactly k60 at a
+      // nominal 60fps frame.
+      function kdt(k60: number, dt: number): number {
+        return 1 - Math.pow(1 - k60, dt / 16.67);
+      }
+
+      // M2.9: two-tier color muting — large fills (the glyph disc/silhouette body) move to
+      // a "base" tier muted toward void; small accents (inner highlight circles, crack/notch
+      // strokes, the plinth ticks) keep the un-muted "core" hue. Same values as Observatory's
+      // star (MUTE_FILL/MUTE_GLOW) — these hues (ember/frost/crimson/green/amber via
+      // restColor/palette.ts) are the per-silhouette identity hues fx.ts's `muteColor` doc
+      // comment calls out by name, not the generic run/ok/warn/err/idle status vocabulary.
+      const MUTE_FILL = 0.16;
+      const MUTE_GLOW = 0.4;
 
       let t = 0;
       let lastCount = -1;
+      let lastTime = 0; // real ms timestamp of the previous frame (dt-correction)
       const tick = () => {
         if (destroyed) return;
+        const now = performance.now();
+        // clamp a huge gap (backgrounded tab) so returning doesn't produce one giant step
+        const dt = lastTime ? Math.min(64, now - lastTime) : 16.67;
+        lastTime = now;
         // single reduced-motion source (uiStore); read fresh each frame, like the Observatory.
         const reduced = uiStore.reducedMotion;
         const loops = cosmosStore.loops;
@@ -294,7 +355,38 @@
           layout();
           lastCount = loops.length;
         }
-        if (!reduced) t += 0.016;
+        if (!reduced) t += dt / 1000; // real elapsed seconds — every sin(t*…) below is
+        // therefore already dt-correct without further changes (same as Observatory's vis.t).
+
+        // ── M2.9: two-layer parallax starfield (far: dim/cool/small, near: bigger/brighter)
+        // — per-star twinkle phase + a slow differential drift between layers; both freeze
+        // under reduced-motion (same recipe as Observatory). ──
+        const driftFar = reduced ? 0 : (t * 3) % w;
+        const driftNear = reduced ? 0 : (t * 5.5) % w;
+        starfieldFar.clear();
+        for (const st of starData.far) {
+          const tw = reduced ? 1 : 0.4 + Math.abs(Math.sin(t * 0.9 + st.phase)) * 0.6;
+          let x = st.x + driftFar;
+          if (x > w) x -= w;
+          starfieldFar.circle(x, st.y, st.r).fill({ color: farTint, alpha: st.alpha * tw });
+        }
+        starfieldNear.clear();
+        for (const st of starData.near) {
+          const tw = reduced ? 1 : 0.4 + Math.abs(Math.sin(t * 0.9 + st.phase)) * 0.6;
+          let x = st.x + driftNear;
+          if (x > w) x -= w;
+          starfieldNear.circle(x, st.y, st.r).fill({ color: C.starlight, alpha: st.alpha * tw });
+        }
+
+        // prune glow sprites for loops no longer in the roster
+        const activeIds = new Set(loops.map((l) => l.id));
+        for (const [id, s] of glowPool) {
+          if (!activeIds.has(id)) {
+            s.destroy();
+            glowPool.delete(id);
+          }
+        }
+
         g.clear();
         hits.clear();
 
@@ -313,12 +405,22 @@
             e = { glow: 0, col: target };
             ease.set(l.id, e);
           }
-          e.col = lerpColor(e.col, target, 0.08);
-          // running = warm live glow; idle = dim ember; rest-states sit steady.
-          // failed-dark gets NO glow (it should read dead, not radiant).
-          const wantGlow = running ? 1 : l.restState === 'failed-dark' ? 0.08 : l.restState ? 0.5 : 0.18;
-          e.glow = lerp(e.glow, wantGlow, 0.06);
-          const col = e.col;
+          e.col = lerpColor(e.col, target, kdt(0.08, dt));
+          // running / needs-you (handoff beacon, active error) = stronger glow; calm
+          // done/paused rest-states get a faint halo at most; failed-dark gets NEXT TO
+          // NO glow (it must read dead, not radiant) — plan §M2.9/M2.1.
+          const wantGlow = running
+            ? 1
+            : l.restState === 'failed-dark'
+              ? 0.05
+              : l.needsYou
+                ? 0.95
+                : l.restState
+                  ? 0.3
+                  : 0.18;
+          e.glow = lerp(e.glow, wantGlow, kdt(0.06, dt));
+          const col = e.col; // the saturated "core" hue (restColor's silhouette identity)
+          const base = muteColor(col, C.void, MUTE_FILL); // the muted "base" hue — large fills
 
           // breathing only while running (steady state never animates, §F)
           const pulse =
@@ -337,17 +439,24 @@
             g.circle(cx, cy, hr).stroke({ width: 1.2, color: hcol, alpha: 0.55 });
           }
 
-          // ── glow / corona ──
-          for (let k = 3; k >= 1; k--) {
-            g.circle(cx, cy, r + k * 5).fill({ color: col, alpha: 0.05 * (4 - k) * e.glow });
-          }
+          // ── glow / corona (plan §M2.9): a tinted glow-texture sprite, screen-blended,
+          // replacing the old fixed 3-ring stacked-alpha falloff. Tint carries the MUTED
+          // base hue (glow always carries the base tint, same rule as Observatory);
+          // size and alpha both track e.glow so failed-dark reads as dead, not radiant. ──
+          const glowSprite = getGlowSprite(l.id);
+          sizeGlowSprite(glowSprite, glowTex, cx, cy, r * (2.3 + e.glow * 1.7));
+          glowSprite.tint = muteColor(col, C.void, MUTE_GLOW);
+          glowSprite.alpha = e.glow * 0.7;
 
           // ── the FIVE rest-state silhouettes (greyscale-separable) ──────────
+          // M2.9: EXACT same shapes/motion as before — only the main-body fill moves
+          // to the muted `base` tier; small accents (inner highlight circles, crack/
+          // notch strokes) keep the saturated `col` (core) tier, per plan §M2.2.
           if (l.restState === 'failed-dark') {
             // crashed: a dim crimson disc, no glow (see wantGlow above), cut by a
             // fixed jagged fracture — mirrors the Observatory's star silhouette.
             const flicker = reduced ? 1 : 0.82 + Math.sin(t * 0.55 + i * 0.4) * 0.18;
-            g.circle(cx, cy, r).fill({ color: col, alpha: 0.4 * flicker });
+            g.circle(cx, cy, r).fill({ color: base, alpha: 0.4 * flicker });
             g.circle(cx, cy, r * 0.5).fill({ color: C.void, alpha: 0.5 });
             const crack: [number, number][] = [
               [-0.05, -0.95],
@@ -372,16 +481,16 @@
               const rr = s % 2 === 0 ? r : r * 0.5;
               g.lineTo(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr);
             }
-            g.fill({ color: col, alpha: 0.9 });
-            g.circle(cx, cy, r * 0.35).fill({ color: C.frost, alpha: 0.5 });
+            g.fill({ color: base, alpha: 0.9 });
+            g.circle(cx, cy, r * 0.35).fill({ color: C.frost, alpha: 0.6 });
           } else if (l.restState === 'stopped-ember') {
             // banked ember: warm dome with a bank line
-            g.circle(cx, cy, r).fill({ color: col, alpha: 0.85 });
+            g.circle(cx, cy, r).fill({ color: base, alpha: 0.85 });
             g.rect(cx - r, cy + r * 0.15, r * 2, r * 0.55).fill({ color: C.void, alpha: 0.55 });
             g.circle(cx, cy - r * 0.15, r * 0.5).fill({ color: C.ember, alpha: 0.8 });
           } else if (l.restState === 'handoff-beacon') {
             // distress beacon: rotating amber→crimson wedge (slow = urgency)
-            g.circle(cx, cy, r).fill({ color: col, alpha: 0.92 });
+            g.circle(cx, cy, r).fill({ color: base, alpha: 0.92 });
             const sweep = reduced ? 0 : t * 1.0;
             const beamR = r * 2.6;
             const wedge = 0.6;
@@ -395,8 +504,9 @@
             g.fill({ color: C.amber, alpha: 0.12 });
             g.circle(cx, cy, r * 0.55).fill({ color: C.crimson, alpha: 0.75 });
           } else if (l.restState === 'certified-done') {
-            // sealed: calm green disc + brass certification ring + notches
-            g.circle(cx, cy, r).fill({ color: col, alpha: 0.96 });
+            // sealed: calm green disc + brass certification ring + notches. Brass stays
+            // LITERAL brass (identity/certification accent, never muted — plan §1).
+            g.circle(cx, cy, r).fill({ color: base, alpha: 0.96 });
             g.circle(cx, cy, r * 0.6).fill({ color: C.starlight, alpha: 0.4 });
             g.circle(cx, cy, r + 4).stroke({ width: 1.6, color: C.brass, alpha: 0.85 });
             for (let s = 0; s < 8; s++) {
@@ -406,9 +516,11 @@
                 .stroke({ width: 1, color: C.brass, alpha: 0.7 });
             }
           } else {
-            // running / idle: live (or dim) star core
-            g.circle(cx, cy, r).fill({ color: col, alpha: running ? 0.98 : 0.6 });
-            g.circle(cx, cy, r * 0.55).fill({ color: C.starlight, alpha: running ? 0.5 : 0.22 });
+            // running / idle: a muted base disc + a smaller bright core — the same "light
+            // source in an atmosphere" anatomy as Observatory's star, replacing the old
+            // flat full-saturation disc.
+            g.circle(cx, cy, r).fill({ color: base, alpha: running ? 0.92 : 0.55 });
+            g.circle(cx, cy, r * 0.5).fill({ color: C.starlight, alpha: running ? 0.55 : 0.2 });
           }
 
           // a tiny "system" plinth (three faint base ticks). Names live in the
@@ -549,7 +661,12 @@
 
   <!-- ── overlays (HTML, so they survive any canvas suppression) ──────────── -->
   {#if cosmosStore.loading}
-    <div class="loading mono" role="status">loading the cosmos…</div>
+    <!-- M3.2: the standard empty-state pattern — dim glyph + one line, on the shared
+         .floating-card surface (no action: loading is transient, nothing to do). -->
+    <div class="empty-state floating-card" role="status">
+      <span class="empty-glyph" aria-hidden="true">✧</span>
+      <p class="empty-line mono">loading the cosmos…</p>
+    </div>
   {:else if cosmosStore.loops.length === 0 && !onboardingDismissed}
     <!-- U3 Task 4: a compact 4-step checklist, not a wizard. Only step 1 is a button —
          steps 2-4 are one-line previews of what happens next, so the foot-gun catches
@@ -600,7 +717,8 @@
   {/if}
 
   {#if cosmosStore.error}
-    <div class="errline" role="alert">
+    <div class="errline floating-card" role="alert">
+      <span class="err-glyph" aria-hidden="true">⚠</span>
       <span class="emsg mono">couldn't load the cosmos</span>
       <button class="retry" onclick={() => cosmosStore.load()}>retry</button>
     </div>
@@ -643,7 +761,7 @@
   .station .edit {
     pointer-events: auto;
     border: 1px solid var(--hairline);
-    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
     color: var(--starlight);
     cursor: pointer;
     backdrop-filter: blur(6px);
@@ -665,7 +783,7 @@
   }
   .station .enter:hover {
     border-color: color-mix(in srgb, var(--brass) 50%, transparent);
-    background: color-mix(in srgb, var(--brass) 12%, var(--panel));
+    background: color-mix(in srgb, var(--brass) 12%, var(--surface-panel));
   }
   .station.needs .enter {
     border-color: color-mix(in srgb, var(--crimson) 45%, var(--hairline));
@@ -815,7 +933,7 @@
     background: var(--crimson);
     color: var(--void);
     font-weight: 700;
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1;
   }
   .needsbadge .nbcount {
@@ -901,24 +1019,33 @@
   /* (the old roster-row, status-dot and hover-card styles were removed —
      the per-glyph stations above replace them entirely) */
 
-  /* ── overlays ─────────────────────────────────────────────────────────── */
-  .loading {
+  /* ── overlays: the standard empty-state pattern (M3.2) — a dim glyph, one line,
+       an optional primary action, on the shared .floating-card surface. Loading and
+       error both use it (error adds the retry action); the onboarding checklist below
+       is the richer multi-step variant of the same surface. ── */
+  .empty-state {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    color: var(--text-dim);
-    font-size: var(--text-sm);
-    letter-spacing: 0.1em;
-  }
-  .empty {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 320px;
+    padding: var(--space-4) var(--space-5);
     text-align: center;
-    max-width: 360px;
-    padding: var(--space-5) var(--space-6);
+  }
+  .empty-glyph {
+    font-size: var(--text-xl);
+    line-height: 1;
+    color: var(--text-faint);
+  }
+  .empty-line {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-meta);
+    letter-spacing: 0.02em;
   }
   .etitle {
     margin: 0 0 var(--space-1);
@@ -958,7 +1085,7 @@
     border: 1px solid var(--hairline);
     color: var(--text-faint);
     border-radius: var(--radius-pill);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     cursor: pointer;
     pointer-events: auto;
   }
@@ -989,7 +1116,7 @@
     border: 1px solid var(--hairline);
     border-radius: 50%;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-meta);
   }
   .stepbody {
@@ -1029,6 +1156,12 @@
   .stepbtn:hover {
     background: color-mix(in srgb, var(--brass) 24%, transparent);
   }
+  /* M3.2: reskinned onto .floating-card's surface material (gradient + shadow) for
+     consistency with the onboarding card and the rest of the app's modal/popover
+     surfaces — position/pill-shape and the crimson error tint stay bespoke (this is
+     a non-blocking banner that can sit atop an already-populated roster, not a
+     takeover), and the .floating-card rule is deliberately overridden below (later
+     in source order = wins the cascade at equal specificity). */
   .errline {
     position: absolute;
     top: var(--chrome-inset);
@@ -1036,13 +1169,16 @@
     transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-2);
     padding: var(--space-1) var(--space-3);
-    background: var(--panel);
-    border: 1px solid color-mix(in srgb, var(--crimson) 40%, var(--panel-edge));
     border-radius: var(--radius-pill);
-    backdrop-filter: blur(8px);
+    border-color: color-mix(in srgb, var(--crimson) 40%, var(--panel-edge));
     z-index: var(--z-scene-overlay);
+  }
+  .err-glyph {
+    font-size: var(--text-sm);
+    color: var(--crimson);
+    line-height: 1;
   }
   .emsg {
     font-size: var(--text-xs);
