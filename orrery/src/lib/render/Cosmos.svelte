@@ -38,6 +38,11 @@
   // "station" labels read these to sit directly under their glyph.
   let positions = $state<{ id: string; x: number; y: number; r: number }[]>([]);
 
+  // U3 Task 4 — the first-run onboarding checklist card (only when zero loops exist).
+  // Session-scoped dismiss: a fresh mount always re-offers it, but the user can close
+  // it without creating a loop and it stays gone for the rest of this visit.
+  let onboardingDismissed = $state(false);
+
   const C = {
     void: 0x070912,
     brass: 0xc9a24b,
@@ -594,10 +599,52 @@
   <!-- ── overlays (HTML, so they survive any canvas suppression) ──────────── -->
   {#if cosmosStore.loading}
     <div class="loading mono" role="status">loading the cosmos…</div>
-  {:else if cosmosStore.loops.length === 0}
-    <div class="empty" role="status">
+  {:else if cosmosStore.loops.length === 0 && !onboardingDismissed}
+    <!-- U3 Task 4: a compact 4-step checklist, not a wizard. Only step 1 is a button —
+         steps 2-4 are one-line previews of what happens next, so the foot-gun catches
+         (describe done, test the gate) are visible before the user ever hits them. -->
+    <div class="onboard" role="status">
+      <button class="onboard-x" aria-label="dismiss" onclick={() => (onboardingDismissed = true)}>
+        ✕
+      </button>
       <p class="etitle">No loops yet</p>
-      <p class="esub">Create your first loop to populate the cosmos.</p>
+      <p class="esub">Four steps from an empty cosmos to a running loop.</p>
+      <ol class="steps">
+        <li class="step">
+          <span class="stepnum">1</span>
+          <div class="stepbody">
+            <button class="stepbtn" onclick={() => cosmosStore.igniteNew()}>
+              <span aria-hidden="true">✦</span> Create the loop
+            </button>
+            <p class="stepsub">Opens the Tuning Console — pick a blueprint, calibrate the dials.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="stepnum">2</span>
+          <div class="stepbody">
+            <p class="steptitle">Describe done</p>
+            <p class="stepsub">
+              Write the acceptance criteria and the task spec — right inside the console.
+            </p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="stepnum">3</span>
+          <div class="stepbody">
+            <p class="steptitle">Test your gate</p>
+            <p class="stepsub">
+              ▸ test each gate stage — find a broken command for free, not on iteration 1.
+            </p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="stepnum">4</span>
+          <div class="stepbody">
+            <p class="steptitle">Start it</p>
+            <p class="stepsub">✦ Start inside the System view spawns the engine and the star lights up.</p>
+          </div>
+        </li>
+      </ol>
     </div>
   {/if}
 
@@ -930,6 +977,107 @@
     font-size: var(--text-sm);
     color: var(--text-meta);
     line-height: 1.5;
+  }
+
+  /* ── U3 Task 4: first-run onboarding checklist card ─────────────────────── */
+  .onboard {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(380px, calc(100vw - 2 * var(--space-5)));
+    text-align: left;
+    padding: var(--space-5);
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  }
+  .onboard .etitle,
+  .onboard .esub {
+    text-align: left;
+  }
+  .onboard-x {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-2);
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--text-faint);
+    border-radius: var(--radius-pill);
+    font-size: 10px;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .onboard-x:hover {
+    border-color: var(--crimson);
+    color: var(--crimson);
+  }
+  .steps {
+    list-style: none;
+    margin: var(--space-4) 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+  .stepnum {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-meta);
+  }
+  .stepbody {
+    flex: 1;
+    min-width: 0;
+  }
+  .steptitle {
+    margin: 0 0 2px;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--starlight);
+  }
+  .stepsub {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    line-height: 1.45;
+  }
+  .stepbtn {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-bottom: 3px;
+    padding: var(--space-1) var(--space-3);
+    background: color-mix(in srgb, var(--brass) 14%, transparent);
+    border: 1px solid var(--brass);
+    color: var(--brass);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-grotesk);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-standard);
+  }
+  .stepbtn:hover {
+    background: color-mix(in srgb, var(--brass) 24%, transparent);
   }
   .errline {
     position: absolute;

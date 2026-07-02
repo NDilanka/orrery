@@ -279,6 +279,25 @@ guard_status(loopId, loopsDir) -> { running: bool, pid: number|null, stopPending
 answer_question(loopId, loopsDir, qid, text) -> ()   // A8 — writes <stateDir>/answer.json {qid,kind:'review',a:text}
 // A7 — LAN reach: serves the built SPA + /ws Delta stream + token-gated POST /api/control
 start_lan_server(loopsDir, port?) -> { url, token }   stop_lan_server() -> ()
+// U3 — creation & onboarding: catch foot-guns in the Tuning Console BEFORE the first paid
+// engine iteration. Both take `loopId` (validated via the same `is_safe_loop_id` as the A5
+// CRUD commands) + `loopsDir`.
+write_loop_file(loopId, loopsDir, relPath, content, overwrite?) -> ()
+// Scaffolds a file (typically TASK.md) inside loops/<loopId>/. `relPath` is resolved STRICTLY
+// inside the loop dir: an absolute path or any '..' component anywhere in it is refused (a '.'
+// segment is a harmless no-op). Refuses to clobber an existing file unless `overwrite: true` is
+// passed. Writes atomically (a sibling temp file, then an fs::rename into place).
+probe_command(loopId, loopsDir, command, timeoutMs?) -> { exitCode: number|null, durationMs, tail, timedOut }
+// Runs `command` synchronously through the platform shell (cmd /C on Windows, sh -c elsewhere),
+// in the SAME cwd start_loop/spawn_detached would use (the loop's state dir's parent) when
+// loops/<loopId>/loop.json already exists; falls back to the loop's own base dir (loops/<loopId>/)
+// when it doesn't yet — the Tuning Console's "▸ test" button can probe a gate stage while still
+// authoring a NEW loop's draft, before Ignite ever writes loop.json. Capped at
+// `timeoutMs` (default 60_000, max 300_000 — a larger value is CLAMPED, not rejected); on timeout
+// the process is killed and `exitCode` is null with `timedOut: true`. `tail` is the last ~2000
+// chars of merged stdout+stderr. `command` must be non-empty. Same trust model as `start_loop`:
+// this already spawns commands straight out of the loop's own loop.json gate stages — running one
+// synchronously before the first iteration is not a new capability, just an earlier look at it.
 ```
 
 For dev/replay without Tauri, the frontend also accepts a plain array of events fed through `reduce.ts`.

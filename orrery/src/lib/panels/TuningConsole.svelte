@@ -30,6 +30,7 @@
     projectPreview,
     previewNight,
     validateDraft,
+    isSafeLoopId,
     type BlueprintId,
     type Blueprint,
     type DialState,
@@ -37,7 +38,7 @@
     type GateStageDef,
     type ConsoleInput,
   } from '../blueprints';
-  import { cosmosStore } from '../stores/cosmos.svelte';
+  import { cosmosStore, type ProbeResult } from '../stores/cosmos.svelte';
 
   let {
     mode = 'create',
@@ -149,6 +150,125 @@
   }
   function removeStage(i: number) {
     gateStages = gateStages.filter((_, idx) => idx !== i);
+    // drop any stale probe result for this row + reindex the rest
+    const next: Record<number, ProbeRowState> = {};
+    for (const [k, v] of Object.entries(probeState)) {
+      const idx = Number(k);
+      if (idx === i) continue;
+      next[idx > i ? idx - 1 : idx] = v;
+    }
+    probeState = next;
+  }
+
+  // ── U3 Task 3: probe a gate stage's command BEFORE the first paid iteration ──
+  // "▸ test" runs the stage's command once, synchronously, via probe_command (§6).
+  // Discovering a broken gate command should be free, not cost iteration 1.
+  interface ProbeRowState {
+    running: boolean;
+    result: ProbeResult | null;
+    error: string | null;
+    expanded: boolean;
+  }
+  let probeState = $state<Record<number, ProbeRowState>>({});
+
+  async function testStage(i: number) {
+    const stage = gateStages[i];
+    if (!stage || !stage.command.trim() || probeState[i]?.running) return;
+    const id = (mode === 'edit' && editId ? editId : loopId).trim();
+    if (!isSafeLoopId(id)) {
+      probeState = {
+        ...probeState,
+        [i]: { running: false, result: null, error: 'give the loop a valid id first', expanded: false },
+      };
+      touched = true;
+      return;
+    }
+    probeState = {
+      ...probeState,
+      [i]: { running: true, result: null, error: null, expanded: probeState[i]?.expanded ?? false },
+    };
+    try {
+      const result = await cosmosStore.probeCommand(id, stage.command, 60_000);
+      probeState = {
+        ...probeState,
+        [i]: { running: false, result, error: null, expanded: probeState[i]?.expanded ?? true },
+      };
+    } catch (e) {
+      probeState = {
+        ...probeState,
+        [i]: {
+          running: false,
+          result: null,
+          error: e instanceof Error ? e.message : String(e),
+          expanded: false,
+        },
+      };
+    }
+  }
+  function toggleProbeExpanded(i: number) {
+    const cur = probeState[i];
+    if (!cur) return;
+    probeState = { ...probeState, [i]: { ...cur, expanded: !cur.expanded } };
+  }
+
+  // ── U3 Task 2: scaffold TASK.md from the console's own inputs ──────────────
+  // A fresh loop starts against a spec that matches what the console promised: the
+  // name as title, the acceptance criteria typed above, a context placeholder, and
+  // the gate commands listed. Never clobbers a hand-authored file — write_loop_file
+  // refuses to overwrite without an explicit `overwrite:true`.
+  let taskFileState = $state<'idle' | 'writing' | 'created' | 'exists' | 'error'>('idle');
+  let taskFileError = $state<string | null>(null);
+
+  function buildTaskTemplate(): string {
+    const lines: string[] = [];
+    lines.push(`# ${loopName.trim() || loopId.trim() || 'Untitled loop'}`);
+    lines.push('');
+    lines.push('## Context');
+    lines.push(
+      '_Describe the codebase, constraints, and anything the agent needs to know before it starts. Replace this placeholder._',
+    );
+    lines.push('');
+    lines.push('## Acceptance criteria');
+    const criteria = acceptanceCriteria.map((a) => a.trim()).filter(Boolean);
+    if (criteria.length) {
+      for (const c of criteria) lines.push(`- [ ] ${c}`);
+    } else {
+      lines.push('- [ ] _(none written yet — go back and describe done)_');
+    }
+    lines.push('');
+    lines.push('## Gate');
+    lines.push("The loop is green when every command below exits 0:");
+    const commands = gateStages.map((s) => s.command.trim()).filter(Boolean);
+    if (commands.length) {
+      for (const cmd of commands) lines.push(`- \`${cmd}\``);
+    } else {
+      lines.push('- _(no gate stage commands yet)_');
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  /** Attempt the scaffold write. Never clobbers an existing file unless `overwrite`. */
+  async function scaffoldTaskFile(id: string, overwrite = false) {
+    taskFileState = 'writing';
+    taskFileError = null;
+    const { written, error } = await cosmosStore.writeLoopFile(
+      id,
+      task.trim() || 'TASK.md',
+      buildTaskTemplate(),
+      overwrite,
+    );
+    if (written) {
+      taskFileState = 'created';
+    } else if (error?.includes('already exists')) {
+      taskFileState = 'exists';
+    } else if (error) {
+      taskFileState = 'error';
+      taskFileError = error;
+    } else {
+      // dev (no Tauri): writeLoopFile no-ops with written:false, no error — nothing to report
+      taskFileState = 'idle';
+    }
   }
 
   // ── modal contract: focus move-in / trap / restore (WCAG 2.4.3 + 2.1.2) ─────
@@ -211,6 +331,19 @@
       };
       const def = composeLoopDef(input) as unknown as Record<string, unknown>;
       const { id, persisted } = await cosmosStore.createLoop(def, { mode, editId });
+      // U3 Task 2: a brand-new loop starts against a spec that matches what the console
+      // promised. Only on a freshly PERSISTED create, and only while the task path is
+      // still the default 'TASK.md' — an edit never auto-writes (see the manual
+      // "regenerate" control by the TASK field, which respects a hand-authored file the
+      // same way: write_loop_file never clobbers without an explicit overwrite).
+      if (mode === 'create' && persisted && (task.trim() || 'TASK.md') === 'TASK.md') {
+        await scaffoldTaskFile(id);
+        if (taskFileState === 'created') {
+          // hold the console open just long enough to show the confirmation before the
+          // shell flies into the new System.
+          await new Promise((r) => setTimeout(r, 700));
+        }
+      }
       // Pass mode + whether it actually hit disk so the shell only flies into a System for a
       // NEW, persisted loop — a SAVE (edit) or a dev-mode no-op create stays at the Cosmos.
       onCreated?.(id, { mode, persisted });
@@ -273,24 +406,30 @@
 
   // human-readable settings for the dial aria-valuetext (screen readers hear the
   // actual config the dial currently maps to, not a bare 0–1 number).
+  // Human-readable settings for the dial aria-valuetext. Every value quoted here is a
+  // REAL EngineConfig field (see blueprints.ts's honesty constraint) — the caption
+  // never promises a bundle the engine doesn't actually read.
   const ambitionText = $derived(
     `Ambition: ${finalEngine.models.execute}, ${fmtUsd(finalEngine.cost.ceilingUsd)} ceiling, ${finalEngine.stop.maxIters} iters`,
   );
   const patienceText = $derived(
-    `Patience: ${finalEngine.verify.strictness} verifier, ${finalEngine.regression.strikeBudget} strikes, plateau K ${finalEngine.decide.plateauK}`,
+    `Patience: ${finalEngine.verify.mutationAudit ? `mutation-audit every ${finalEngine.verify.mutationEvery || 1}` : 'mutation-audit off'}, plateau ${finalEngine.stop.plateauLimit}, regress-limit ${finalEngine.stop.regressLimit}`,
   );
   const autonomyText = $derived(
-    `Autonomy: ${finalEngine.qa.humanInLoop ? 'human-in-loop' : 'overnight-auto'}, ${finalEngine.permissionMode}`,
+    `Autonomy: ${finalEngine.permissionMode}, ${finalEngine.maxTurns} turns/phase, ${finalEngine.iterTimeoutMin}m/iter`,
   );
+  // caption-only label (not an emitted config field) — a plain-language read of the
+  // autonomy dial itself, echoing what the bundle amounts to in practice.
+  const autonomyLabel = $derived(dials.autonomy < 0.45 ? 'human-in-loop' : 'overnight-auto');
 
   const DRAWERS: { key: keyof EngineConfig | 'models' | 'tools'; label: string }[] = [
     { key: 'models', label: 'Models' },
     { key: 'cost', label: 'Economy' },
     { key: 'gate', label: 'Gate' },
-    { key: 'regression', label: 'Resilience' },
-    { key: 'quota', label: 'Quota' },
+    { key: 'stop', label: 'Resilience' },
+    { key: 'maxTurns', label: 'Timing' },
     { key: 'allowedTools', label: 'Tools' },
-    { key: 'qa', label: 'Q&A' },
+    { key: 'feedback', label: 'Diagnostics' },
   ];
 
   function fmtUsd(n: number): string {
@@ -352,6 +491,40 @@
         <input class="inp mono" bind:value={task} />
       </label>
     </div>
+
+    <!-- U3 Task 2: TASK.md scaffold feedback. Create mode shows a transient confirmation
+         (set by ignite() just before it closes); edit mode offers an explicit, opt-in
+         regenerate control that never clobbers a hand-authored file without confirming. -->
+    {#if mode === 'edit' && (task.trim() || 'TASK.md') === 'TASK.md'}
+      <div class="taskfile mono">
+        {#if taskFileState === 'idle'}
+          <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId)}>
+            ✎ regenerate TASK.md from these settings
+          </button>
+        {:else if taskFileState === 'writing'}
+          <span class="taskfile-status">writing TASK.md…</span>
+        {:else if taskFileState === 'created'}
+          <span class="taskfile-status ok">✓ TASK.md created</span>
+        {:else if taskFileState === 'exists'}
+          <span class="taskfile-status warn">TASK.md already has content —</span>
+          <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId, true)}>
+            overwrite it
+          </button>
+        {:else if taskFileState === 'error'}
+          <span class="taskfile-status bad">✕ {taskFileError}</span>
+        {/if}
+      </div>
+    {:else if taskFileState === 'writing' || taskFileState === 'created' || taskFileState === 'error'}
+      <div class="taskfile mono">
+        {#if taskFileState === 'writing'}
+          <span class="taskfile-status">writing TASK.md…</span>
+        {:else if taskFileState === 'created'}
+          <span class="taskfile-status ok">✓ TASK.md created</span>
+        {:else}
+          <span class="taskfile-status bad">✕ TASK.md not written: {taskFileError}</span>
+        {/if}
+      </div>
+    {/if}
 
     <!-- blueprint selector -->
     <section class="blueprints">
@@ -418,8 +591,10 @@
             oninput={(e) => (dials = { ...dials, patience: +e.currentTarget.value })}
           />
           <div id="dhint-patience" class="dhint mono">
-            verifier {finalEngine.verify.strictness} · strikes {finalEngine.regression
-              .strikeBudget} · plateau K={finalEngine.decide.plateauK}
+            {finalEngine.verify.mutationAudit
+              ? `audit every ${finalEngine.verify.mutationEvery || 1}`
+              : 'audit off'} · plateau {finalEngine.stop.plateauLimit} · regress-limit {finalEngine
+              .stop.regressLimit}
           </div>
         </div>
 
@@ -439,7 +614,7 @@
             oninput={(e) => (dials = { ...dials, autonomy: +e.currentTarget.value })}
           />
           <div id="dhint-autonomy" class="dhint mono">
-            {finalEngine.qa.humanInLoop ? 'human-in-loop' : 'overnight-auto'} · {finalEngine.permissionMode}
+            {autonomyLabel} · {finalEngine.permissionMode} · {finalEngine.maxTurns} turns/phase · {finalEngine.iterTimeoutMin}m/iter
           </div>
         </div>
       </section>
@@ -496,7 +671,7 @@
               {preview.auditOn ? '▷ on' : 'off'}</strong
             >
           </li>
-          <li><span>strikes</span><strong>{preview.strikeBudget}</strong></li>
+          <li><span>regress-limit</span><strong>{preview.regressLimit}</strong></li>
           <li><span>gate stages</span><strong>{preview.stageCount}</strong></li>
           <li><span>AC stars</span><strong>{preview.acCount}</strong></li>
         </ul>
@@ -565,8 +740,46 @@
                 placeholder="command (e.g. bun test)"
                 bind:value={gateStages[i].command}
               />
+              <!-- U3 Task 3: run this stage's command once, right now, in the loop's own
+                   working dir — discover a broken gate command for free, not on iteration 1. -->
+              <button
+                class="probe-btn mono"
+                disabled={!gateStages[i].command.trim() || probeState[i]?.running}
+                title="Run this command once, synchronously, in the loop's working dir"
+                onclick={() => testStage(i)}
+              >
+                {probeState[i]?.running ? '…' : '▸ test'}
+              </button>
               <button class="mini-x" aria-label="remove" onclick={() => removeStage(i)}>✕</button>
             </div>
+            {#if probeState[i]}
+              {@const st = probeState[i]}
+              <div
+                class="probe-line mono"
+                class:ok={st.result?.exitCode === 0}
+                class:bad={(st.result && st.result.exitCode !== 0 && !st.result.timedOut) || !!st.error}
+                class:warn={st.result?.timedOut}
+              >
+                {#if st.running}
+                  <span>running…</span>
+                {:else if st.error}
+                  <span>✕ {st.error}</span>
+                {:else if st.result?.timedOut}
+                  <span>⏱ timed out after {st.result.durationMs}ms</span>
+                {:else if st.result}
+                  <span>
+                    {st.result.exitCode === 0 ? '✓' : '✕'} exit {st.result.exitCode} · {st.result
+                      .durationMs}ms
+                  </span>
+                  <button class="probe-toggle" onclick={() => toggleProbeExpanded(i)}>
+                    {st.expanded ? 'hide output' : 'show output'}
+                  </button>
+                {/if}
+              </div>
+              {#if st.result && st.expanded}
+                <pre class="probe-tail mono">{st.result.tail || '(no output)'}</pre>
+              {/if}
+            {/if}
           {/each}
           <button class="add mono" onclick={addStage}>+ add stage</button>
         </div>
@@ -640,15 +853,6 @@
             <div class="def mono">blueprint default: {fmtUsd(composed.cost.ceilingUsd)} ceiling · {composed.stop.maxIters} iters</div>
           {:else if openDrawer === 'gate'}
             <label class="kv wide">
-              <span class="mono">greenWhen</span>
-              <input
-                class="inp mono"
-                value={finalEngine.gate.greenWhen}
-                onchange={(e) =>
-                  setOverride('gate', { ...finalEngine.gate, greenWhen: e.currentTarget.value })}
-              />
-            </label>
-            <label class="kv wide">
               <span class="mono">lockGlobs (test-tamper)</span>
               <input
                 class="inp mono"
@@ -663,82 +867,85 @@
                   })}
               />
             </label>
-            <div class="def mono">stages edited above in Definition of Done ({finalEngine.gate.stages.length}).</div>
-          {:else if openDrawer === 'regression'}
+            <div class="def mono">
+              stages are edited above in Definition of Done ({finalEngine.gate.stages.length}). Green
+              is not configurable here — a stage passes on exit 0, and the gate is green when every
+              stage passes.
+            </div>
+          {:else if openDrawer === 'stop'}
             <div class="row">
               <label class="kv">
-                <span class="mono">strikeBudget</span>
+                <span class="mono">stagnationLimit</span>
                 <input
                   class="inp mono"
                   type="number"
-                  value={finalEngine.regression.strikeBudget}
+                  value={finalEngine.stop.stagnationLimit}
                   onchange={(e) =>
-                    setOverride('regression', {
-                      ...finalEngine.regression,
-                      strikeBudget: +e.currentTarget.value,
+                    setOverride('stop', {
+                      ...finalEngine.stop,
+                      stagnationLimit: +e.currentTarget.value,
                     })}
                 />
               </label>
               <label class="kv">
-                <span class="mono">plateau K</span>
+                <span class="mono">plateauLimit</span>
                 <input
                   class="inp mono"
                   type="number"
-                  value={finalEngine.decide.plateauK}
+                  value={finalEngine.stop.plateauLimit}
                   onchange={(e) =>
-                    setOverride('decide', {
-                      ...finalEngine.decide,
-                      plateauK: +e.currentTarget.value,
-                    })}
+                    setOverride('stop', { ...finalEngine.stop, plateauLimit: +e.currentTarget.value })}
+                />
+              </label>
+              <label class="kv">
+                <span class="mono">regressLimit</span>
+                <input
+                  class="inp mono"
+                  type="number"
+                  value={finalEngine.stop.regressLimit}
+                  onchange={(e) =>
+                    setOverride('stop', { ...finalEngine.stop, regressLimit: +e.currentTarget.value })}
                 />
               </label>
               <label class="kv chk">
                 <input
                   type="checkbox"
-                  checked={finalEngine.regression.autoRollback}
+                  checked={finalEngine.stop.gracefulAtPhase}
                   onchange={(e) =>
-                    setOverride('regression', {
-                      ...finalEngine.regression,
-                      autoRollback: e.currentTarget.checked,
+                    setOverride('stop', {
+                      ...finalEngine.stop,
+                      gracefulAtPhase: e.currentTarget.checked,
                     })}
                 />
-                <span class="mono">auto-rollback</span>
+                <span class="mono">gracefulAtPhase</span>
               </label>
             </div>
-          {:else if openDrawer === 'quota'}
+            <div class="def mono">
+              blueprint default via dials: stagnation {composed.stop.stagnationLimit} · plateau {composed
+                .stop.plateauLimit} · regress-limit {composed.stop.regressLimit}
+            </div>
+          {:else if openDrawer === 'maxTurns'}
             <div class="row">
-              <label class="kv chk">
-                <input
-                  type="checkbox"
-                  checked={finalEngine.quota.enabled}
-                  onchange={(e) =>
-                    setOverride('quota', { ...finalEngine.quota, enabled: e.currentTarget.checked })}
-                />
-                <span class="mono">survive quota</span>
-              </label>
               <label class="kv">
-                <span class="mono">maxWaits</span>
+                <span class="mono">maxTurns (per phase)</span>
                 <input
                   class="inp mono"
                   type="number"
-                  value={finalEngine.quota.maxWaits}
-                  onchange={(e) =>
-                    setOverride('quota', { ...finalEngine.quota, maxWaits: +e.currentTarget.value })}
+                  value={finalEngine.maxTurns}
+                  onchange={(e) => setOverride('maxTurns', +e.currentTarget.value)}
                 />
               </label>
-              <label class="kv chk">
+              <label class="kv">
+                <span class="mono">iterTimeoutMin (0 = unbounded)</span>
                 <input
-                  type="checkbox"
-                  checked={finalEngine.quota.manualContinue}
-                  onchange={(e) =>
-                    setOverride('quota', {
-                      ...finalEngine.quota,
-                      manualContinue: e.currentTarget.checked,
-                    })}
+                  class="inp mono"
+                  type="number"
+                  value={finalEngine.iterTimeoutMin}
+                  onchange={(e) => setOverride('iterTimeoutMin', +e.currentTarget.value)}
                 />
-                <span class="mono">manual-continue</span>
               </label>
             </div>
+            <div class="def mono">blueprint default via dials: {composed.maxTurns} turns/phase · {composed.iterTimeoutMin}m/iter cap</div>
           {:else if openDrawer === 'allowedTools'}
             <label class="kv wide">
               <span class="mono">allowedTools</span>
@@ -771,27 +978,78 @@
                 <option>bypassPermissions</option>
               </select>
             </label>
-          {:else if openDrawer === 'qa'}
+          {:else if openDrawer === 'feedback'}
             <div class="row">
               <label class="kv chk">
                 <input
                   type="checkbox"
-                  checked={finalEngine.qa.humanInLoop}
+                  checked={finalEngine.feedback.compact}
                   onchange={(e) =>
-                    setOverride('qa', { ...finalEngine.qa, humanInLoop: e.currentTarget.checked })}
+                    setOverride('feedback', { compact: e.currentTarget.checked })}
                 />
-                <span class="mono">human-in-loop</span>
+                <span class="mono">compact feedback (first failure only)</span>
+              </label>
+              <label class="kv chk">
+                <input
+                  type="checkbox"
+                  checked={finalEngine.verify.mutationAudit}
+                  onchange={(e) =>
+                    setOverride('verify', {
+                      ...finalEngine.verify,
+                      mutationAudit: e.currentTarget.checked,
+                    })}
+                />
+                <span class="mono">mutation-audit</span>
               </label>
               <label class="kv">
-                <span class="mono">maxTurns</span>
+                <span class="mono">audit every Nth green</span>
                 <input
                   class="inp mono"
                   type="number"
-                  value={finalEngine.qa.maxTurns}
+                  value={finalEngine.verify.mutationEvery}
                   onchange={(e) =>
-                    setOverride('qa', { ...finalEngine.qa, maxTurns: +e.currentTarget.value })}
+                    setOverride('verify', {
+                      ...finalEngine.verify,
+                      mutationEvery: +e.currentTarget.value,
+                    })}
                 />
               </label>
+            </div>
+            <div class="row">
+              <label class="kv chk">
+                <input
+                  type="checkbox"
+                  checked={finalEngine.memory.enabled}
+                  onchange={(e) =>
+                    setOverride('memory', { ...finalEngine.memory, enabled: e.currentTarget.checked })}
+                />
+                <span class="mono">cross-run memory</span>
+              </label>
+              <label class="kv">
+                <span class="mono">recallLimit</span>
+                <input
+                  class="inp mono"
+                  type="number"
+                  value={finalEngine.memory.recallLimit}
+                  onchange={(e) =>
+                    setOverride('memory', {
+                      ...finalEngine.memory,
+                      recallLimit: +e.currentTarget.value,
+                    })}
+                />
+              </label>
+              <label class="kv chk">
+                <input
+                  type="checkbox"
+                  checked={finalEngine.metrics.emit}
+                  onchange={(e) => setOverride('metrics', { emit: e.currentTarget.checked })}
+                />
+                <span class="mono">emit run-quality metrics</span>
+              </label>
+            </div>
+            <div class="def mono">
+              verify.enabled is armed automatically once you describe at least one acceptance
+              criterion above — {finalEngine.verify.enabled ? 'currently ON' : 'currently OFF'}.
             </div>
           {/if}
 
@@ -902,6 +1160,37 @@
   .idrow {
     display: flex;
     gap: 10px;
+  }
+  .taskfile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: -4px;
+    font-size: 10.5px;
+  }
+  .taskfile-btn {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--plasma-cyan);
+    border-radius: var(--radius-pill);
+    padding: 3px 10px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .taskfile-btn:hover {
+    border-color: var(--plasma-cyan);
+  }
+  .taskfile-status {
+    color: var(--text-meta);
+  }
+  .taskfile-status.ok {
+    color: var(--plasma-green);
+  }
+  .taskfile-status.warn {
+    color: var(--amber);
+  }
+  .taskfile-status.bad {
+    color: var(--crimson);
   }
   .field {
     display: flex;
@@ -1166,6 +1455,67 @@
   .arrow {
     color: var(--text-faint);
     font-size: 11px;
+  }
+  .probe-btn {
+    flex: none;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--text-dim);
+    border-radius: var(--radius-pill);
+    padding: 4px 9px;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .probe-btn:hover:not(:disabled) {
+    border-color: var(--plasma-cyan);
+    color: var(--plasma-cyan);
+  }
+  .probe-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .probe-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -2px 0 6px;
+    padding-left: 2px;
+    font-size: 10px;
+    color: var(--text-meta);
+  }
+  .probe-line.ok {
+    color: var(--plasma-green);
+  }
+  .probe-line.bad {
+    color: var(--crimson);
+  }
+  .probe-line.warn {
+    color: var(--amber);
+  }
+  .probe-toggle {
+    background: transparent;
+    border: none;
+    color: var(--plasma-cyan);
+    cursor: pointer;
+    font-size: 9.5px;
+    text-decoration: underline;
+    padding: 0;
+  }
+  .probe-tail {
+    margin: -2px 0 8px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 10px;
+    line-height: 1.4;
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .mini-x {
     background: transparent;

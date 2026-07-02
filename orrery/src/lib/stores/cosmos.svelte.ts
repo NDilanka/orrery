@@ -29,6 +29,14 @@ import { browser } from '$app/environment';
 // orrery/src-tauri). LOCAL override; mirror of transport/tauri.ts DEFAULT_LOOPS_DIR.
 export const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
+/** Wire shape of `probe_command` (PROTOCOL §6, U3 Task 3). */
+export interface ProbeResult {
+  exitCode: number | null;
+  durationMs: number;
+  tail: string;
+  timedOut: boolean;
+}
+
 /** The Tier-1 summary the Cosmos renders for one star-system (one loop). */
 export interface LoopSummary {
   id: string;
@@ -391,6 +399,65 @@ class CosmosStore {
       ];
     }
     return { id, persisted: false };
+  }
+
+  /**
+   * Scaffold a file (typically TASK.md) inside a loop's own dir (U3 Task 2, §6
+   * `write_loop_file`). In Tauri this writes the real file; in dev (no Tauri) there is
+   * nothing to write to, so it no-ops and reports `written: false` — the same shape
+   * of graceful degradation `createLoop` uses. `overwrite` mirrors the Rust guard: a
+   * missing/false value refuses to clobber an existing file.
+   */
+  async writeLoopFile(
+    id: string,
+    relPath: string,
+    content: string,
+    overwrite = false,
+  ): Promise<{ written: boolean; error?: string }> {
+    if (!(browser && hasTauri())) return { written: false };
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('write_loop_file', {
+        loopId: id,
+        loopsDir: DEFAULT_LOOPS_DIR,
+        relPath,
+        content,
+        overwrite,
+      });
+      return { written: true };
+    } catch (e) {
+      return { written: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /**
+   * Probe a single shell command synchronously in a loop's own working dir (U3 Task 3,
+   * §6 `probe_command`) — "discover your gate command is broken for free, not on
+   * iteration 1." Works even for a loop that hasn't been created yet (the Rust side
+   * falls back to the loop's future base dir). In dev (no Tauri, e.g. `vite dev` in a
+   * plain browser) there is no process to spawn, so this returns a clearly-labelled
+   * SIMULATED result — mirrors how `createLoop` no-ops gracefully in dev instead of
+   * pretending to talk to a backend that isn't there.
+   */
+  async probeCommand(id: string, command: string, timeoutMs?: number): Promise<ProbeResult> {
+    if (browser && hasTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return (await invoke('probe_command', {
+        loopId: id,
+        loopsDir: DEFAULT_LOOPS_DIR,
+        command,
+        timeoutMs,
+      })) as ProbeResult;
+    }
+    // dev (no Tauri) — simulate a quick, honest-looking probe so the console still
+    // demonstrates the feature; the tail says outright that it's not a real run.
+    await new Promise((r) => setTimeout(r, 350));
+    return {
+      exitCode: command.trim() ? 0 : 1,
+      durationMs: 350,
+      tail: `(dev preview — no Tauri backend, this is a simulated result)\n$ ${command}`,
+      timedOut: false,
+    };
   }
 
   get(id: string): LoopSummary | null {
