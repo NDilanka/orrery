@@ -7,15 +7,8 @@ import type { Delta, RawEvent, RunState } from '../types';
 import { initialState } from '../reduce';
 import { logStore } from '../stores/log.svelte';
 import { activityStore } from '../stores/activity.svelte';
+import { DEFAULT_LOOPS_DIR } from '../paths';
 import type { Transport, TransportOpts } from './index';
-
-// Absolute path to the loops/ registry. A5 (loop library) will source this from
-// config / list_loops; until then the control commands resolve it from here.
-// Absolute so control commands find loops regardless of the app's working directory
-// (the launcher runs from orrery/, cargo from orrery/src-tauri — a relative 'orrery/loops'
-// resolves against neither). LOCAL override; a packaged build should resolve this via a
-// Tauri path API instead. Matches cosmos.svelte.ts DEFAULT_LOOPS_DIR.
-const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
 export interface TauriConfig {
   stateDir: string;

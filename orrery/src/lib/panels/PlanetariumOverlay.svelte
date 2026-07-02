@@ -15,16 +15,6 @@
   import { uiStore } from '../stores/ui.svelte';
   import DecisionSheet from './DecisionSheet.svelte';
 
-  // answer + observeOnly are threaded from +page so a loop that BLOCKS on a
-  // decision can be answered WITHOUT leaving the ambient Planetarium view.
-  let {
-    answer,
-    observeOnly = false,
-  }: {
-    answer?: (qid: string, text: string) => void | Promise<void>;
-    observeOnly?: boolean;
-  } = $props();
-
   const s = $derived(runStore.state);
 
   // pending = questions the engine surfaced that nobody has answered yet. When
@@ -123,7 +113,7 @@
 </div>
 
 {#if showSheet && pending.length}
-  <DecisionSheet {answer} {observeOnly} onClose={() => (showSheet = false)} />
+  <DecisionSheet onClose={() => (showSheet = false)} />
 {/if}
 
 <style>

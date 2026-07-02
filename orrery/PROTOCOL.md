@@ -237,7 +237,17 @@ interface Verdict{ pass: boolean; failingCriteria: string[]; evidence?: string; 
    boundary as rule 2's `cumUsd` reset: on `start`/`engine-start` for bmad, and — since generic logs
    have no `start` event — on the first `cum`-bearing event after a `run_ended` rebase (or the very
    first `cum`-bearing event of the log, when no prior run ended). It is NOT set on `story-start`
-   (a per-story, not per-run, boundary).
+   (a per-story, not per-run, boundary). **The reducer itself never decides `t`** — it only formats
+   whatever ms-since-epoch the CALLER stamps (rule 3). As of R4, both callers stamp a REAL
+   timestamp when one is available on the line instead of always synthesizing one: a numeric `_t`
+   (ms since epoch — the one wire convention both reducers already agreed on for the
+   series-collision golden; a fixture can carry real times this way with no new field) or a string
+   `ts` (ISO-8601 — no engine emits this yet, but both reducers parse it the moment one does),
+   falling back to the last real timestamp seen (bridges a gap where only some lines carry one),
+   and only synthesizing `index × 1000` when NO real timestamp has appeared at all in the run so
+   far (still every fixture in the repo today — this is a pure extension, not a behavior change,
+   for all of them). Rust: `control.rs`'s `live::LiveReducer::next_ts`. TS: `reduce()`'s
+   `events.forEach` already honored `_t` in production code; nothing changed there.
 
 ---
 
@@ -277,7 +287,10 @@ start_loop(loopId, loopsDir, overrides?) -> { pid } | Err('AlreadyRunning'|...)
 stop_loop(loopId, loopsDir, mode) -> ()   cancel_stop(loopId, loopsDir) -> ()   resume_loop(loopId, loopsDir) -> ()
 guard_status(loopId, loopsDir) -> { running: bool, pid: number|null, stopPending, checkpoint }
 answer_question(loopId, loopsDir, qid, text) -> ()   // A8 — writes <stateDir>/answer.json {qid,kind:'review',a:text}
-// A7 — LAN reach: serves the built SPA + /ws Delta stream + token-gated POST /api/control
+// A7 — LAN reach: serves the built SPA + token-gated /ws Delta stream + token-gated POST
+// /api/control. Every route requires the token (R5) EXCEPT GET /api/health (unauthenticated
+// liveness probe). The server never binds 0.0.0.0: when LAN-IP autodetection fails it binds
+// 127.0.0.1 only, and the returned `url` reflects whichever address it actually bound.
 start_lan_server(loopsDir, port?) -> { url, token }   stop_lan_server() -> ()
 // U3 — creation & onboarding: catch foot-guns in the Tuning Console BEFORE the first paid
 // engine iteration. Both take `loopId` (validated via the same `is_safe_loop_id` as the A5

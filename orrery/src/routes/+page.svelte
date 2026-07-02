@@ -17,7 +17,6 @@
   import '$lib/fonts'; // self-hosted Space Grotesk + JetBrains Mono (offline-safe)
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
-  import { base } from '$app/paths';
 
   import Cosmos from '$lib/render/Cosmos.svelte';
   import Observatory from '$lib/render/Observatory.svelte';
@@ -37,20 +36,10 @@
   import HelpOverlay from '$lib/panels/HelpOverlay.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
-  import { logStore } from '$lib/stores/log.svelte';
-  import { activityStore } from '$lib/stores/activity.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
-  import {
-    createTransport,
-    hasTauri,
-    hasWsServer,
-    LOOPS,
-    type LoopChoice,
-    type Transport,
-    type WsStatus,
-  } from '$lib/transport';
-  import { isPlayback, type PlaybackState, type PlaybackTransport } from '$lib/transport/replay';
+  import { sessionStore } from '$lib/stores/session.svelte';
+  import { hasTauri, hasWsServer, LOOPS } from '$lib/transport';
 
   type View = 'cosmos' | 'system' | 'body';
 
@@ -60,123 +49,34 @@
   let showHelp = $state(false); // the keyboard-shortcut legend overlay
   let mode = $state<'live' | 'replay'>('replay');
   // The kind of the transport that ACTUALLY mounted for the active System (single source of
-  // truth for the badge) — vs `mode`, which is only the environment's capability at the Cosmos.
-  let transportKind = $state<'tauri' | 'ws' | 'replay' | null>(null);
-  const isLiveTransport = $derived(transportKind === 'tauri' || transportKind === 'ws');
+  // truth for the badge, tracked by sessionStore) — vs `mode`, which is only the environment's
+  // capability at the Cosmos.
+  const isLiveTransport = $derived(
+    sessionStore.transportKind === 'tauri' || sessionStore.transportKind === 'ws',
+  );
   // A live loop that has never emitted an event: guide the user to Start instead of showing
   // a silent, pre-populated $0.00/IDLE instrument that reads as "broken".
   const liveAndEmpty = $derived(isLiveTransport && runStore.state.events === 0);
   const badgeLabel = $derived(
-    transportKind === 'tauri'
+    sessionStore.transportKind === 'tauri'
       ? 'LIVE · desktop'
-      : transportKind === 'ws'
+      : sessionStore.transportKind === 'ws'
         ? 'LIVE · LAN'
-        : transportKind === 'replay'
+        : sessionStore.transportKind === 'replay'
           ? 'REPLAY · fixture'
           : mode,
   );
 
-  let transport: Transport | null = null;
-  let playback = $state<PlaybackTransport | null>(null);
-  let playbackState = $state<PlaybackState>({
-    playing: false,
-    speed: 1,
-    cursor: 0,
-    total: 0,
-    done: false,
-  });
-  // A7 ws freshness badge (only populated when the WebSocket transport is active)
-  let wsStatus = $state<WsStatus | null>(null);
-  // observe-only when web/no-token (ws transport says so) — disables answer/control
-  const observeOnly = $derived(wsStatus?.observeOnly ?? false);
-  // an answer fn the QAConsole can call (present on tauri + ws; replay no-ops)
-  function answer(qid: string, text: string): void | Promise<void> {
-    return transport?.answer?.(qid, text);
-  }
-
   const activeLoopName = $derived(
     activeLoop ? LOOPS.find((l) => l.id === activeLoop)?.name ?? activeLoop : null,
   );
-
-  // resolve fixture URLs against SvelteKit's base path
-  function withBase(choice: LoopChoice): LoopChoice {
-    return {
-      ...choice,
-      fixtureUrl: `${base}/${choice.fixtureUrl}`,
-      checkpointUrl: choice.checkpointUrl ? `${base}/${choice.checkpointUrl}` : undefined,
-    };
-  }
-
-  // Build a LIVE loop choice from a loop's loop.json — for loops that exist on disk (and so
-  // are listed by the Cosmos) but are NOT in the static seed LOOPS table (e.g. user-created
-  // ones). fixtureUrl is empty because dynamic loops have no replay fixture; the Tauri/LAN
-  // transports don't use it. Returns null if the def can't be read.
-  async function loopChoiceFromDef(id: string): Promise<LoopChoice | null> {
-    const def = await cosmosStore.loadLoopDef(id);
-    if (!def) return null;
-    const adapter = def.adapter === 'bmad' ? 'bmad' : 'generic';
-    const stateDir = (def.stateDir ?? def.state_dir) as string | undefined;
-    if (!stateDir) return null;
-    return {
-      id: String(def.id ?? id),
-      name: String(def.name ?? id),
-      theme: String(def.theme ?? 'plasma'),
-      adapter,
-      stateDir,
-      logFile: typeof def.logFile === 'string' ? def.logFile : undefined,
-      fixtureUrl: '',
-    };
-  }
-
-  // ── mount a loop's System view via the existing transport/replay ───────────
-  async function mountLoop(id: string) {
-    if (!browser) return;
-    transport?.stop();
-    runStore.reset();
-    logStore.clear();
-    activityStore.clear();
-    playback = null;
-    wsStatus = null;
-    // Seed loops come from the static LOOPS table (they carry replay fixtures); any other
-    // loop on disk is resolved live from its loop.json so created loops are enterable too.
-    const choice = LOOPS.find((l) => l.id === id) ?? (await loopChoiceFromDef(id));
-    if (!choice) return;
-    transport = createTransport(withBase(choice), {
-      onState: (s) => runStore.set(s),
-      onWsStatus: (st) => (wsStatus = st),
-    });
-    transportKind = transport.kind;
-    if (isPlayback(transport)) {
-      playback = transport;
-      transport.onPlayback((p) => (playbackState = p));
-    } else if (uiStore.mode === 'rewind') {
-      // Rewind needs a scrubbable run; a live feed can't scrub → fall back.
-      uiStore.setMode('observatory');
-    }
-    await transport.start();
-  }
-
-  function unmountLoop() {
-    transport?.stop();
-    transport = null;
-    transportKind = null;
-    playback = null;
-    wsStatus = null;
-    runStore.reset();
-    logStore.clear();
-    activityStore.clear();
-  }
-
-  async function control(action: string) {
-    await transport?.control(action);
-  }
 
   // ── navigation (the zoom state machine) ────────────────────────────────────
   async function enterSystem(id: string) {
     activeLoop = id;
     bodyKey = null;
     view = 'system';
-    await mountLoop(id);
+    await sessionStore.mountLoop(id);
   }
 
   function enterBody(key: string | null) {
@@ -196,7 +96,7 @@
     view = 'cosmos';
     activeLoop = null;
     bodyKey = null;
-    unmountLoop();
+    sessionStore.unmountLoop();
     void cosmosStore.load(); // refresh Tier-1 summaries on return
   }
 
@@ -225,9 +125,9 @@
     }
     if (view === 'cosmos') return; // run controls only make sense inside a run
     const k = e.key.toLowerCase();
-    if (k === 'i') void control('start');
-    else if (k === 'b') void control('stop:phase');
-    else if (k === 'r') void control('resume');
+    if (k === 'i') void sessionStore.control('start');
+    else if (k === 'b') void sessionStore.control('stop:phase');
+    else if (k === 'r') void sessionStore.control('resume');
     else return;
     e.preventDefault();
   }
@@ -268,7 +168,7 @@
     window.addEventListener('keydown', onKeydown);
     return () => {
       teardownUi();
-      transport?.stop();
+      sessionStore.unmountLoop();
       window.removeEventListener('keydown', onKeydown);
     };
   });
@@ -307,8 +207,10 @@
             <!-- top bar: freshness badge (left) · mode toggle (center) · the
                  breadcrumb/live-replay badge cluster (navbar, below) owns the right -->
             <div class="g-topbar">
-              <div class="tb-left"><StaleBadge status={wsStatus} {transportKind} /></div>
-              <div class="tb-center"><ModeBar canRewind={!!playback} /></div>
+              <div class="tb-left">
+                <StaleBadge status={sessionStore.wsStatus} transportKind={sessionStore.transportKind} />
+              </div>
+              <div class="tb-center"><ModeBar canRewind={!!sessionStore.playback} /></div>
               <div class="tb-right" aria-hidden="true"></div>
             </div>
           {/if}
@@ -347,7 +249,7 @@
             <div class="g-right">
               <MetricsPanel />
               <VerdictPanel />
-              <QAConsole {answer} {observeOnly} />
+              <QAConsole />
             </div>
             <!-- bottom dock: run controls (+ the transport scrubber in replay) -->
             <div class="g-bottom">
@@ -359,9 +261,13 @@
                   </p>
                 </div>
               {/if}
-              <RunControlBar {control} />
-              {#if playback}
-                <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+              <RunControlBar />
+              {#if sessionStore.playback}
+                <TransportBar
+                  transport={sessionStore.playback}
+                  state={sessionStore.playbackState}
+                  rewind={uiStore.rewind}
+                />
               {/if}
             </div>
             <div class="g-strip"><CostQuotaStrip /></div>
@@ -372,7 +278,7 @@
              (answer a blocking question without leaving ambient). A full-viewport
              overlay independent of the dock above (unchanged by wave U2). -->
         {#if view === 'system' && uiStore.ambient}
-          <PlanetariumOverlay {answer} {observeOnly} />
+          <PlanetariumOverlay />
         {/if}
       </div>
     {/if}
@@ -420,8 +326,8 @@
         <span
           class="mode mono"
           class:islive={view !== 'cosmos' && isLiveTransport}
-          class:isreplay={view !== 'cosmos' && transportKind === 'replay'}
-          title={view !== 'cosmos' && transportKind === 'replay'
+          class:isreplay={view !== 'cosmos' && sessionStore.transportKind === 'replay'}
+          title={view !== 'cosmos' && sessionStore.transportKind === 'replay'
             ? 'Watching a recorded fixture — controls (Start/Resume) are inert here.'
             : isLiveTransport
               ? 'Driving the real loop — Start/Resume spawn the engine.'

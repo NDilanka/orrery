@@ -2,6 +2,7 @@
 
 pub mod control;
 pub mod lan;
+pub mod live;
 pub mod model;
 pub mod reducer;
 pub mod sprint;

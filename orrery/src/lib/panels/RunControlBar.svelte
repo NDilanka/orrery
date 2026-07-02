@@ -8,8 +8,7 @@
 
   import { onDestroy } from 'svelte';
   import { runStore } from '../stores/run.svelte';
-
-  let { control }: { control: (action: string) => void | Promise<void> } = $props();
+  import { sessionStore } from '../stores/session.svelte';
 
   const s = $derived(runStore.state);
   const running = $derived(s.run.status === 'running' || s.run.status === 'quota-wait');
@@ -118,7 +117,7 @@
               : 'now';
     }
     try {
-      await control(action);
+      await sessionStore.control(action);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       if (startish) resetPending();

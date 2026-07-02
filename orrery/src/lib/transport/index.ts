@@ -6,6 +6,7 @@
 // All three feed a RunState to the same store callback and share reduce.ts.
 
 import type { RunState } from '../types';
+import { DEFAULT_LOOPS_DIR } from '../paths';
 import { ReplayTransport, type ReplayConfig } from './replay';
 import { TauriTransport, type TauriConfig } from './tauri';
 import { WsTransport, type WsConfig } from './ws';
@@ -128,7 +129,7 @@ export const LOOPS: LoopChoice[] = [
     // Live (Tauri/LAN): watch the real loop's state dir + log written by `loop-bmad`
     // (orrery/loops/bmad/loop.json). Absolute so the watcher + the spawn agree regardless
     // of the app's cwd. The fixtureUrl below is ONLY used by the pure `vite dev` replay.
-    stateDir: 'D:/dev/loop/orrery/loops/bmad/.loop',
+    stateDir: `${DEFAULT_LOOPS_DIR}/bmad/.loop`,
     logFile: 'log.jsonl',
     fixtureUrl: 'fixtures/bmad-log.jsonl',
     checkpointUrl: 'fixtures/checkpoint.json',

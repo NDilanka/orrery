@@ -8,25 +8,22 @@
   // The resulting `review-answer` event flows back through the reducer and the
   // question drops out of the pending set (its `a` becomes non-null) — so the
   // card reflects the answer and disappears. Optimistically we also stamp the
-  // local answer so the UI feels immediate even before the event round-trips.
+  // local answer so the UI feels immediate even before the event round-trips
+  // (`../actions/answerFlow.ts` — shared with DecisionSheet's single-question
+  // send path).
   //
-  // Reads the runes store directly for pending questions; `answer` + an
-  // observe-only flag are passed down from the shell (the shell owns the
-  // transport). When observe-only (web, no token) the input is disabled with a
-  // clear note.
+  // Reads the runes stores directly: the pending questions from runStore, and
+  // the transport's answer()/observe-only flag from sessionStore (A4 — no more
+  // prop-drilling `answer`/`observeOnly` down from +page.svelte). When
+  // observe-only (web, no token) the input is disabled with a clear note.
 
   import { runStore } from '../stores/run.svelte';
+  import { sessionStore } from '../stores/session.svelte';
+  import { sendAnswer, onSubmitKey } from '../actions/answerFlow';
   import type { Qa } from '../types';
 
-  let {
-    answer,
-    observeOnly = false,
-  }: {
-    answer?: (qid: string, text: string) => void | Promise<void>;
-    observeOnly?: boolean;
-  } = $props();
-
   const s = $derived(runStore.state);
+  const observeOnly = $derived(sessionStore.observeOnly);
 
   // pending = a question the engine surfaced that nobody has answered yet
   const pending = $derived<Qa[]>(s.questions.filter((q) => q.a == null));
@@ -37,28 +34,22 @@
   let sentLocally = $state<Record<string, string>>({}); // qid → text we sent
 
   async function send(q: Qa) {
-    const text = (drafts[q.id] ?? '').trim();
-    if (!text || observeOnly) return;
+    if (observeOnly) return;
+    const text = drafts[q.id] ?? '';
     sending = { ...sending, [q.id]: true };
     try {
-      await answer?.(q.id, text);
-      // optimistic: reflect our answer locally so the card updates immediately
-      // even before the engine writes a `review-answer` back through the reducer.
-      sentLocally = { ...sentLocally, [q.id]: text };
-      runStore.answerLocally(q.id, text);
-      drafts = { ...drafts, [q.id]: '' };
+      const sent = await sendAnswer(sessionStore.answer.bind(sessionStore), q.id, text);
+      if (sent) {
+        sentLocally = { ...sentLocally, [q.id]: text.trim() };
+        drafts = { ...drafts, [q.id]: '' };
+      }
     } finally {
       sending = { ...sending, [q.id]: false };
     }
   }
 
   function onKey(e: KeyboardEvent, q: Qa) {
-    // Cmd/Ctrl+Enter sends (Enter alone keeps newlines for long answers)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      void send(q);
-      return;
-    }
+    onSubmitKey(e, () => void send(q));
     // Escape blurs the textarea (a side panel must let focus leave — no trap)
     if (e.key === 'Escape') {
       (e.currentTarget as HTMLTextAreaElement).blur();

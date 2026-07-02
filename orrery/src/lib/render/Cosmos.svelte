@@ -29,6 +29,7 @@
   import { cosmosStore, type LoopSummary } from '../stores/cosmos.svelte';
   import { uiStore } from '../stores/ui.svelte';
   import { fmtRelative } from '../timefmt';
+  import { restColor, stateKey, stateGlyph, stateLabel } from '../palette';
 
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
@@ -61,88 +62,25 @@
     return '$' + n.toFixed(2);
   }
 
-  // The state key a glyph/row reads from (restState wins, else status). Used for
-  // the dot class, the shape glyph and the human label — never hue alone.
-  function stateKey(l: LoopSummary): string {
-    return l.restState ?? l.status;
-  }
-
-  // A non-hue separator: a small geometric glyph paired with the dot so status
-  // survives greyscale / colour-blindness (design rule: status ≠ hue alone).
-  function stateGlyph(key: string): string {
-    switch (key) {
-      case 'running':
-        return '◆'; // live diamond
-      case 'certified-done':
-        return '✓'; // sealed
-      case 'stopped-ember':
-        return '▬'; // banked
-      case 'quota-frost':
-      case 'quota-wait':
-        return '❄'; // frost
-      case 'handoff-beacon':
-      case 'handoff':
-        return '!'; // needs you
-      case 'failed-dark':
-        return '⚠'; // crashed — dim cracked disc (Observatory mirror)
-      case 'error':
-        return '×'; // crashed (no restState yet — defensive fallback)
-      case 'stopping':
-        return '◇'; // winding down
-      default:
-        return '·'; // idle ember
-    }
-  }
-
-  // Plain-language status for the label + aria (so "does it need me?" reads
-  // without a mouse hover).
-  function stateLabel(key: string): string {
-    switch (key) {
-      case 'running':
-        return 'running';
-      case 'certified-done':
-        return 'done · verified';
-      case 'stopped-ember':
-        return 'paused';
-      case 'quota-frost':
-      case 'quota-wait':
-        return 'quota pause';
-      case 'handoff-beacon':
-      case 'handoff':
-        return 'needs you';
-      case 'failed-dark':
-        return 'failed';
-      case 'error':
-        return 'error';
-      case 'stopping':
-        return 'stopping';
-      default:
-        return 'idle';
-    }
-  }
-
   // A full glanceable aria-label for a roster row / hover card.
   function loopAria(l: LoopSummary): string {
     const parts = [
       `Loop ${l.id}`,
-      stateLabel(stateKey(l)),
+      stateLabel(stateKey(l.status, l.restState)),
       `spend ${fmtUsd(l.cumUsd)}`,
     ];
     if (l.currentItem) parts.push(`on ${l.currentItem}`);
     return parts.join(', ');
   }
 
-  // star color by status / rest-state (mirrors the Observatory's starColor)
+  // star color by status / rest-state (shared with the Observatory's star — src/lib/palette.ts).
+  // Cosmos's status set includes 'quota-wait' as a bare status (no restState yet); restColor's
+  // status branch doesn't cover it, so that one case stays local. The fallback (0x6c779e, a dim
+  // idle ember) is Cosmos-specific — the Observatory's star instead falls back to a bright
+  // starlight, so it's passed explicitly rather than baked into the shared function.
   function glyphColor(l: LoopSummary): number {
-    if (l.restState === 'failed-dark') return C.crimson;
-    if (l.restState === 'quota-frost') return C.frost;
-    if (l.restState === 'handoff-beacon') return C.crimson;
-    if (l.restState === 'certified-done') return C.green;
-    if (l.restState === 'stopped-ember') return C.ember;
-    if (l.status === 'error') return C.crimson;
-    if (l.status === 'running') return C.amber;
-    if (l.status === 'quota-wait') return C.frost;
-    return 0x6c779e; // idle ember (dim)
+    if (l.status === 'quota-wait' && !l.restState) return C.frost;
+    return restColor(l.status, l.restState, 0x6c779e);
   }
 
   // Enter a loop's system.
@@ -178,15 +116,6 @@
     let app: any = null;
     let raf = 0;
     let cleanup: (() => void) | null = null;
-
-    // reduced motion is read live from the single source of truth (uiStore);
-    // a small reactive bridge keeps the rAF's `reduced` flag in sync.
-    let reduced = uiStore.reducedMotion;
-    const stopReduced = $effect.root(() => {
-      $effect(() => {
-        reduced = uiStore.reducedMotion;
-      });
-    });
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -337,6 +266,8 @@
       let lastCount = -1;
       const tick = () => {
         if (destroyed) return;
+        // single reduced-motion source (uiStore); read fresh each frame, like the Observatory.
+        const reduced = uiStore.reducedMotion;
         const loops = cosmosStore.loops;
         if (loops.length !== lastCount) {
           layout();
@@ -478,7 +409,6 @@
       destroyed = true;
       if (raf) cancelAnimationFrame(raf);
       cleanup?.();
-      stopReduced();
       if (app) {
         try {
           app.destroy(true, { children: true });
@@ -501,7 +431,7 @@
     {#each cosmosStore.loops as l (l.id)}
       {@const p = positions.find((q) => q.id === l.id)}
       {#if p}
-        {@const key = stateKey(l)}
+        {@const key = stateKey(l.status, l.restState)}
         <div
           class="station"
           class:dim={!matches(l)}

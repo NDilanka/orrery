@@ -8,15 +8,20 @@
 //!
 //! Routes:
 //!   * `GET /`                       — the built SPA (`../build`) via tower-http `ServeDir`.
-//!   * `GET /ws?loop=<id>&token=<t>` — a WebSocket streaming `Delta`s for a loop. **Observe works
-//!                                     WITHOUT a token**; the token only matters for control.
+//!   * `GET /ws?loop=<id>&token=<t>` — a WebSocket streaming `Delta`s for a loop. **REQUIRES the
+//!                                     token** (R5 — previously observe worked without one, which
+//!                                     let anyone on the network stream run state by guessing a
+//!                                     short loop id).
 //!   * `POST /api/control`           — start/stop/resume/answer. **REQUIRES the token.**
+//!   * `GET /api/health`             — unauthenticated liveness probe.
 //!
-//! SECURITY: the server only runs after `start_lan_server`. Observe-only without the token; every
-//! control action requires the token (constant-time-ish compare). Loop ids are validated as plain
-//! path components, so a `loop=` query can never traverse the registry. No arbitrary fs/shell is
-//! exposed — control routes call the same vetted control.rs helpers (which only ever spawn a loop's
-//! own declared command).
+//! SECURITY: the server only runs after `start_lan_server`. EVERY route except `/api/health`
+//! requires the token (constant-time-ish compare). Loop ids are validated as plain path
+//! components, so a `loop=` query can never traverse the registry. No arbitrary fs/shell is
+//! exposed — control routes call the same vetted control.rs helpers (which only ever spawn a
+//! loop's own declared command). The server NEVER binds `0.0.0.0`: when LAN-IP autodetection
+//! fails it binds `127.0.0.1` only (R5 — it used to bind every interface while advertising a
+//! `127.0.0.1` url, so the actual bind surface was wider than what a user was told).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -183,10 +188,13 @@ pub fn start_lan_server(
     let token = Arc::new(gen_token());
     let loops_dir = PathBuf::from(&loops_dir);
 
-    // Bind to the LAN IPv4 when we can detect it (so the url is shareable); otherwise 0.0.0.0.
+    // Bind to the LAN IPv4 when we can detect it (so the url is shareable); otherwise fall back
+    // to loopback-only (127.0.0.1), NEVER 0.0.0.0 (R5 — binding every interface when detection
+    // merely FAILED silently exposed the server network-wide even though the advertised url said
+    // 127.0.0.1, i.e. the bind surface used to be wider than what the user was told).
     let lan_ip = lan_ipv4();
     let bind_ip: IpAddr = if lan_ip.is_unspecified() {
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
     } else {
         IpAddr::V4(lan_ip)
     };
@@ -297,18 +305,23 @@ async fn health_handler() -> impl IntoResponse {
 struct WsQuery {
     #[serde(rename = "loop")]
     loop_id: String,
-    #[allow(dead_code)]
     token: Option<String>,
 }
 
-/// `GET /ws?loop=<id>&token=<t>` — observe a loop. Observe needs NO token; the token is only
-/// checked by `/api/control`. Resolves the loop, runs the same tail+reduce+watch pipeline as
-/// `watch_run`, and forwards each `Delta` as a JSON text frame.
+/// `GET /ws?loop=<id>&token=<t>` — watch a loop. REQUIRES the token (R5): anyone on the network
+/// who can reach the port could previously stream run state by guessing a short loop id, with no
+/// auth at all. Resolves the loop, runs the same tail+reduce+watch pipeline as `watch_run`, and
+/// forwards each `Delta` as a JSON text frame.
 async fn ws_handler(
     State(state): State<AppState>,
     Query(q): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Token gate FIRST — same constant-time-ish compare as `/api/control`, before we even touch
+    // the loop registry or upgrade the connection.
+    if !token_eq(q.token.as_deref().unwrap_or(""), &state.token) {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    }
     // Resolve before upgrading so a bad loop id closes the handshake cleanly.
     match resolve_loop(&state.loops_dir, &q.loop_id) {
         Ok((state_dir, adapter, log_file)) => {
@@ -319,12 +332,13 @@ async fn ws_handler(
 }
 
 /// Drive one WebSocket: emit the initial snapshot, then a fresh `State` delta per new log line.
-/// This is the LAN twin of `control::watch_run` — same `reduce_all` snapshot + `watch_loop` tail,
-/// only the sink differs (a ws frame instead of a Tauri Channel).
+/// This is the LAN twin of `control::watch_run` — same `build_live` snapshot + incremental
+/// `watch_loop` tail (R2), only the sink differs (a ws frame instead of a Tauri Channel).
 async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String, log_file: Option<String>) {
-    // 1) initial snapshot — reuse the shared reducer pipeline.
-    let snapshot = control::reduce_all_pub(&state_dir, &adapter, log_file.as_deref());
-    if send_delta(&mut socket, Delta::Snapshot { state: snapshot }).await.is_err() {
+    // 1) initial snapshot — reuse the shared reducer pipeline; keep the live reducer + consumed
+    // length so the tail below feeds it ONLY new lines instead of re-reducing from scratch.
+    let (mut live, consumed_len) = control::build_live_pub(&state_dir, &adapter, log_file.as_deref());
+    if send_delta(&mut socket, Delta::Snapshot { state: live.state() }).await.is_err() {
         return;
     }
 
@@ -332,35 +346,57 @@ async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String,
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Delta>();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let stop_on_send_err = stop.clone();
 
     let lp = crate::watcher::resolve_log_path(&state_dir, &adapter, log_file.as_deref());
     let watch_dir = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     let sd = state_dir.clone();
     let ad = adapter.clone();
-    let lf = log_file.clone();
+    // Mirrors control.rs's private `loop_id_from`: the state dir's own last path component.
+    let loop_id = state_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "loop".to_string());
+
+    // Seed a tailer past what the snapshot above already consumed (R2/R3), mirroring watch_run.
+    let mut tailer = crate::tailer::Tailer::new();
+    tailer.seed(&lp, consumed_len);
 
     let handle = std::thread::spawn(move || {
         // Liveness heartbeat → its own Delta over a cloned sender, so the web client gets the same
         // "actively working" signal as the desktop app even through a silent dev-story.
         let tx_activity = tx.clone();
+        let stop_activity = stop_on_send_err.clone();
         let on_activity = move |raw: Option<Value>| {
             let activity = raw.and_then(|v| serde_json::from_value::<Activity>(v).ok());
-            let _ = tx_activity.send(Delta::Activity { activity });
+            if tx_activity.send(Delta::Activity { activity }).is_err() {
+                stop_activity.store(true, Ordering::Relaxed);
+            }
         };
-        let on_events = move |evs: &[Value]| {
+        let on_events = move |evs: &[Value], rotated: bool| {
             // Forward the raw events for the LAN/web client's live LOG feed, capped to the last 300
             // of a batch (the first drain replays the whole log; the client logStore caps at 300).
             let start = evs.len().saturating_sub(300);
             for ev in &evs[start..] {
-                let _ = tx.send(Delta::Event { event: ev.clone() });
+                if tx.send(Delta::Event { event: ev.clone() }).is_err() {
+                    stop_on_send_err.store(true, Ordering::Relaxed);
+                    return;
+                }
             }
-            // …then ONE authoritative full re-reduction per batch (idempotent), like watch_run.
+            // R3: rotation → rebuild from scratch using the bytes the tailer just handed us.
+            if rotated {
+                live = crate::live::LiveReducer::new(loop_id.clone(), ad.clone());
+            }
+            live.apply_batch(evs);
+            control::apply_overlays_pub(&mut live, &sd, &ad);
             // If the receiver is gone (socket closed) this errors; we stop on the next check.
-            let st = control::reduce_all_pub(&sd, &ad, lf.as_deref());
-            let _ = tx.send(Delta::State { state: st });
+            if tx.send(Delta::State { state: live.state() }).is_err() {
+                stop_on_send_err.store(true, Ordering::Relaxed);
+            }
         };
         let should_stop = move || stop_thread.load(Ordering::Relaxed);
-        let _ = crate::watcher::watch_loop(&watch_dir, &lp, on_events, on_activity, should_stop);
+        let _ = crate::watcher::watch_loop(&watch_dir, &lp, tailer, on_events, on_activity, should_stop);
     });
 
     // 3) pump deltas to the socket until either side closes.
