@@ -63,6 +63,26 @@ const browser = await chromium.launch();
     await settle(page, 800);
   }
 
+  // help overlay (wave U1 Task 5 rewrite)
+  await page.keyboard.press('?').catch(()=>{});
+  await settle(page, 800);
+  await shot(page, '05b-help-overlay.png');
+  await page.keyboard.press('Escape').catch(()=>{});
+  await settle(page, 400);
+
+  // back to cosmos, then drive into the failed-dark fixture loop (wave U1 verify step)
+  await page.locator('.crumb', { hasText: /cosmos/i }).first().click().catch(()=>{});
+  await settle(page, 1200);
+  const failedDark = page.locator('.station .enter', { hasText: 'failed-dark' });
+  if (await failedDark.count()) {
+    await failedDark.click();
+    await page.locator('.hud').waitFor({ timeout: 20000 }).catch(()=>{});
+    await settle(page, 4000);
+    await shot(page, '08-system-failed-dark.png');
+  } else {
+    console.log('NOTE: failed-dark station not found in roster');
+  }
+
   await ctx.close();
 }
 

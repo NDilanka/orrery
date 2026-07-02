@@ -47,6 +47,13 @@ export interface LoopSummary {
   doneCount: number;
   events: number;
   ratePerMin: number;
+  // ── Task 4 (wave U1) wall-clock anchor, threaded straight from run.lastEventAt ──
+  lastEventAt: string | null;
+  // ── Task 2 (wave U1) trust signal: the current item's claimed-vs-verified state.
+  // 'verified' = an independent verifier confirmed it (certified); 'unverified' = the agent
+  // claims a pass (gate green / in review) but no verifier has confirmed it yet; null = nothing
+  // to report (no current item, or it's not yet claimed-green).
+  trust: 'verified' | 'unverified' | null;
   // ── Wave 3 roster-at-scale derived fields (TS-only, NOT parity-bound) ──
   // needsYou: this loop is waiting on a human (handoff beacon or a crash).
   // Shared by the filter pills, the per-row badge, and the N-needs-you count.
@@ -100,6 +107,14 @@ function summarize(
   const restState = state.run.restState;
   // "needs you" = a human gate: a handoff beacon or an outright error.
   const needsYou = restState === 'handoff-beacon' || status === 'handoff' || status === 'error';
+  // the current item's claimed-vs-verified trust state (Task 2) — mirrors run.svelte's
+  // auditTargetKey/claimedGreen logic, applied to just the current item for the roster card.
+  const current = state.currentItem ? (state.items[state.currentItem] ?? null) : null;
+  const trust: LoopSummary['trust'] = current?.certified
+    ? 'verified'
+    : current && (current.gate?.green || current.status === 'review')
+      ? 'unverified'
+      : null;
   return {
     id: choice.id,
     name: choice.name,
@@ -115,6 +130,8 @@ function summarize(
     doneCount: items.filter((it) => it.status === 'done').length,
     events: state.events,
     ratePerMin: state.cost.ratePerMin,
+    lastEventAt: state.run.lastEventAt,
+    trust,
     needsYou,
     urgency: urgencyOf(status, restState),
     retroStatus: rollupRetro(state.groups),
@@ -266,6 +283,8 @@ class CosmosStore {
           doneCount: 0,
           events: 0,
           ratePerMin: 0,
+          lastEventAt: null,
+          trust: null,
           needsYou: false,
           urgency: urgencyOf('idle', null),
           retroStatus: null,
@@ -363,6 +382,8 @@ class CosmosStore {
           doneCount: 0,
           events: 0,
           ratePerMin: 0,
+          lastEventAt: null,
+          trust: null,
           needsYou: false,
           urgency: urgencyOf('idle', null),
           retroStatus: null,

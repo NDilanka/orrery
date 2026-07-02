@@ -28,6 +28,7 @@
   import { browser } from '$app/environment';
   import { cosmosStore, type LoopSummary } from '../stores/cosmos.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { fmtRelative } from '../timefmt';
 
   let { onEnter }: { onEnter: (loopId: string) => void } = $props();
 
@@ -95,12 +96,12 @@
       case 'running':
         return 'running';
       case 'certified-done':
-        return 'certified done';
+        return 'done · verified';
       case 'stopped-ember':
-        return 'stopped';
+        return 'paused';
       case 'quota-frost':
       case 'quota-wait':
-        return 'quota wait';
+        return 'quota pause';
       case 'handoff-beacon':
       case 'handoff':
         return 'needs you';
@@ -510,9 +511,23 @@
                 {stateLabel(key)}
               </span>
               <span class="s-cost num">{fmtUsd(l.cumUsd)}</span>
+              {#if l.lastEventAt}
+                {@const fresh = fmtRelative(l.lastEventAt)}
+                {#if fresh}
+                  <span class="s-fresh num">· {fresh}</span>
+                {/if}
+              {/if}
             </span>
             {#if l.currentItem}
               <span class="s-cur mono" title={l.currentItem}>→ {l.currentItem}</span>
+            {/if}
+            <!-- trust chip (Task 2): the claimed-vs-verified signal. Skipped when the loop's
+                 rest-state badge already says "done · verified" above (would be redundant). -->
+            {#if l.trust && key !== 'certified-done'}
+              <span class="s-trust {l.trust}">
+                <span aria-hidden="true">{l.trust === 'verified' ? '✓' : '◌'}</span>
+                {l.trust === 'verified' ? 'verified' : 'unverified'}
+              </span>
             {/if}
             {#if l.retroStatus}
               <span class="s-retro {l.retroStatus}">
@@ -578,11 +593,11 @@
 
   <!-- ── overlays (HTML, so they survive any canvas suppression) ──────────── -->
   {#if cosmosStore.loading}
-    <div class="loading mono" role="status">igniting the cosmos…</div>
+    <div class="loading mono" role="status">loading the cosmos…</div>
   {:else if cosmosStore.loops.length === 0}
     <div class="empty" role="status">
       <p class="etitle">No loops yet</p>
-      <p class="esub">Ignite your first loop to populate the cosmos.</p>
+      <p class="esub">Create your first loop to populate the cosmos.</p>
     </div>
   {/if}
 
@@ -705,6 +720,11 @@
     font-size: var(--text-2xs);
     color: var(--text-meta);
   }
+  /* relative freshness — "· 5m ago" from run.lastEventAt (Task 4) */
+  .s-fresh {
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+  }
   .s-cur {
     max-width: 180px;
     overflow: hidden;
@@ -712,6 +732,21 @@
     white-space: nowrap;
     font-size: var(--text-2xs);
     color: var(--text-faint);
+  }
+  /* trust chip (Task 2) — claimed-vs-verified, never hue-alone (glyph + word both carry it) */
+  .s-trust {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .s-trust.unverified {
+    color: var(--amber);
+  }
+  .s-trust.verified {
+    color: var(--plasma-green);
   }
   .s-retro {
     display: inline-flex;

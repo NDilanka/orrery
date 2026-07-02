@@ -35,16 +35,16 @@
       <span class="bkey mono">{itemKey}</span>
       <span class="bstatus {item.status}">{item.status}</span>
       {#if item.certified}
-        <span class="seal">✦ certified · brass seal</span>
+        <span class="seal">✦ verified · brass seal</span>
       {:else if item.gate?.green}
-        <span class="claimed">claimed green · awaiting audit</span>
+        <span class="claimed">agent claims pass — not yet verified</span>
       {/if}
     </header>
 
     <!-- ghost / acceptance criteria (the frozen done-contract) -->
     {#if item.ghost && item.ghost.criteria.length}
       <section class="block">
-        <div class="blabel">acceptance criteria · ghost target</div>
+        <div class="blabel">acceptance criteria (frozen)</div>
         <ul class="crit">
           {#each item.ghost.criteria as c (c.text)}
             <li class={c.met ? 'met' : 'unmet'}>
@@ -79,7 +79,7 @@
       <section class="block">
         <div class="blabel">verifier verdict{verdict.model ? ` · ${verdict.model}` : ''}</div>
         <div class="vbadge {verdict.pass ? 'pass' : 'fail'}">
-          {verdict.pass ? '✦ certified' : '✖ refuted · false green'}
+          {verdict.pass ? '✦ verified' : '✖ refuted · false green'}
         </div>
         {#if verdict.failingCriteria.length}
           <ul class="crit">
@@ -100,7 +100,7 @@
     <!-- strikes (rollback lives) -->
     {#if item.strikes > 0}
       <section class="block">
-        <div class="blabel">strikes · rollback lives</div>
+        <div class="blabel">strikes (rollback lives)</div>
         <div class="strikes">
           {#each Array(Math.max(item.strikeBudget, item.strikes)) as _, i (i)}
             <span class="notch {i < item.strikes ? 'used' : ''}"></span>

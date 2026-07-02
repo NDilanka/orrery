@@ -48,7 +48,7 @@
     {#if verdict}
       <div class="vbadge">
         {#if verdict.pass}
-          <span class="seal">✦ CERTIFIED · brass seal</span>
+          <span class="seal">✦ VERIFIED · brass seal</span>
         {:else}
           <span class="refuted">✖ REFUTED · false green</span>
         {/if}
@@ -85,7 +85,7 @@
       {/if}
     {:else}
       <div class="vbadge">
-        <span class="claimed">claimed green · awaiting audit</span>
+        <span class="claimed">agent claims pass — not yet verified</span>
       </div>
     {/if}
 
@@ -93,7 +93,7 @@
       <div class="gate mono {item.gate.green ? 'g' : 'r'}">
         gate {item.gate.pass}/{item.gate.total} · {item.gate.green ? 'green' : 'red'}
         {#if item.strikes > 0}
-          <span class="strikes">· {item.strikes}/{item.strikeBudget} strikes</span>
+          <span class="strikes">· {item.strikes}/{item.strikeBudget} strikes (rollback lives)</span>
         {/if}
       </div>
     {/if}

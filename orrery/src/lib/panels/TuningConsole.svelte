@@ -321,8 +321,8 @@
   >
     <!-- header -->
     <header class="hdr">
-      <div id="tc-title" class="title mono">✦ SET ORBITAL PARAMETERS</div>
-      <div class="sub mono">{mode === 'edit' ? `recalibrating ${editId}` : 'new loop'}</div>
+      <div id="tc-title" class="title mono">{mode === 'edit' ? '✦ LOOP SETTINGS' : '✦ NEW LOOP'}</div>
+      <div class="sub mono">{mode === 'edit' ? `recalibrating ${editId}` : 'author a loop.json'}</div>
       <button class="x" aria-label="close" onclick={onClose}>✕</button>
     </header>
 
@@ -383,6 +383,7 @@
              track visually equals the setting. -->
         <div class="dial">
           <div class="dlabels mono"><span>THRIFT</span><span>AMBITION</span></div>
+          <div class="dsub mono">budget &amp; models</div>
           <input
             type="range"
             min="0"
@@ -403,6 +404,7 @@
 
         <div class="dial">
           <div class="dlabels mono"><span>FUSSY</span><span>PATIENCE</span></div>
+          <div class="dsub mono">verification strictness</div>
           <input
             type="range"
             min="0"
@@ -423,6 +425,7 @@
 
         <div class="dial">
           <div class="dlabels mono"><span>COMPANY</span><span>AUTONOMY</span></div>
+          <div class="dsub mono">how unattended</div>
           <input
             type="range"
             min="0"
@@ -443,7 +446,7 @@
 
       <!-- RIGHT: live preview orrery -->
       <section class="panel preview">
-        <span class="seclab mono">PREVIEW ORRERY</span>
+        <span class="seclab mono">PREVIEW</span>
         <div class="orrery-mini">
           <svg viewBox="0 0 200 130" class="mini">
             <!-- star -->
@@ -498,7 +501,7 @@
           <li><span>AC stars</span><strong>{preview.acCount}</strong></li>
         </ul>
         <button class="night-btn mono" onclick={() => (nightOpen = !nightOpen)}>
-          {nightOpen ? '▾' : '▸'} preview night
+          {nightOpen ? '▾' : '▸'} preview a full run
         </button>
         {#if nightOpen}
           <div class="night">
@@ -534,10 +537,10 @@
 
     <!-- DESTINATION -->
     <section class="panel destination">
-      <span class="seclab mono">DESTINATION <em>— describe the finished planet</em></span>
+      <span class="seclab mono">DEFINITION OF DONE <em>— what must be true when it's finished</em></span>
       <div class="dest-grid">
         <div class="ac">
-          <div class="dlab mono">AC → ghost ✦</div>
+          <div class="dlab mono">ACCEPTANCE CRITERIA</div>
           {#each acceptanceCriteria as _ac, i}
             <div class="ac-row">
               <span class="ac-star">✦</span>
@@ -552,7 +555,7 @@
           <button class="add mono" onclick={addCriterion}>+ add criterion</button>
         </div>
         <div class="gate">
-          <div class="dlab mono">GATE (airlock)</div>
+          <div class="dlab mono">TEST GATE — every stage must pass</div>
           {#each gateStages as _st, i}
             <div class="st-row">
               <input class="inp st-name mono" placeholder="stage" bind:value={gateStages[i].name} />
@@ -660,7 +663,7 @@
                   })}
               />
             </label>
-            <div class="def mono">stages edited in the Destination airlock above ({finalEngine.gate.stages.length}).</div>
+            <div class="def mono">stages edited above in Definition of Done ({finalEngine.gate.stages.length}).</div>
           {:else if openDrawer === 'regression'}
             <div class="row">
               <label class="kv">
@@ -813,7 +816,7 @@
             {:else if validation.ok}
               <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
             {:else}
-              <span class="vhint">calibrate the dials, then ignite</span>
+              <span class="vhint">review the settings, then start</span>
             {/if}
           </span>
         {/if}
@@ -821,7 +824,7 @@
       <div class="actions">
         <button class="ghost mono" onclick={onClose}>cancel</button>
         <!-- This writes/edits the loop's loop.json; it does NOT start a run. The run is
-             started later with ✦ Ignite inside the System view — keep the verbs distinct. -->
+             started later with ✦ Start inside the System view — keep the verbs distinct. -->
         <button class="ignite mono" disabled={!validation.ok || busy} onclick={ignite}>
           {busy
             ? mode === 'edit'
@@ -1015,6 +1018,12 @@
     letter-spacing: 0.1em;
     color: var(--text-meta);
     margin-bottom: 4px;
+  }
+  .dsub {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+    margin-bottom: 5px;
   }
   .dial input[type='range'] {
     width: 100%;

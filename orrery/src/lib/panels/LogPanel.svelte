@@ -43,6 +43,29 @@
     return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
   }
 
+  // ── per-row relative time ───────────────────────────────────────────────────
+  // Each entry is stamped with the wall-clock ms epoch at which the UI received it (see
+  // log.svelte.ts). A live log benefits from that label creeping forward, but a per-second (or
+  // finer) ticker is overkill for a coarse "Xm"/"Xh" bucket — a 20s nudge is plenty.
+  let tsTick = $state(0);
+  $effect(() => {
+    const id = setInterval(() => (tsTick += 1), 20_000);
+    return () => clearInterval(id);
+  });
+
+  function fmtRelative(ts: number): string {
+    void tsTick; // read so the template re-evaluates this label on each tick
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSec < 5) return 'just now';
+    if (diffSec < 60) return `${diffSec}s`;
+    const m = Math.floor(diffSec / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    return `${Math.floor(h / 24)}d`;
+  }
+
   // colour the event-type chip by family (start/done = green, stop/halt = ember, ask = cyan…)
   function tone(ev: string): string {
     if (/(done|merged|complete|green|pass|start)/.test(ev)) return 'good';
@@ -162,6 +185,9 @@
                   aria-expanded={expanded.has(e.seq)}
                   onclick={() => toggleRow(e.seq)}>{e.detail}</button
                 >
+              {/if}
+              {#if typeof e.ts === 'number'}
+                <span class="ts num">{fmtRelative(e.ts)}</span>
               {/if}
             </div>
           {/each}
@@ -302,7 +328,7 @@
   }
   .row {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     gap: var(--space-2);
     font-size: var(--text-xs);
     line-height: 1.4;
@@ -329,7 +355,7 @@
   }
   .detail {
     flex: 1;
-    min-width: 0; /* allow the flex child to shrink below content width so ellipsis actually kicks in */
+    min-width: 0; /* allow the flex child to shrink below content width so wrapping actually kicks in */
     margin: 0;
     padding: 0;
     background: transparent;
@@ -339,21 +365,37 @@
     font-size: 10.5px;
     color: var(--text-meta);
     cursor: pointer;
+    /* collapsed: up to 3 wrapped lines, then clamp — long identifiers/URLs still can't blow out
+       the row width, but normal text no longer breaks mid-word on the way there. */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: break-word;
     transition: color var(--dur-fast) var(--ease-standard);
   }
   .detail:hover {
     color: var(--starlight);
   }
-  /* expanded: drop the one-line clamp so the full detail wraps across lines */
+  /* expanded: drop the 3-line clamp so the full detail wraps across as many lines as it needs */
   .detail.open {
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
     overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    word-break: break-word;
+    overflow-wrap: break-word;
     color: var(--text-dim);
+  }
+  /* right-aligned relative-time label — sits at the end of the row (after .detail's flex:1, or
+     pushed there itself via margin-left:auto when a row has no detail text at all). */
+  .ts {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-left: 4px;
+    font-size: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
   }
   .jump {
     position: absolute;

@@ -29,18 +29,28 @@
   // THROTTLED snapshot here (every ~6th frame / on meaningful change) so the
   // Svelte overlay (<ObservatoryLabels/>) can annotate the scene without making
   // the 60fps loop reactive. Values are in host CSS px (overlay shares the box).
+  // Task 3: every orbit body gets a small label (key + status glyph); the current body gets the
+  // full treatment (larger, undimmed) plus the Task 2 claimed-vs-verified trust glyph prefix.
+  type BodyLabel = {
+    key: string;
+    x: number;
+    y: number;
+    status: string;
+    trust: 'verified' | 'unverified' | null;
+    current: boolean;
+  };
   type Labels = {
     cumUsd: number;
     ratePerMin: number;
     star: { x: number; y: number };
-    active: { name: string; x: number; y: number } | null;
+    bodies: BodyLabel[];
     horizonPct: number | null;
   };
   let labels = $state<Labels>({
     cumUsd: 0,
     ratePerMin: 0,
     star: { x: 0, y: 0 },
-    active: null,
+    bodies: [],
     horizonPct: null,
   });
 
@@ -956,13 +966,34 @@
         // smooth (the overlay also eases its own CSS transitions).
         labelFrame = (labelFrame + 1) % 6;
         if (labelFrame === 0) {
-          const cp = cur ? ppos.get(cur.key) : null;
           const hf = runStore.horizonFrac;
+          // declutter (Task 3): tally bodies per ring so a dense ring (>12) only labels the
+          // current body + failed/unverified ones (the bodies that need attention), not every
+          // planet — a wall of tiny overlapping labels is worse than no labels.
+          const ringCounts = new Map<number, number>();
+          for (const { o } of ppos.values()) {
+            ringCounts.set(o.ringIndex, (ringCounts.get(o.ringIndex) ?? 0) + 1);
+          }
+          // Tier-1 (phone/Ambient) draws no planets at all (see the planet loop above) — no
+          // labels either, or they'd float over nothing (mirrors the existing !uiStore.ambient
+          // gate around <ObservatoryLabels/> below, extended to the phone's tierOne case too).
+          const bodies: BodyLabel[] = [];
+          if (!tierOne) {
+            for (const [key, pp] of ppos) {
+              const o = pp.o;
+              const isCurrent = cur?.key === key;
+              const dense = (ringCounts.get(o.ringIndex) ?? 0) > 12;
+              const flagged = o.status === 'failed' || o.claimedGreen;
+              if (dense && !isCurrent && !flagged) continue;
+              const trust: BodyLabel['trust'] = o.certified ? 'verified' : o.claimedGreen ? 'unverified' : null;
+              bodies.push({ key, x: pp.x, y: pp.y, status: o.status, trust, current: isCurrent });
+            }
+          }
           labels = {
             cumUsd: s.run.cumUsd,
             ratePerMin: s.run.status === 'running' ? s.cost.ratePerMin : 0,
             star: { x: cx, y: cy + vis.starR * pulse },
-            active: cur && cp ? { name: cur.key, x: cp.x, y: cp.y } : null,
+            bodies,
             horizonPct: hf >= 0.5 ? Math.round(hf * 100) : null,
           };
         }

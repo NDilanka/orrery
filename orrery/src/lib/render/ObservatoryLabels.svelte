@@ -4,21 +4,32 @@
   // legible in isolation. It is deliberately restrained / low-contrast so it never
   // fights the rendered instrument, and it works in Planetarium (Tier-1) too.
   //
-  // It draws three things, all in host CSS px (the same coordinate space the rAF
-  // resolves):
+  // It draws:
   //   · a small caption just under the star — cumulative spend + the per-minute
   //     rate (tabular figures, --text-meta);
-  //   · the active work item's key near its planet (clamped in-bounds, ellipsized);
+  //   · a small label (story key + status glyph) near EVERY orbit body (Task 3), decluttered —
+  //     faded/shrunk when not current, and skipped in a dense ring (>12 bodies) unless the body
+  //     is current or needs attention (failed / claimed-but-unverified);
+  //   · the CURRENT body's label gets the full treatment plus a ◌/✓ claimed-vs-verified trust
+  //     glyph prefix (Task 2 — the product's core trust signal, promoted off the tiny planet ring);
   //   · an optional tiny 50/80/100% tick label on the cost-horizon ring.
   //
   // Positions arrive pre-computed/THROTTLED from the rAF (so we don't thrash
   // reactivity). Under reduced motion we place statically — no transitions.
 
+  type BodyLabel = {
+    key: string;
+    x: number;
+    y: number;
+    status: string;
+    trust: 'verified' | 'unverified' | null;
+    current: boolean;
+  };
   type Labels = {
     cumUsd: number;
     ratePerMin: number;
     star: { x: number; y: number };
-    active: { name: string; x: number; y: number } | null;
+    bodies: BodyLabel[];
     horizonPct: number | null;
   };
 
@@ -26,6 +37,27 @@
 
   function fmtUsd(n: number): string {
     return '$' + (n ?? 0).toFixed(2);
+  }
+
+  // a small, non-hue-alone status glyph per work-item lifecycle status (distinct from the trust
+  // glyph ◌/✓, which is about claimed-vs-verified, not lifecycle stage).
+  function statusGlyph(status: string): string {
+    switch (status) {
+      case 'done':
+        return '●';
+      case 'review':
+        return '◑';
+      case 'in-progress':
+        return '◐';
+      case 'blocked':
+        return '⊘';
+      case 'failed':
+        return '✕';
+      case 'ready':
+        return '○';
+      default:
+        return '·'; // backlog
+    }
   }
 
   // the horizon tick reads at its nearest milestone band (50 / 80 / 100%)
@@ -50,16 +82,23 @@
     {/if}
   </div>
 
-  <!-- the active work item, named at its planet -->
-  {#if labels.active}
+  <!-- every orbit body, named at its planet — current gets the full/undimmed treatment
+       (+ the claimed-vs-verified trust glyph), others are small/faded (Task 3 declutter) -->
+  {#each labels.bodies as b (b.key)}
     <div
-      class="active mono"
-      style="left:{labels.active.x}px; top:{labels.active.y}px;"
-      title={labels.active.name}
+      class="body mono"
+      class:current={b.current}
+      class:other={!b.current}
+      style="left:{b.x}px; top:{b.y}px;"
+      title={b.key}
     >
-      {labels.active.name}
+      {#if b.current && b.trust}
+        <span class="trust {b.trust}" aria-hidden="true">{b.trust === 'verified' ? '✓' : '◌'}</span>
+      {/if}
+      <span class="bkey">{b.key}</span>
+      <span class="bglyph" aria-hidden="true">{statusGlyph(b.status)}</span>
     </div>
-  {/if}
+  {/each}
 
   <!-- a tiny horizon milestone tick (50/80/100%) -->
   {#if horizonBand}
@@ -104,20 +143,49 @@
     font-size: var(--text-2xs);
   }
 
-  /* the active item's key, floated just above-right of its planet */
-  .active {
+  /* every orbit body's key, floated just above-right of its planet (Task 3) */
+  .body {
     position: absolute;
     transform: translate(-50%, calc(-100% - 12px));
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
     max-width: 168px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-2xs);
     letter-spacing: 0.08em;
-    color: var(--text-meta);
     text-shadow: 0 1px 3px var(--void);
     transition: left var(--dur-mid) var(--ease-standard),
-      top var(--dur-mid) var(--ease-standard);
+      top var(--dur-mid) var(--ease-standard),
+      opacity var(--dur-mid) var(--ease-standard);
+  }
+  /* current body: full-size, undimmed — the one label that matters most right now */
+  .body.current {
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
+    opacity: 1;
+  }
+  /* every other body: small + faded (declutter) — a quiet map pin, not a competing label */
+  .body.other {
+    font-size: 9px;
+    color: var(--text-faint);
+    opacity: 0.55;
+    max-width: 96px;
+  }
+  .body .bglyph {
+    opacity: 0.85;
+  }
+  /* claimed-vs-verified trust glyph (Task 2), current body only — paired with the VERIFIED/
+     UNVERIFIED word elsewhere (Hud/Cosmos); here it's a compact glyph-only prefix. */
+  .body .trust {
+    font-size: var(--text-xs);
+  }
+  .body .trust.unverified {
+    color: var(--amber);
+  }
+  .body .trust.verified {
+    color: var(--plasma-green);
   }
 
   /* horizon milestone tick — placed top-of-star, recessed */
@@ -136,7 +204,7 @@
 
   /* reduced motion: place statically, no easing of position */
   .olabels.reduced .cap,
-  .olabels.reduced .active,
+  .olabels.reduced .body,
   .olabels.reduced .horizon {
     transition: none;
   }
