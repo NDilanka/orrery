@@ -1,7 +1,13 @@
-/* Shared primitives (docs/ui-modernization-plan.md §M0.3) — imported once, right after
-   tokens.css, in +page.svelte. Everything here replaces a pattern that was previously
+/* Shared primitives (docs/ui-modernization-plan.md §M0.3, §5 M4.2) — imported once, right
+   after tokens.css, in +page.svelte. Everything here replaces a pattern that was previously
    copy-pasted across 4-5 files (the modal/popover surface, the attention pulse, the nav/fab
-   chip shape) or missing entirely app-wide (scrollbars, a visible slider focus state). */
+   chip shape) or missing entirely app-wide (scrollbars, a visible slider focus state).
+
+   M4.2 adds the shared component anatomy the plan's owner-diagnosis flagged as missing
+   ("5 button species, 3 header styles"): .panel/.panel-hd/.panel-meta (the one card), .btn
+   (base + -primary/-ghost/-danger variants + -sm/-md/-lg sizes + -icon), and .seg (segmented
+   control). None of these are wired into any component yet — that's the M4.5 sweep — but they
+   are additive-safe today. */
 
 /* ══ .floating-card — the ONE modal/popover surface ═══════════════════════════════════
    Replaces the identical gradient+shadow+border block that was hand-copied into
@@ -69,17 +75,164 @@
   background: color-mix(in srgb, var(--n4) 80%, white 20%);
 }
 
+/* ══ .panel — THE standard card (M4.2) ═════════════════════════════════════════════════
+   Replaces the 3 competing header styles the plan's owner-diagnosis called out. One card,
+   one header convention: `.panel-hd` (the label row) with an optional right-aligned
+   `.panel-meta` (a count, timestamp, or similar aside). `.panel-tier-a` is the single
+   elevated-surface modifier reserved for the HUD (plan §M4.4 "Tier A — the only elevated
+   rail surface"); every other panel stays at the flat `--surface-panel` tier. */
+.panel {
+  padding: var(--space-4);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+.panel-tier-a {
+  background: var(--n3);
+}
+.panel-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--em-low);
+}
+.panel-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--em-faint);
+}
+
+/* ══ .btn — the one button system (M4.2) ═══════════════════════════════════════════════
+   Replaces the "5 button species" the owner-diagnosis flagged. Base handles shape/motion;
+   variants (`-primary`/`-ghost`/`-danger`) handle color; sizes (`-sm`/`-md`/`-lg`) handle
+   scale. Focus is the global :focus-visible ring (tokens.css) — no per-variant focus style
+   needed. `.btn-icon` squares the padding for an icon-only button of any size. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-grotesk);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--dur-feedback) var(--ease-standard),
+    border-color var(--dur-feedback) var(--ease-standard),
+    color var(--dur-feedback) var(--ease-standard);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* -primary — the monochrome inversion: solid bright fill, dark text. The strongest CTA in
+   a hueless palette is "brightest thing on screen", not a color. */
+.btn-primary {
+  background: var(--em-hi);
+  color: var(--n1);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--em-mid);
+}
+
+/* -ghost — hairline outline, no fill; the default/secondary action. */
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-hairline);
+  color: var(--em-mid);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--n4);
+}
+
+/* -danger — a ghost button that stays red (the one hue besides amber that survives M4). */
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--status-err-core);
+  color: var(--status-err-core);
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-err-base) 18%, transparent);
+}
+
+.btn-sm {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-2xs);
+}
+.btn-md {
+  padding: var(--space-2) var(--space-3);
+}
+.btn-lg {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+}
+.btn-icon {
+  padding: var(--space-2);
+  aspect-ratio: 1;
+}
+
+/* ══ .seg — segmented control (M4.2) ═══════════════════════════════════════════════════
+   ModeBar, replay speed, blueprint picker: one pill-shaped hairline track, keyboard-
+   focusable `.seg-item` children. Selected state is a +1 surface step + bright text;
+   unselected sits at --em-low so the selected item reads as the obvious default. */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+}
+.seg-item {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-grotesk);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--em-low);
+  cursor: pointer;
+  transition: background-color var(--dur-feedback) var(--ease-standard),
+    color var(--dur-feedback) var(--ease-standard);
+}
+.seg-item[aria-selected="true"],
+.seg-item.selected {
+  background: var(--n4);
+  color: var(--em-hi);
+}
+
 /* ══ .slider — shared range-input treatment ════════════════════════════════════════════
-   The fix for "slider focus invisible" (audit #8): a visible double-ring on
-   :focus-visible, layered onto EITHER rendering style —
+   The fix for "slider focus invisible" (audit #8, docs/a11y-audit-2026-07.md §3): a
+   visible double-ring on :focus-visible, layered onto EITHER rendering style —
      · native browser thumb (TransportBar's .scrub, styled via accent-color — kept as-is)
      · a fully custom-drawn thumb (opt in via the `.thumb-brass` modifier below, used by
        TuningConsole's dials)
-   so both keep their own resting look but gain the same accessible focus state. */
+   so both keep their own resting look but gain the same accessible focus state.
+
+   IMPORTANT — every ::-webkit-slider-thumb / ::-moz-range-thumb pair below is written as
+   TWO SEPARATE RULES, never comma-grouped. Chromium doesn't recognize the Firefox-only
+   ::-moz-range-thumb pseudo-element, and per the CSS selector spec an unrecognized
+   component anywhere in a comma-separated selector list invalidates the ENTIRE rule — not
+   just the invalid branch. The audit found exactly this: two rules (the base transition and
+   the focus ring) were silently parsing to zero rules in Chromium because they grouped the
+   two vendor pseudos together, so the slider focus ring never rendered at all. Do not
+   re-merge these back into comma lists. */
 .slider {
   cursor: pointer;
 }
-.slider::-webkit-slider-thumb,
+.slider::-webkit-slider-thumb {
+  transition: box-shadow var(--dur-feedback) var(--ease-standard);
+}
 .slider::-moz-range-thumb {
   transition: box-shadow var(--dur-feedback) var(--ease-standard);
 }
@@ -106,13 +259,17 @@
 }
 
 /* focus-visible double ring — declared last so it wins the (equal-specificity) cascade
-   over `.thumb-brass`'s resting box-shadow. void ring first (separates the glow from
-   whatever the thumb sits on), plasma-cyan ring second (the app's one interactive/focus
-   accent — plan §1 "two accent families"). */
+   over `.thumb-brass`'s resting box-shadow. M4.1: --n1 ring first (separates the glow from
+   whatever the thumb sits on), --em-hi ring second — the app's white double-ring focus
+   state (tokens.css's global :focus-visible rule uses the same shape). Split into two
+   standalone per-vendor rules — see the file-level comment above on why grouping them
+   silently drops the whole rule in Chromium. */
 .slider:focus-visible {
   outline: none;
 }
-.slider:focus-visible::-webkit-slider-thumb,
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--n1), 0 0 0 4px var(--em-hi);
+}
 .slider:focus-visible::-moz-range-thumb {
-  box-shadow: 0 0 0 2px var(--void), 0 0 0 4px var(--plasma-cyan);
+  box-shadow: 0 0 0 2px var(--n1), 0 0 0 4px var(--em-hi);
 }
