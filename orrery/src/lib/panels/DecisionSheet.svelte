@@ -6,99 +6,39 @@
   // pending question and a textarea; Send answers it and closes, and we STAY in
   // Planetarium (the parent owns the mode, this sheet never touches it).
   //
-  // It mirrors QAConsole's send path (threaded answer() + optimistic
-  // answerLocally) and TuningConsole's modal contract (scrim, Esc, focus
-  // move-in / trap / restore).
+  // It shares QAConsole's send path (`../actions/answerFlow.ts` — threaded
+  // answer() + optimistic answerLocally) and TuningConsole's modal contract
+  // (scrim, Esc, focus move-in / trap / restore — `../actions/focusTrap.ts`).
 
-  import { onMount } from 'svelte';
   import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { sessionStore } from '../stores/session.svelte';
+  import { focusTrap } from '../actions/focusTrap';
+  import { sendAnswer, onSubmitKey } from '../actions/answerFlow';
   import type { Qa } from '../types';
 
-  let {
-    answer,
-    observeOnly = false,
-    onClose,
-  }: {
-    answer?: (qid: string, text: string) => void | Promise<void>;
-    observeOnly?: boolean;
-    onClose: () => void;
-  } = $props();
+  let { onClose }: { onClose: () => void } = $props();
 
   const s = $derived(runStore.state);
   // the first unanswered question — the one blocking the loop right now.
   const q = $derived<Qa | null>(s.questions.find((x) => x.a == null) ?? null);
   const remaining = $derived(s.questions.filter((x) => x.a == null).length);
+  const observeOnly = $derived(sessionStore.observeOnly);
 
   let text = $state('');
   let busy = $state(false);
+  let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
   async function send() {
-    const body = text.trim();
-    if (!body || busy || observeOnly || !q) return;
+    if (busy || observeOnly || !q) return;
     busy = true;
     try {
-      await answer?.(q.id, body);
-      // optimistic: stamp locally so the card reflects the send immediately and
-      // the parent's `pending` empties even before the engine round-trips.
-      runStore.answerLocally(q.id, body);
-      onClose();
+      const sent = await sendAnswer(sessionStore.answer.bind(sessionStore), q.id, text);
+      if (sent) onClose();
     } finally {
       busy = false;
     }
   }
-
-  function onKey(e: KeyboardEvent) {
-    // Cmd/Ctrl+Enter sends (Enter alone keeps newlines for long answers).
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      void send();
-    }
-  }
-
-  // ── modal contract: scrim, Esc, focus move-in / trap / restore ─────────────
-  let dialogEl = $state<HTMLDivElement | null>(null);
-  let textareaEl = $state<HTMLTextAreaElement | null>(null);
-  let triggerEl: HTMLElement | null = null;
-
-  function focusable(): HTMLElement[] {
-    if (!dialogEl) return [];
-    return Array.from(
-      dialogEl.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-  }
-
-  function onDialogKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    const items = focusable();
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-    if (e.shiftKey && (active === first || !dialogEl?.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
-  onMount(() => {
-    triggerEl = document.activeElement as HTMLElement | null;
-    // focus the textarea (or the dialog if observe-only disabled it) on open
-    queueMicrotask(() => {
-      (textareaEl ?? dialogEl)?.focus();
-    });
-    return () => triggerEl?.focus?.();
-  });
 
   function fmtKind(k: Qa['kind']): string {
     return k === 'retro' ? 'RETRO' : 'REVIEW';
@@ -114,9 +54,8 @@
     aria-modal="true"
     aria-label="Answer the loop's pending decision"
     tabindex="-1"
-    bind:this={dialogEl}
+    use:focusTrap={{ onClose, initialFocus: () => textareaEl }}
     onclick={(e) => e.stopPropagation()}
-    onkeydown={onDialogKeydown}
   >
     {#if q}
       <header class="hdr">
@@ -147,7 +86,7 @@
           class="answer"
           bind:this={textareaEl}
           bind:value={text}
-          onkeydown={onKey}
+          onkeydown={(e) => onSubmitKey(e, () => void send())}
           placeholder="Type your decision… (⌘/Ctrl+Enter to send)"
           rows="3"
         ></textarea>

@@ -7,123 +7,123 @@
     "alertPct": null,
     "ceilingUsd": null,
     "cumUsd": 26.747233249999994,
-    "ratePerMin": 11.72034270588235,
+    "ratePerMin": 0.2827764942644014,
     "series": [
       {
         "cum": 0.0,
-        "t": 2000.0
+        "t": 1781856082895.0
       },
       {
         "cum": 0.0,
-        "t": 3000.0
+        "t": 1781856124342.0
       },
       {
         "cum": 0.0,
-        "t": 4000.0
+        "t": 1781856165789.0
       },
       {
         "cum": 0.0,
-        "t": 6000.0
+        "t": 1781856248684.0
       },
       {
         "cum": 11.803573000000002,
-        "t": 9000.0
+        "t": 1781856373026.0
       },
       {
         "cum": 11.803573000000002,
-        "t": 10000.0
+        "t": 1781856414474.0
       },
       {
         "cum": 0.0,
-        "t": 17000.0
+        "t": 1781856704605.0
       },
       {
         "cum": 0.4629865,
-        "t": 22000.0
+        "t": 1781856911842.0
       },
       {
         "cum": 0.0,
-        "t": 27000.0
+        "t": 1781857119079.0
       },
       {
         "cum": 0.0,
-        "t": 28000.0
+        "t": 1781857160526.0
       },
       {
         "cum": 17.1284145,
-        "t": 30000.0
+        "t": 1781857243421.0
       },
       {
         "cum": 34.2935879,
-        "t": 40000.0
+        "t": 1781857657895.0
       },
       {
         "cum": 16.131215000000005,
-        "t": 43000.0
+        "t": 1781857782237.0
       },
       {
         "cum": 2.2418365,
-        "t": 54000.0
+        "t": 1781858238158.0
       },
       {
         "cum": 17.2641235,
-        "t": 57000.0
+        "t": 1781858362500.0
       },
       {
         "cum": 29.2388547,
-        "t": 66000.0
+        "t": 1781858735526.0
       },
       {
         "cum": 12.384228000000002,
-        "t": 69000.0
+        "t": 1781858859868.0
       },
       {
         "cum": 27.174825499999997,
-        "t": 79000.0
+        "t": 1781859274342.0
       },
       {
         "cum": 12.162449499999996,
-        "t": 82000.0
+        "t": 1781859398684.0
       },
       {
         "cum": 12.13958395,
-        "t": 98000.0
+        "t": 1781860061842.0
       },
       {
         "cum": 12.13958395,
-        "t": 99000.0
+        "t": 1781860103289.0
       },
       {
         "cum": 16.784941949999997,
-        "t": 101000.0
+        "t": 1781860186184.0
       },
       {
         "cum": 46.90358745,
-        "t": 113000.0
+        "t": 1781860683553.0
       },
       {
         "cum": 75.23289295000001,
-        "t": 127000.0
+        "t": 1781861263816.0
       },
       {
         "cum": 75.23289295000001,
-        "t": 128000.0
+        "t": 1781861305263.0
       },
       {
         "cum": 75.23289295000001,
-        "t": 129000.0
+        "t": 1781861346711.0
       },
       {
         "cum": 2.6188474500000005,
-        "t": 141000.0
+        "t": 1781861844079.0
       },
       {
         "cum": 14.5838665,
-        "t": 144000.0
+        "t": 1781861968421.0
       },
       {
         "cum": 26.747233249999994,
-        "t": 152000.0
+        "t": 1781862300000.0
       }
     ]
   },
@@ -175,7 +175,7 @@
       "group": "2",
       "index": 0,
       "key": "2-2-ai-classification-pipeline",
-      "lastEventTs": 21000.0,
+      "lastEventTs": 1781856870395.0,
       "pr": {
         "base": "develop",
         "merged": false,
@@ -204,7 +204,7 @@
       "group": "2",
       "index": 1,
       "key": "2-3-classification-display-and-confidence-feedback",
-      "lastEventTs": 37000.0,
+      "lastEventTs": 1781857533553.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -233,7 +233,7 @@
       "group": "2",
       "index": 1,
       "key": "2-4-one-tap-correction-and-learning-signals",
-      "lastEventTs": 53000.0,
+      "lastEventTs": 1781858196711.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -262,7 +262,7 @@
       "group": "2",
       "index": 1,
       "key": "2-5-atomic-note-extraction-and-linking",
-      "lastEventTs": 78000.0,
+      "lastEventTs": 1781859232895.0,
       "pr": null,
       "smoke": {
         "iter": 2,
@@ -287,7 +287,7 @@
       "group": "2",
       "index": 1,
       "key": "2-6-embedding-generation-pipeline",
-      "lastEventTs": 89000.0,
+      "lastEventTs": 1781859688816.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -316,7 +316,7 @@
       "group": "3",
       "index": 2,
       "key": "3-1-note-browsing-and-category-filtering",
-      "lastEventTs": 110000.0,
+      "lastEventTs": 1781860559211.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -345,7 +345,7 @@
       "group": "3",
       "index": 3,
       "key": "3-2-note-detail-view-and-deletion",
-      "lastEventTs": 124000.0,
+      "lastEventTs": 1781861139474.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -374,7 +374,7 @@
       "group": "3",
       "index": 1,
       "key": "3-3-related-notes-panel",
-      "lastEventTs": 140000.0,
+      "lastEventTs": 1781861802632.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -403,7 +403,7 @@
       "group": "3",
       "index": 1,
       "key": "3-4-semantic-search",
-      "lastEventTs": 151000.0,
+      "lastEventTs": 1781862258553.0,
       "pr": {
         "base": "develop",
         "merged": true,
@@ -469,13 +469,13 @@
   "run": {
     "branch": "develop",
     "cumUsd": 26.747233249999994,
-    "lastEventAt": "1970-01-01T00:02:32.000Z",
+    "lastEventAt": "2026-06-19T09:45:00.000Z",
     "mergeBase": "develop",
     "pid": null,
     "restState": "stopped-ember",
     "resumeCmd": "pwsh -File \"bmad-loop.ps1\"",
     "stage": "between-stories (clean)",
-    "startedAt": "1970-01-01T00:02:23.000Z",
+    "startedAt": "2026-06-19T09:38:46.974Z",
     "status": "stopped",
     "stopPending": null,
     "target": "3-4-semantic-search",

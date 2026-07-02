@@ -8,9 +8,10 @@
   //
   // Modal contract mirrors TuningConsole: --scrim backdrop, role=dialog +
   // aria-modal, focus moves in on open + restores to the trigger on close, and
-  // Tab/Shift+Tab are trapped inside the card (WCAG 2.4.3 + 2.1.2).
+  // Tab/Shift+Tab are trapped inside the card (WCAG 2.4.3 + 2.1.2) — via the
+  // shared `focusTrap` action.
 
-  import { onMount } from 'svelte';
+  import { focusTrap } from '../actions/focusTrap';
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -80,52 +81,6 @@
     'body/planet colour = status, never colour alone — each also carries a distinct ring, dash or glyph (a brass seal ring = verified · a dashed pulsing green ring = claimed, not yet verified).',
   ];
 
-  // ── modal contract: focus move-in / trap / restore ──────────────────────────
-  let dialogEl = $state<HTMLDivElement | null>(null);
-  let triggerEl: HTMLElement | null = null;
-
-  function focusable(): HTMLElement[] {
-    if (!dialogEl) return [];
-    return Array.from(
-      dialogEl.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-  }
-
-  // Escape closes, Tab/Shift+Tab wrap inside the card.
-  function onDialogKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    const items = focusable();
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-    if (e.shiftKey && (active === first || !dialogEl?.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
-  onMount(() => {
-    // capture the trigger so focus can be restored on close (WCAG 2.4.3)
-    triggerEl = document.activeElement as HTMLElement | null;
-    // move focus into the dialog: first focusable control, else the container
-    queueMicrotask(() => {
-      const items = focusable();
-      (items[0] ?? dialogEl)?.focus();
-    });
-    // restore focus to whatever opened the overlay on teardown
-    return () => triggerEl?.focus?.();
-  });
 </script>
 
 <!-- scrim + dialog -->
@@ -136,9 +91,8 @@
     aria-modal="true"
     aria-labelledby="help-title"
     tabindex="-1"
-    bind:this={dialogEl}
+    use:focusTrap={{ onClose }}
     onclick={(e) => e.stopPropagation()}
-    onkeydown={onDialogKeydown}
   >
     <header class="hdr">
       <span class="dot" aria-hidden="true"></span>

@@ -51,19 +51,27 @@ impl ActivityReader {
 }
 
 /// Blocking watch loop. `state_dir` is the directory to watch; `log_path` is the file to tail.
-/// `on_events` is called once per drain with the BATCH of newly-completed JSON lines (empty drains
-/// are skipped). Batching matters: the first drain replays the whole existing log, so a per-line
-/// callback there would do O(N^2) work + flood the sink — callers reduce once per batch instead.
+/// `tailer` is caller-constructed (and possibly pre-`seed`ed past history the caller already
+/// folded into a live reducer — see `control::build_live` / R2) rather than created fresh here,
+/// so a caller can avoid replaying + re-applying the whole log a second time on every mount.
+/// `on_events` is called once per drain with the BATCH of newly-completed JSON lines (empty
+/// drains are skipped) and whether the tailer detected the log was ROTATED since the last drain
+/// (R3) — a `true` means `evs` is the WHOLE new file's content, not a diff, so the caller should
+/// rebuild anything derived from the old file's contents (a live reducer) from scratch instead of
+/// applying incrementally. Batching matters: the first drain replays the whole existing log (or,
+/// with a seeded tailer, whatever is left), so a per-line callback there would do O(N^2) work +
+/// flood the sink — callers reduce once per batch instead.
 /// `should_stop` lets the caller break the loop. Runs until `should_stop()` or the channel closes.
 pub fn watch_loop<F, A, S>(
     state_dir: &Path,
     log_path: &Path,
+    mut tailer: Tailer,
     mut on_events: F,
     mut on_activity: A,
     should_stop: S,
 ) -> notify::Result<()>
 where
-    F: FnMut(&[Value]),
+    F: FnMut(&[Value], bool),
     // Called with the latest `activity.json` whenever it changes (inner `None` = absent/cleared).
     A: FnMut(Option<Value>),
     S: Fn() -> bool,
@@ -93,7 +101,6 @@ where
         .watcher()
         .watch(state_dir, RecursiveMode::NonRecursive)?;
 
-    let mut tailer = Tailer::new();
     let mut activity = ActivityReader::new(state_dir);
 
     // Process anything already present once before blocking (log + the current activity beat).
@@ -131,16 +138,18 @@ where
     Ok(())
 }
 
-fn drain_new<F: FnMut(&[Value])>(tailer: &mut Tailer, log_path: &Path, on_events: &mut F) {
-    if let Ok(lines) = tailer.read_new(log_path) {
+fn drain_new<F: FnMut(&[Value], bool)>(tailer: &mut Tailer, log_path: &Path, on_events: &mut F) {
+    if let Ok((lines, rotated)) = tailer.read_new(log_path) {
         // Parse the whole drain, then hand the callback ONE batch (non-JSON lines skipped; the log
-        // is JSONL). Empty drains (the common 300ms poll with no new bytes) call nothing.
+        // is JSONL). Empty drains (the common 300ms poll with no new bytes) call nothing — UNLESS
+        // a rotation landed on an (as yet) empty new file, in which case the caller still needs to
+        // know to reset (an empty batch alone can't signal that).
         let vals: Vec<Value> = lines
             .iter()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .collect();
-        if !vals.is_empty() {
-            on_events(&vals);
+        if !vals.is_empty() || rotated {
+            on_events(&vals, rotated);
         }
     }
 }

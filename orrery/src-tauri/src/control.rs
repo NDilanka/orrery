@@ -14,11 +14,12 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::live;
 use crate::model::{
     Activity, Checkpoint, Delta, GuardStatus, LoopDef, RunState, StartResult, StartSpec,
 };
-use crate::reducer::Reducer;
 use crate::sprint;
+use crate::tailer::Tailer;
 use crate::watcher;
 
 /// App state managed by Tauri: loopId → most-recently-spawned child PID.
@@ -65,53 +66,77 @@ fn loop_id_from(state_dir: &Path, log_file: Option<&str>) -> String {
         .unwrap_or_else(|| "loop".to_string())
 }
 
-/// Read & parse a JSONL file into events. Missing file → empty vec.
-fn read_events(path: &Path) -> Vec<Value> {
+/// Read & parse a JSONL file into events, alongside the exact byte length read (so a `Tailer`
+/// can be `seed`ed past it — R2). Missing file → `(empty, 0)`.
+fn read_events_and_len(path: &Path) -> (Vec<Value>, u64) {
     match std::fs::read_to_string(path) {
-        Ok(text) => text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-            .collect(),
-        Err(_) => Vec::new(),
+        Ok(text) => {
+            let len = text.len() as u64;
+            let events = text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .collect();
+            (events, len)
+        }
+        Err(_) => (Vec::new(), 0),
     }
 }
 
-/// Core reduce shared by load_run and watch_run's initial snapshot. Applies events, then
-/// checkpoint, then (bmad) sprint-status overlays.
-fn reduce_all(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> RunState {
-    let loop_id = loop_id_from(state_dir, log_file);
-    let mut reducer = Reducer::new(loop_id, adapter);
-
-    let lp = log_path(state_dir, adapter, log_file);
-    let events = read_events(&lp);
-    for (i, ev) in events.iter().enumerate() {
-        reducer.apply(ev, (i as f64) * 1000.0);
-    }
-
-    // checkpoint.json
+/// checkpoint.json + (bmad) sprint-status.yaml overlays — shared by `build_live`'s full rebuild
+/// and the watcher thread's incremental re-apply after every new-lines batch (R2), so a one-shot
+/// load and a live tail always agree on overlay order: events, THEN checkpoint, THEN
+/// sprint-status (sprint-status is authoritative for items not in flight, so it must land last).
+fn apply_overlays(lr: &mut live::LiveReducer, state_dir: &Path, adapter: &str) {
     let cp_path = checkpoint_path(state_dir);
     if let Ok(text) = std::fs::read_to_string(&cp_path) {
         if let Ok(cp) = serde_json::from_str::<Value>(&text) {
-            reducer.apply_checkpoint(&cp);
+            lr.apply_checkpoint(&cp);
         }
     }
-
-    // sprint-status.yaml (bmad only, authoritative for not-in-flight items)
     if adapter == "bmad" {
         if let Some(sp) = find_sprint_status(state_dir) {
             let s = sprint::parse_file(&sp);
-            reducer.apply_sprint(&s.items, &s.groups);
+            lr.apply_sprint(&s.items, &s.groups);
         }
     }
+}
 
-    reducer.state
+/// Build a fresh `LiveReducer` by replaying the WHOLE on-disk event log + the file overlays
+/// above. Returns the reducer (so a caller — `watch_run`'s watcher thread — can keep feeding it
+/// only NEW lines from here on, per R2) alongside the exact byte length of the log consumed, so a
+/// `Tailer` can be `seed`ed to it and never re-read (let alone re-apply) the same bytes.
+fn build_live(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> (live::LiveReducer, u64) {
+    let loop_id = loop_id_from(state_dir, log_file);
+    let lp = log_path(state_dir, adapter, log_file);
+    let (events, len) = read_events_and_len(&lp);
+    let mut lr = live::LiveReducer::new(loop_id, adapter);
+    lr.apply_batch(&events);
+    apply_overlays(&mut lr, state_dir, adapter);
+    (lr, len)
+}
+
+/// Core reduce shared by load_run and any one-shot snapshot (a full rebuild — `build_live`'s
+/// incremental twin is what the live watcher thread uses after the first snapshot).
+fn reduce_all(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> RunState {
+    build_live(state_dir, adapter, log_file).0.state()
 }
 
 /// Public wrapper so the LAN server (`lan.rs`) can run the SAME tail→reduce pipeline `watch_run`
 /// uses for its `/ws` snapshot + state deltas. Pure read of the loop's files → `RunState`.
 pub fn reduce_all_pub(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> RunState {
     reduce_all(state_dir, adapter, log_file)
+}
+
+/// Public wrapper around `build_live` (R2) so `lan.rs`'s `/ws` stream can share the SAME
+/// incremental live-reducer pipeline `watch_run` uses, instead of a full re-reduce per tick.
+pub fn build_live_pub(state_dir: &Path, adapter: &str, log_file: Option<&str>) -> (live::LiveReducer, u64) {
+    build_live(state_dir, adapter, log_file)
+}
+
+/// Public wrapper around `apply_overlays` (R2) for `lan.rs`'s incremental tail loop.
+pub fn apply_overlays_pub(lr: &mut live::LiveReducer, state_dir: &Path, adapter: &str) {
+    apply_overlays(lr, state_dir, adapter)
 }
 
 /// Overlay value: read the STOP brake flag at `<state_dir>/STOP` → a `StopPending`.
@@ -148,6 +173,50 @@ pub fn load_run(
     Ok(state)
 }
 
+// ---------------------------------------------------------------------------
+// R1 — watcher lifecycle (no more leaked threads/handles per remount)
+// ---------------------------------------------------------------------------
+//
+// `watch_run` used to spawn a daemon thread + notify watcher PER INVOCATION and intentionally
+// leak both — every time a loop view mounted (navigating away/back) another thread and FS watch
+// piled up forever. `WATCHERS` tracks the CURRENT watcher per watched directory; re-invoking
+// `watch_run` for the same directory now signals the previous watcher to stop (and reaps its
+// thread) before starting a new one, so there is at most one live watcher per loop.
+
+struct WatcherHandle {
+    stop: Arc<AtomicBool>,
+    join: std::thread::JoinHandle<()>,
+}
+
+static WATCHERS: OnceLock<Mutex<HashMap<PathBuf, WatcherHandle>>> = OnceLock::new();
+
+fn watcher_registry() -> &'static Mutex<HashMap<PathBuf, WatcherHandle>> {
+    WATCHERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register a new watcher for `dir`; if one was already registered there, signal it to stop and
+/// reap its thread FIRST. Takes the registry as a parameter (rather than reaching for the
+/// `static` directly) so the core replace-and-signal behavior is unit-testable against a
+/// throwaway registry, no real file watching required.
+fn replace_watcher(
+    registry: &Mutex<HashMap<PathBuf, WatcherHandle>>,
+    dir: PathBuf,
+    stop: Arc<AtomicBool>,
+    join: std::thread::JoinHandle<()>,
+) {
+    let prev = {
+        let mut map = registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        map.insert(dir, WatcherHandle { stop, join })
+    };
+    if let Some(prev) = prev {
+        prev.stop.store(true, Ordering::Relaxed);
+        // The old thread notices the flag on its next poll tick (~50ms, see watcher.rs) and
+        // returns; joining here is bounded, not indefinite, and guarantees at most one watcher
+        // per directory is ever alive at a time (never two racing threads on the same log).
+        let _ = prev.join.join();
+    }
+}
+
 #[tauri::command]
 pub fn watch_run(
     state_dir: String,
@@ -157,62 +226,88 @@ pub fn watch_run(
 ) -> Result<(), String> {
     let dir = PathBuf::from(&state_dir);
     let lp = log_path(&dir, &adapter, log_file.as_deref());
+    let loop_id = loop_id_from(&dir, log_file.as_deref());
 
-    // Emit the initial full snapshot synchronously. Overlay the on-disk STOP brake so a banked
-    // brake survives a UI reload/reconnect (reduce_all never reads the STOP file).
-    let mut initial = reduce_all(&dir, &adapter, log_file.as_deref());
+    // R2: build the live reducer ONCE from the whole on-disk log + overlays. This both produces
+    // the initial Snapshot AND becomes the persistent reducer the watcher thread keeps feeding —
+    // only NEW lines from here on, never a from-scratch re-reduce per tick.
+    let (mut live, consumed_len) = build_live(&dir, &adapter, log_file.as_deref());
+    let mut initial = live.state();
+    // Overlay the on-disk STOP brake so a banked brake survives a UI reload/reconnect
+    // (the reducer itself never reads the STOP file — kept out for golden-parity reasons).
     initial.run.stop_pending = stop_pending_at(&dir);
     channel
         .send(Delta::Snapshot { state: initial })
         .map_err(|e| e.to_string())?;
 
-    // Spawn the watcher on a thread. It re-reduces from scratch on each new event (cheap for
-    // these logs and trivially consistent with idempotency) and emits a full State delta.
+    // Seed a tailer past what we just folded into `live`, so its first drain sees ZERO "new"
+    // bytes for history we already have (R2/R3) instead of replaying + re-applying it again.
+    let mut tailer = Tailer::new();
+    tailer.seed(&lp, consumed_len);
+
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let stop_on_send_err = stop.clone();
     let adapter2 = adapter.clone();
-    let log_file2 = log_file.clone();
+    let dir2 = dir.clone();
+    let lp2 = lp.clone();
+    let watch_dir = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let watch_dir_key = watch_dir.clone();
 
-    std::thread::spawn(move || {
+    let join = std::thread::spawn(move || {
         // The activity heartbeat rides a SEPARATE Delta on its own channel clone (Tauri Channels
         // are cheap to clone) so a beat surfaces even on a poll with no new log line.
         let activity_channel = channel.clone();
+        let stop_activity = stop_on_send_err.clone();
         let on_activity = move |raw: Option<Value>| {
             // Validate/canonicalize into the typed Activity (drops unknown keys, defaults missing);
             // a malformed activity.json → `None` rather than a wire error.
             let activity = raw.and_then(|v| serde_json::from_value::<Activity>(v).ok());
-            let _ = activity_channel.send(Delta::Activity { activity });
+            // A failed send means the receiving Channel is gone (the view navigated away) — flip
+            // the stop flag so the watch loop exits on its NEXT poll tick instead of running
+            // forever with nowhere to send (R1: "exit promptly when the Channel is dropped").
+            if activity_channel.send(Delta::Activity { activity }).is_err() {
+                stop_activity.store(true, Ordering::Relaxed);
+            }
         };
 
-        // We re-reduce the whole file on each notification; this keeps the wire model a full
-        // RunState (frontend always has complete state) and is robust against partial/keyed events.
-        let on_events = move |evs: &[Value]| {
+        let on_events = move |evs: &[Value], rotated: bool| {
             // Live LOG feed: stream the raw events, but cap to the last 300 of a batch. The
-            // watcher's first drain replays the WHOLE existing log, which on a long-running loop
-            // could be thousands of lines — without the cap that would flood the Channel on every
-            // System mount (the frontend logStore caps at 300 too). Live batches are tiny, so this
-            // never trims them.
+            // watcher's first drain (absent a seeded tailer) would replay the whole existing log —
+            // without the cap that would flood the Channel on every System mount (the frontend
+            // logStore caps at 300 too). Live batches are tiny, so this never trims them.
             let start = evs.len().saturating_sub(300);
             for ev in &evs[start..] {
-                let _ = channel.send(Delta::Event { event: ev.clone() });
+                if channel.send(Delta::Event { event: ev.clone() }).is_err() {
+                    stop_on_send_err.store(true, Ordering::Relaxed);
+                    return;
+                }
             }
-            // Reduce ONCE per batch (not per line) → O(N) on mount instead of O(N^2), and one
-            // authoritative State delta. ignore send errors (channel closed => navigated away).
-            let mut state = reduce_all(&dir, &adapter2, log_file2.as_deref());
-            state.run.stop_pending = stop_pending_at(&dir); // keep the banked brake live
-            let _ = channel.send(Delta::State { state });
+            // R3: the tailer detected a delete+recreate — rebuild the live reducer from scratch
+            // using the bytes it just read (rotation resets the cursor to 0, so `evs` IS the
+            // whole new file's content already; no extra disk read needed).
+            if rotated {
+                live = live::LiveReducer::new(loop_id.clone(), adapter2.clone());
+            }
+            // R2: feed ONLY the new lines into the persistent reducer (not a full re-reduce), then
+            // re-apply the file overlays (cheap — small file reads, not O(whole log)) so
+            // checkpoint/sprint-status changes independent of the log still surface every tick.
+            live.apply_batch(evs);
+            apply_overlays(&mut live, &dir2, &adapter2);
+            let mut state = live.state();
+            state.run.stop_pending = stop_pending_at(&dir2); // keep the banked brake live
+            if channel.send(Delta::State { state }).is_err() {
+                stop_on_send_err.store(true, Ordering::Relaxed);
+            }
         };
 
         let should_stop = move || stop_thread.load(Ordering::Relaxed);
-
-        // state_dir for watching == parent dir of the log file
-        let watch_dir = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-        let _ = watcher::watch_loop(&watch_dir, &lp, on_events, on_activity, should_stop);
+        let _ = watcher::watch_loop(&watch_dir, &lp2, tailer, on_events, on_activity, should_stop);
     });
 
-    // NOTE: the thread runs until the process exits; the stop flag is reserved for a future
-    // unwatch command. We intentionally leak the handle (daemon thread).
-    let _ = stop;
+    // R1: replaces (and reaps) any watcher already registered for this directory — at most one
+    // live watcher per loop, instead of leaking a new thread + FS watch on every remount.
+    replace_watcher(watcher_registry(), watch_dir_key, stop, join);
     Ok(())
 }
 
@@ -1178,6 +1273,49 @@ mod tests {
 
     fn fixtures_dir() -> PathBuf {
         PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures"))
+    }
+
+    // ----- R1 watcher-lifecycle tests -----
+
+    #[test]
+    fn replace_watcher_signals_and_reaps_the_previous_one() {
+        // A throwaway registry (not the process-global WATCHERS) so this test can't collide with
+        // anything else touching that static.
+        let registry: Mutex<HashMap<PathBuf, WatcherHandle>> = Mutex::new(HashMap::new());
+        let dir = PathBuf::from("/fake/watched/dir");
+
+        let stop1 = Arc::new(AtomicBool::new(false));
+        let stop1_thread = stop1.clone();
+        let saw_stop1 = Arc::new(AtomicBool::new(false));
+        let saw_stop1_thread = saw_stop1.clone();
+        let join1 = std::thread::spawn(move || {
+            // Mirrors watch_loop's own should_stop poll: spins until told to stop.
+            while !stop1_thread.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            saw_stop1_thread.store(true, Ordering::Relaxed);
+        });
+        replace_watcher(&registry, dir.clone(), stop1.clone(), join1);
+        assert_eq!(registry.lock().unwrap().len(), 1);
+        assert!(!stop1.load(Ordering::Relaxed), "first registration must not self-signal");
+
+        // Registering a SECOND watcher for the SAME dir must stop + reap the first one — this is
+        // what closes the "every remount leaks a thread + FS watch" leak.
+        let stop2 = Arc::new(AtomicBool::new(false));
+        let join2 = std::thread::spawn(|| {});
+        replace_watcher(&registry, dir.clone(), stop2.clone(), join2);
+
+        assert!(stop1.load(Ordering::Relaxed), "the previous watcher's stop flag must be set");
+        assert!(saw_stop1.load(Ordering::Relaxed), "the previous thread must have actually exited");
+        assert_eq!(registry.lock().unwrap().len(), 1, "still exactly one entry for this dir");
+
+        // A DIFFERENT dir's watcher is untouched by a replacement elsewhere.
+        let other_dir = PathBuf::from("/fake/other/dir");
+        let stop3 = Arc::new(AtomicBool::new(false));
+        let join3 = std::thread::spawn(|| {});
+        replace_watcher(&registry, other_dir, stop3.clone(), join3);
+        assert!(!stop2.load(Ordering::Relaxed), "an unrelated dir must not signal dir's watcher");
+        assert_eq!(registry.lock().unwrap().len(), 2);
     }
 
     #[test]

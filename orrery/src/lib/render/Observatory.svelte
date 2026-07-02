@@ -20,6 +20,7 @@
   import { browser } from '$app/environment';
   import { runStore, STAR_R0, STAR_K, RING_BASE } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { restColor } from '../palette';
   import ObservatoryLabels from './ObservatoryLabels.svelte';
 
   let host: HTMLDivElement;
@@ -78,16 +79,6 @@
     opus: 0x9fd0ff,
   };
 
-  function starColor(status: string, restState: string | null): number {
-    if (restState === 'failed-dark') return C.crimson;
-    if (restState === 'quota-frost') return C.frost;
-    if (restState === 'handoff-beacon') return C.crimson;
-    if (restState === 'certified-done') return C.green;
-    if (restState === 'stopped-ember') return C.ember;
-    if (status === 'error') return C.crimson;
-    if (status === 'running') return C.amber;
-    return C.starlight;
-  }
   function modelColor(m: string): number {
     if (m === 'haiku') return C.haiku;
     if (m === 'opus') return C.opus;
@@ -450,7 +441,7 @@
         // ── eased global signals ──
         const targetR = STAR_R0 + STAR_K * Math.log1p(Math.max(0, s.run.cumUsd));
         vis.starR = lerp(vis.starR, targetR, 0.08);
-        const targetColor = starColor(s.run.status, s.run.restState);
+        const targetColor = restColor(s.run.status, s.run.restState, C.starlight);
         vis.starColor = lerpColor(vis.starColor, targetColor, 0.08);
         vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), 0.06);
         vis.burn = lerp(vis.burn, running ? runStore.burn : 0, 0.05);

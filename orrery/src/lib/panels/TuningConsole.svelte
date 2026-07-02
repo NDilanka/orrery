@@ -39,6 +39,7 @@
     type ConsoleInput,
   } from '../blueprints';
   import { cosmosStore, type ProbeResult } from '../stores/cosmos.svelte';
+  import { focusTrap } from '../actions/focusTrap';
 
   let {
     mode = 'create',
@@ -271,42 +272,6 @@
     }
   }
 
-  // ── modal contract: focus move-in / trap / restore (WCAG 2.4.3 + 2.1.2) ─────
-  let dialogEl = $state<HTMLDivElement | null>(null);
-  let triggerEl: HTMLElement | null = null;
-
-  function focusable(): HTMLElement[] {
-    if (!dialogEl) return [];
-    return Array.from(
-      dialogEl.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-  }
-
-  // Escape closes, Tab/Shift+Tab wrap inside the console. Bound on the dialog so
-  // the .console keydown no longer needs to swallow the event.
-  function onDialogKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    const items = focusable();
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-    if (e.shiftKey && (active === first || !dialogEl?.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
   // ── ignite ──────────────────────────────────────────────────────────────────
   async function ignite() {
     if (!validation.ok || busy) {
@@ -366,10 +331,8 @@
   }
 
   // ── prefill when editing an existing loop ───────────────────────────────────
+  // (focus move-in / trap / restore is now the shared `focusTrap` action on the dialog element)
   onMount(() => {
-    // capture the trigger so focus can be restored on close (WCAG 2.4.3)
-    triggerEl = document.activeElement as HTMLElement | null;
-
     if (mode === 'edit' && editId) {
       loopId = editId;
       // load the def async, but keep onMount sync so it can return a teardown
@@ -393,15 +356,6 @@
       // the friendly default id the comment promised
       loopId = friendlyDefaultId();
     }
-
-    // move focus into the dialog: first focusable field, else the container
-    queueMicrotask(() => {
-      const items = focusable();
-      (items[0] ?? dialogEl)?.focus();
-    });
-
-    // restore focus to the element that opened the console on teardown
-    return () => triggerEl?.focus?.();
   });
 
   // human-readable settings for the dial aria-valuetext (screen readers hear the
@@ -454,9 +408,8 @@
     aria-modal="true"
     aria-labelledby="tc-title"
     tabindex="-1"
-    bind:this={dialogEl}
+    use:focusTrap={{ onClose }}
     onclick={(e) => e.stopPropagation()}
-    onkeydown={onDialogKeydown}
   >
     <!-- header -->
     <header class="hdr">

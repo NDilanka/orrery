@@ -19,15 +19,9 @@ import type { RestState, RunState, RunStatus } from '../types';
 import { reduce } from '../reduce';
 import { normalizeAll } from '../adapters';
 import { hasTauri, LOOPS, type LoopChoice } from '../transport';
+import { DEFAULT_LOOPS_DIR } from '../paths';
 import { base } from '$app/paths';
 import { browser } from '$app/environment';
-
-// Path to the loops/ registry (mirrors tauri-transport's default). Tauri's
-// `list_loops` reads loop.json from here; dev replay ignores it.
-// Absolute so list_loops/load_run find loops regardless of the app's working directory
-// (relative 'orrery/loops' resolves against neither the launcher's orrery/ cwd nor cargo's
-// orrery/src-tauri). LOCAL override; mirror of transport/tauri.ts DEFAULT_LOOPS_DIR.
-export const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
 
 /** Wire shape of `probe_command` (PROTOCOL §6, U3 Task 3). */
 export interface ProbeResult {
