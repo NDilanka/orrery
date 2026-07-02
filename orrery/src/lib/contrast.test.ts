@@ -140,6 +140,15 @@ const BACKGROUNDS = ['--surface-panel', '--n1', '--n2'] as const;
 // normal-weight body/label text — WCAG 1.4.3 AA (4.5:1) applies in full.
 const BODY_TEXT_TOKENS = ['--text-primary', '--text-dim', '--text-meta'] as const;
 
+// M4.1 (docs/ui-modernization-plan.md §5): the four text-emphasis primitives underneath
+// --text-primary/-dim/-meta/-faint, checked directly since the M4.5 Observatory/Cosmos
+// sweeps will consume --em-* tokens on canvas text/glyphs, not just through the semantic
+// aliases. --em-hi/--em-mid must clear the 4.5:1 text bar on every background including
+// --surface-panel; --em-low (used for label text via --text-meta) must clear 4.5:1 on
+// --n1/--n2 specifically (not asserted against --surface-panel, which is a bare alias of
+// --n2 anyway — see the BACKGROUNDS comment above).
+const EM_HI_MID_TOKENS = ['--em-hi', '--em-mid'] as const;
+
 const STATUS_CORE_TOKENS = [
   '--status-run-core',
   '--status-ok-core',
@@ -157,14 +166,36 @@ describe('contrast audit (tokens.css, docs/ui-modernization-plan.md §M3.3)', ()
     },
   );
 
-  // --text-faint (tokens.css lines 84-85) is documented as decorative-only: "lifted 0.34 ->
-  // 0.46: decorative-only glyphs >=11px (WCAG non-text 3:1)" — it is NOT held to the 4.5:1
-  // text bar, only the 3:1 non-text/graphical-object bar, by the token's own comment.
+  // --text-faint (== --em-faint, tokens.css) is documented as decorative-only: lifted from
+  // the plan's literal 0.38 lightness to 0.50 to clear "decorative-only glyphs >=11px (WCAG
+  // non-text 3:1)" — it is NOT held to the 4.5:1 text bar, only the 3:1 non-text/
+  // graphical-object bar, by the token's own comment.
   it.each(BACKGROUNDS.map((bg) => [bg] as const))(
-    '--text-faint on %s is >=3:1 (documented decorative-only exception, tokens.css:84-85)',
+    '--text-faint on %s is >=3:1 (documented decorative-only exception, tokens.css --em-faint)',
     (bg) => {
       const ratio = contrast('--text-faint', bg);
       expect(ratio, `--text-faint on ${bg} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  // --em-hi / --em-mid checked directly (not just through the --text-primary/-dim aliases)
+  // since M4.5's canvas sweeps will consume these tokens straight.
+  it.each(EM_HI_MID_TOKENS.flatMap((fg) => BACKGROUNDS.map((bg) => [fg, bg] as const)))(
+    '%s on %s is >=4.5:1 (WCAG AA text)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg);
+      expect(ratio, `${fg} on ${bg} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  // --em-low is used for label text (--text-meta) — held to the full 4.5:1 text bar on the
+  // two void-tier backgrounds it actually renders on (tokens.css lifted its lightness from
+  // the plan's literal .50 to .58 specifically to clear this).
+  it.each((['--n1', '--n2'] as const).map((bg) => ['--em-low', bg] as const))(
+    '%s on %s is >=4.5:1 (WCAG AA text — --em-low backs --text-meta label text)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg);
+      expect(ratio, `${fg} on ${bg} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
     },
   );
 
@@ -179,14 +210,21 @@ describe('contrast audit (tokens.css, docs/ui-modernization-plan.md §M3.3)', ()
     },
   );
 
-  it('--border-focus (== --plasma-cyan) on --n1 is >=3:1 (WCAG focus-indicator UI component)', () => {
-    const focusRatio = contrast('--border-focus', '--n1');
-    const cyanRatio = contrast('--plasma-cyan', '--n1');
-    expect(focusRatio, `--border-focus on --n1 = ${focusRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
-    // --border-focus is a bare alias of --plasma-cyan (tokens.css line 100) — same resolved
-    // color, so both must report identical ratios.
-    expect(cyanRatio).toBeCloseTo(focusRatio, 6);
-  });
+  // M4.1: --border-focus repointed from --plasma-cyan to --em-hi (the white double-ring —
+  // tokens.css's global :focus-visible rule and .slider's focus ring both use it as the
+  // outer ring color against a --n1 inner ring, so both backgrounds it can actually render
+  // over are checked).
+  it.each((['--n1', '--n2'] as const).map((bg) => [bg] as const))(
+    '--border-focus (== --em-hi, the white focus ring) on %s is >=3:1 (WCAG focus-indicator UI component)',
+    (bg) => {
+      const focusRatio = contrast('--border-focus', bg);
+      const emHiRatio = contrast('--em-hi', bg);
+      expect(focusRatio, `--border-focus on ${bg} = ${focusRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+      // --border-focus is a bare alias of --em-hi (tokens.css) — same resolved color, so
+      // both must report identical ratios.
+      expect(emHiRatio).toBeCloseTo(focusRatio, 6);
+    },
+  );
 });
 
 describe('oklch -> sRGB conversion self-check', () => {

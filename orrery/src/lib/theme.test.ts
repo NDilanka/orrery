@@ -30,6 +30,7 @@ const NON_STATUS_KEYS = [
 ] as const;
 
 const STATUS_KEYS = ['run', 'ok', 'warn', 'err', 'idle'] as const;
+const EM_KEYS = ['hi', 'mid', 'low', 'faint'] as const;
 
 function isValid24BitInt(n: unknown): boolean {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 0xffffff;
@@ -45,6 +46,9 @@ describe('FALLBACK table', () => {
       expect(FALLBACK.status[key]).toHaveProperty('core');
       expect(FALLBACK.status[key]).toHaveProperty('base');
     }
+    for (const key of EM_KEYS) {
+      expect(FALLBACK.em).toHaveProperty(key);
+    }
   });
 
   it('every non-status value is a valid 24-bit int', () => {
@@ -59,6 +63,20 @@ describe('FALLBACK table', () => {
       expect(isValid24BitInt(pair.core), `${key}.core = ${pair.core}`).toBe(true);
       expect(isValid24BitInt(pair.base), `${key}.base = ${pair.base}`).toBe(true);
     }
+  });
+
+  it('every em-tier value is a valid 24-bit int (M4.1 text-emphasis tiers)', () => {
+    expect(FALLBACK.em).toBeDefined();
+    for (const key of EM_KEYS) {
+      const v = FALLBACK.em?.[key];
+      expect(isValid24BitInt(v), `em.${key} = ${v}`).toBe(true);
+    }
+  });
+
+  it('run and ok status resolve identically post-M4 (grayscale; distinguished by glyph, not hue)', () => {
+    expect(FALLBACK.status.run.core).toBe(FALLBACK.status.ok.core);
+    expect(FALLBACK.status.run.base).toBe(FALLBACK.status.ok.base);
+    expect(FALLBACK.status.run.core).toBe(FALLBACK.em?.hi);
   });
 
   it('theme() returns FALLBACK before initTheme() has resolved anything', () => {

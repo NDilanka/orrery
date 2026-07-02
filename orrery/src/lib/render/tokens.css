@@ -1,23 +1,23 @@
-/* The Orrery v3 — design tokens (docs/ui-modernization-plan.md §M0.1-2). Obsidian-and-brass
-   instrument language. Status is never by hue alone in the renderer; these are the palette
-   primitives. Numbers are tabular for honest cost/quota readouts.
+/* The Orrery v3 — design tokens (docs/ui-modernization-plan.md §M0.1-2, §5 M4.1). Status is
+   never by hue alone in the renderer; these are the palette primitives. Numbers are tabular
+   for honest cost/quota readouts.
 
    Three tiers:
-     1. PRIMITIVES  — the oklch neutral ramp (--n1..--n4), the hairline, and the two-tier
-        status hues (--status-*-core/base). New in v3, additive: nothing existing consumes
-        them yet (that migration is M1/M2 — the panel sweep + canvas pass). Ready to build on.
-     2. SEMANTIC     — --surface-*, --text-primary, --border-* : what components will consume
-        once M1 flattens panels onto them.
+     1. PRIMITIVES  — the oklch neutral ramp (--n1..--n4), the em-* text-emphasis tiers, the
+        hairline, and the two-tier status hues (--status-*-core/base).
+     2. SEMANTIC     — --surface-*, --text-primary, --border-* : what components consume.
      3. COMPONENT     — one-off tokens for a specific recurring shape (--accent-border-w, …).
 
-   The v1/v2 named colors below (--void, --brass, --starlight, --plasma-cyan, --amber, …) are
-   kept as their EXACT current literal values — not routed through the new tier-1 primitives —
-   because the plan's own oklch primitives are only *close* neighbors of those hex values (by
-   design; see the plan's "already near the recommended cores" note), and this phase (M0) is
-   scoped to be screenshot-identical. Full cutover onto the tiered tokens happens per-surface in
-   M1 (panels) and M2 (canvas), where the visual change is the point. --hairline and --num ARE
-   safely folded into their new-tier equivalents below: the alpha-only hairline shift is
-   imperceptible, and --num was a byte-for-byte duplicate of --font-mono. */
+   M4.1 (2026-07-03, "monochrome retheme + hierarchy system") repointed the v1/v2 named colors
+   below (--brass, --plasma-cyan, --amber, --crimson, --ember, --plasma-green, --frost,
+   --cache-teal, --horizon-rose, --indigo-night, the --spectral-* trio, --ghost-brass) off their
+   original hex literals and onto the new em-* / status-* grayscale primitives — brass and cyan
+   retire as signature hues; only --status-err-* (red) and --status-warn-* (amber) stay
+   chromatic (owner: "the only chromatic pixels in the app are alerts"). --void, --starlight,
+   and --auditor-white are untouched: already near-neutral, never signature accents. Consumers
+   of the retired names need no changes — that's the point; this is what "auto-rethemes old
+   consumers grayscale" means until the M4.5 component sweeps land. --hairline and --num were
+   folded into their new-tier equivalents in M0 (unrelated to M4). */
 
 :root {
   /* ══ TIER 1 — primitives ══════════════════════════════════════════════════ */
@@ -30,6 +30,17 @@
   --n3: oklch(0.19 0.012 265); /* raised */
   --n4: oklch(0.23 0.012 265); /* hover */
 
+  /* ── text-emphasis tiers (M4.1, docs/ui-modernization-plan.md §5) — hierarchy in monochrome
+     is carried by lightness alone, so these four steps ARE the typographic scale. --em-low and
+     --em-faint are adjusted UP from the plan's literal .50/.38 lightness: at hue 265 / chroma
+     .008 those values only cleared 3.35:1 / 2.01:1 against --n2, short of the 4.5:1 (label text)
+     and 3:1 (decorative) bars contrast.test.ts holds them to — see that file for the resolved
+     ratios. */
+  --em-hi: oklch(0.92 0.005 265); /* primary values — was --starlight-equivalent brightness */
+  --em-mid: oklch(0.70 0.008 265); /* body */
+  --em-low: oklch(0.58 0.008 265); /* labels — lifted 0.50 → 0.58 (4.5:1 floor on --n2) */
+  --em-faint: oklch(0.5 0.008 265); /* meta/decorative — lifted 0.38 → 0.50 (3:1 floor on --n2) */
+
   /* the one hairline separator (elevation-by-lightness, not shadow). Was
      rgba(234, 240, 255, 0.08) — pure white at the same 8% alpha instead of near-white;
      imperceptible at this alpha, and lets every hairline share one true-white primitive. */
@@ -38,39 +49,46 @@
   /* two-tier status: -core (small/bright: cores, rims, chips, glyph text) + -base (large/muted:
      fills, halos, rings) — same hue, split by area (plan §1 "chroma budget by area"). Additive
      in M0; canvas + panel consumers adopt these in M1/M2. */
-  --status-run-core: oklch(0.8 0.14 220);
-  --status-run-base: oklch(0.62 0.08 220);
-  --status-ok-core: oklch(0.78 0.17 150);
-  --status-ok-base: oklch(0.58 0.09 150);
+  /* M4.1 status remap: structure/names unchanged so no consumer needs touching, but only
+     -err (red) and -warn (amber) keep chroma — run/ok/idle go grayscale (owner: "the only
+     chromatic pixels in the app are alerts"). run and ok resolve identically; consumers still
+     distinguish them by glyph/shape, never hue alone. */
+  --status-run-core: var(--em-hi);
+  --status-run-base: oklch(0.55 0.008 265);
+  --status-ok-core: var(--em-hi);
+  --status-ok-base: oklch(0.55 0.008 265);
   --status-warn-core: oklch(0.8 0.15 85);
   --status-warn-base: oklch(0.6 0.09 85);
   --status-err-core: oklch(0.68 0.19 20);
   --status-err-base: oklch(0.5 0.11 20);
-  --status-idle-core: oklch(0.72 0.03 265);
-  --status-idle-base: oklch(0.45 0.02 265);
+  --status-idle-core: var(--em-low);
+  --status-idle-base: oklch(0.35 0.008 265);
 
-  /* ── v1 core palette (kept literal — see file header) ── */
+  /* ── v1 core palette — M4.1 monochrome retheme: brass/cyan/amber/crimson retire as hues
+     and repoint onto grayscale or the (still-chromatic) status tokens; --void/--starlight/
+     --auditor-white stay literal (already near-neutral, not signature accents). Identity
+     for the retired hues is now brightness, not hue. ── */
   --void: #070912; /* deep space background */
-  --brass: #c9a24b; /* clockwork / structure */
+  --brass: oklch(0.8 0.01 85); /* light neutral, a whisper of warmth — was gold #c9a24b */
   --starlight: #eaf0ff; /* primary text / star core */
-  --ember: #ff7a3c; /* warm-banked stop */
-  --plasma-cyan: #46e0ff; /* rewind / time-shimmer / motes */
-  --amber: #ffc24b; /* override dots, 50% horizon, beacon warm */
-  --plasma-green: #5bf09b; /* healthy / certified */
-  --crimson: #ff3b5c; /* fail / refute / crash */
-  --indigo-night: #1a1740; /* polar-night desaturation base */
+  --ember: var(--status-warn-base); /* warm-banked stop — was literal orange */
+  --plasma-cyan: oklch(0.88 0.01 265); /* was cyan #46e0ff — near-white now */
+  --amber: var(--status-warn-core); /* override dots, 50% horizon, beacon warm */
+  --plasma-green: var(--em-hi); /* healthy / certified — was green #5bf09b */
+  --crimson: var(--status-err-core); /* fail / refute / crash — was red #ff3b5c */
+  --indigo-night: oklch(0.16 0.01 265); /* polar-night desaturation base — was #1a1740 */
 
-  /* ── v2 additions (kept literal) ── */
+  /* ── v2 additions ── */
   --auditor-white: #f4f8ff; /* lighthouse / verifier beam */
-  --ghost-brass: rgba(201, 162, 75, 0.22); /* frozen AC wireframe */
-  --cache-teal: #2fd9c9; /* recycled-fuel reservoir */
-  --horizon-rose: #ff6b7e; /* 80% cost horizon */
-  --frost: #9fb6ff; /* weekly / polar-night crystal */
+  --ghost-brass: rgba(255, 255, 255, 0.12); /* frozen AC wireframe — was brass-tinted */
+  --cache-teal: oklch(0.6 0.008 265); /* recycled-fuel reservoir — was teal #2fd9c9 */
+  --horizon-rose: var(--status-err-core); /* 80% cost horizon — was rose #ff6b7e */
+  --frost: oklch(0.72 0.02 265); /* weekly / polar-night crystal — was blue #9fb6ff */
 
-  /* ── model spectral class (heat) ── */
-  --spectral-haiku: #ff6a4d; /* red dwarf */
-  --spectral-sonnet: var(--brass); /* gold */
-  --spectral-opus: #9fd0ff; /* blue-white */
+  /* ── model spectral class (heat) — three grayscale steps, identity by brightness ── */
+  --spectral-haiku: oklch(0.55 0.008 265); /* was red dwarf #ff6a4d */
+  --spectral-sonnet: oklch(0.7 0.008 265); /* was gold (var(--brass)) */
+  --spectral-opus: oklch(0.85 0.008 265); /* was blue-white #9fd0ff */
 
   /* ── derived surfaces (kept literal) ── */
   --void-2: #0b0e1c;
@@ -78,11 +96,15 @@
   --panel: rgba(11, 14, 28, 0.72);
   --panel-edge: rgba(201, 162, 75, 0.28);
   --scrim: rgba(4, 6, 14, 0.66); /* modal / bottom-sheet backdrop — the ONE value every modal uses */
-  --text-dim: rgba(234, 240, 255, 0.56);
+  /* M4.1: repointed onto the em-* emphasis tiers above (docs/ui-modernization-plan.md §5) —
+     was literal starlight-at-alpha; body/label ordering now correctly runs
+     hi > mid > low > faint (previously --text-meta was, confusingly, brighter than
+     --text-dim). */
+  --text-dim: var(--em-mid);
   /* state-bearing small labels live here (AA on the void at ≥10.5px) */
-  --text-meta: rgba(234, 240, 255, 0.66);
-  /* lifted 0.34 → 0.46: decorative-only glyphs ≥11px (WCAG non-text 3:1) */
-  --text-faint: rgba(234, 240, 255, 0.46);
+  --text-meta: var(--em-low);
+  /* decorative-only glyphs ≥11px (WCAG non-text 3:1) — see --em-faint's own comment */
+  --text-faint: var(--em-faint);
 
   /* ── tonal elevation ramp (lightness, not just opacity) for z-stack depth ── */
   --surface-1: #0c0f1e;
@@ -95,9 +117,9 @@
   --surface-panel: var(--n2);
   --surface-raised: var(--n3);
   --surface-hover: var(--n4);
-  --text-primary: var(--starlight);
+  --text-primary: var(--em-hi); /* M4.1 — was var(--starlight) */
   --border-hairline: var(--hairline);
-  --border-focus: var(--plasma-cyan);
+  --border-focus: var(--em-hi); /* M4.1 — white double-ring; was var(--plasma-cyan) */
 
   /* ── typography ── */
   --font-grotesk: "Space Grotesk", "Inter", system-ui, "Segoe UI", sans-serif;
@@ -118,7 +140,8 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-  --chrome-inset: 18px; /* the canonical viewport gutter all chrome pins to */
+  --page-inset: 18px; /* the canonical viewport gutter all chrome pins to (M4.1 successor name) */
+  --chrome-inset: var(--page-inset); /* legacy alias — prefer --page-inset in new code */
   --strip-h: 120px; /* cost/quota strip height — bottom chrome clears this */
 
   /* ── type scale — replaces ~80 ad-hoc/fractional font-sizes ── */
@@ -157,7 +180,8 @@
   /* .floating-card (primitives.css) — the exact gradient/shadow every modal/popover
      copy-pasted before M0.3; named here so the values live in one place. */
   --floating-card-grad: linear-gradient(180deg, rgba(11, 14, 28, 0.96), rgba(7, 9, 18, 0.98));
-  --floating-card-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(201, 162, 75, 0.12);
+  /* M4.2: inset highlight was brass-tinted rgba(201,162,75,.12) — neutral white now. */
+  --floating-card-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* base obsidian theme */
@@ -196,10 +220,13 @@ body {
 /* ── single global keyboard focus ring (WCAG 2.4.7) ──
    One rule for every interactive element so each panel can drop its ad-hoc
    outline:none / border-only focus hacks. Pointer focus stays quiet
-   (:focus-visible), keyboard focus is always a clear plasma ring. */
+   (:focus-visible), keyboard focus is always the M4.1 white double-ring: a dark
+   inner ring (--n1, separates the glow from whatever surface it sits on) then
+   the bright --border-focus (em-hi) outer ring — same shape .slider's focus
+   state uses (primitives.css). */
 :where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--n1), 0 0 0 4px var(--border-focus);
 }
 
 /* reduced-motion is first-class (plan §3 accessibility) */

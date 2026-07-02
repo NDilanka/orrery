@@ -21,6 +21,13 @@ export type StatusColors = {
   idle: StatusPair;
 };
 
+export type EmTiers = {
+  hi: number;
+  mid: number;
+  low: number;
+  faint: number;
+};
+
 export type ThemeColors = {
   void: number;
   brass: number;
@@ -41,6 +48,11 @@ export type ThemeColors = {
   opus: number;
   hairline: number;
   status: StatusColors;
+  // Optional (not required) so existing hand-written ThemeColors-shaped object literals —
+  // e.g. Observatory.svelte's `C` palette state, which enumerates every field explicitly —
+  // keep typechecking without edits; the M4.5 canvas sweep is what wires `em` into actual
+  // consumers. FALLBACK and initTheme()'s resolved table always populate it in practice.
+  em?: EmTiers;
 };
 
 // The CSS custom property each key resolves from.
@@ -63,7 +75,7 @@ const TOKEN_MAP = {
   sonnet: '--spectral-sonnet',
   opus: '--spectral-opus',
   hairline: '--hairline',
-} satisfies Record<Exclude<keyof ThemeColors, 'status'>, string>;
+} satisfies Record<Exclude<keyof ThemeColors, 'status' | 'em'>, string>;
 
 const STATUS_TOKEN_MAP: Record<keyof StatusColors, [core: string, base: string]> = {
   run: ['--status-run-core', '--status-run-base'],
@@ -73,6 +85,16 @@ const STATUS_TOKEN_MAP: Record<keyof StatusColors, [core: string, base: string]>
   idle: ['--status-idle-core', '--status-idle-base'],
 };
 
+// M4.1 (docs/ui-modernization-plan.md §5): the four text-emphasis tiers, exposed for the
+// Observatory/Cosmos monochrome sweeps (M4.5) that will drive canvas text/glyph brightness
+// off these instead of the retired spectral/plasma hex values.
+const EM_TOKEN_MAP: Record<keyof EmTiers, string> = {
+  hi: '--em-hi',
+  mid: '--em-mid',
+  low: '--em-low',
+  faint: '--em-faint',
+};
+
 // Static fallback table — used for any non-DOM context (SSR, unit tests) and for any
 // individual token that fails to resolve. The non-status entries are exactly today's
 // literal hex from tokens.css (those tokens are kept as literal hex there, unchanged, for
@@ -80,31 +102,46 @@ const STATUS_TOKEN_MAP: Record<keyof StatusColors, [core: string, base: string]>
 // The status core/base entries have no pre-existing hex — they're computed once (offline,
 // see docs/ui-modernization-plan.md §M0.1) from the same oklch() values tokens.css declares,
 // so a non-DOM fallback still lands on the same color a resolved browser would produce.
+//
+// M4.1 (docs/ui-modernization-plan.md §5) repointed most of these off literal hex and onto
+// oklch() grayscale primitives (brass/cyan/amber/crimson/ember/green/frost/cacheTeal/
+// horizonRose/haiku/sonnet/opus/ghostBrass) — the values below are the sRGB hex computed
+// offline from each token's new oklch() (or, for --ghost-brass, the color channel of its new
+// rgba(255,255,255,.12)), by the same OKLab matrices contrast.test.ts uses. void/starlight/
+// auditor/hairline are untouched (kept literal in tokens.css, not part of the M4 repoint).
 export const FALLBACK: ThemeColors = {
   void: 0x070912,
-  brass: 0xc9a24b,
+  brass: 0xc1bdb7, // oklch(0.8 0.01 85) — was gold #c9a24b
   starlight: 0xeaf0ff,
-  ember: 0xff7a3c,
-  cyan: 0x46e0ff,
-  amber: 0xffc24b,
-  green: 0x5bf09b,
-  crimson: 0xff3b5c,
-  indigo: 0x1a1740,
+  ember: 0x997c3c, // var(--status-warn-base) = oklch(0.6 0.09 85) — was orange #ff7a3c
+  cyan: 0xd4d7de, // oklch(0.88 0.01 265) — was cyan #46e0ff
+  amber: 0xeab532, // var(--status-warn-core) = oklch(0.8 0.15 85) — unchanged resolved color
+  green: 0xe3e4e8, // var(--em-hi) = oklch(0.92 0.005 265) — was green #5bf09b
+  crimson: 0xf75c66, // var(--status-err-core) = oklch(0.68 0.19 20) — unchanged resolved color
+  indigo: 0x0b0d12, // oklch(0.16 0.01 265) — was #1a1740
   auditor: 0xf4f8ff,
-  ghostBrass: 0xc9a24b,
-  cacheTeal: 0x2fd9c9,
-  horizonRose: 0xff6b7e,
-  frost: 0x9fb6ff,
-  haiku: 0xff6a4d,
-  sonnet: 0xc9a24b,
-  opus: 0x9fd0ff,
+  ghostBrass: 0xffffff, // rgba(255,255,255,.12) — was brass-tinted rgba(201,162,75,.22)
+  cacheTeal: 0x7e8085, // oklch(0.6 0.008 265) — was teal #2fd9c9
+  horizonRose: 0xf75c66, // var(--status-err-core) — was rose #ff6b7e
+  frost: 0x9ea5b2, // oklch(0.72 0.02 265) — was blue #9fb6ff
+  haiku: 0x6f7276, // oklch(0.55 0.008 265) — was red dwarf #ff6a4d
+  sonnet: 0x9c9ea4, // oklch(0.7 0.008 265) — was gold (var(--brass))
+  opus: 0xcbced3, // oklch(0.85 0.008 265) — was blue-white #9fd0ff
   hairline: 0xeaf0ff,
   status: {
-    run: { core: 0x25d2fc, base: 0x4892a8 },
-    ok: { core: 0x56d57b, base: 0x51895e },
-    warn: { core: 0xeab532, base: 0x997c3c },
-    err: { core: 0xf75c66, base: 0x984649 },
-    idle: { core: 0x9ba5b8, base: 0x505561 },
+    // run/ok now resolve identically (both var(--em-hi) / oklch(0.55 0.008 265) base) —
+    // grayscale, distinguished by glyph/shape, never hue alone.
+    run: { core: 0xe3e4e8, base: 0x6f7276 },
+    ok: { core: 0xe3e4e8, base: 0x6f7276 },
+    warn: { core: 0xeab532, base: 0x997c3c }, // unchanged — still the one amber alert hue
+    err: { core: 0xf75c66, base: 0x984649 }, // unchanged — still the one red alert hue
+    idle: { core: 0x787a7f, base: 0x383b3f }, // var(--em-low) / oklch(0.35 0.008 265)
+  },
+  em: {
+    hi: 0xe3e4e8, // oklch(0.92 0.005 265)
+    mid: 0x9c9ea4, // oklch(0.70 0.008 265)
+    low: 0x787a7f, // oklch(0.58 0.008 265) — lifted from the plan's literal .50 (4.5:1 floor)
+    faint: 0x616368, // oklch(0.50 0.008 265) — lifted from the plan's literal .38 (3:1 floor)
   },
 };
 
@@ -166,7 +203,11 @@ function resolveVarHex(token: string): number | null {
  */
 export function initTheme(): ThemeColors {
   if (typeof document === 'undefined') return FALLBACK;
-  const out = { ...FALLBACK, status: { ...FALLBACK.status } } as ThemeColors;
+  // FALLBACK.em is always populated (it's a fully-specified literal above) — `em` is only
+  // optional on the ThemeColors *type* so hand-written partial literals elsewhere (e.g.
+  // Observatory.svelte's `C` palette state) keep typechecking without listing every em key.
+  const fallbackEm: EmTiers = FALLBACK.em ?? { hi: 0, mid: 0, low: 0, faint: 0 };
+  const out = { ...FALLBACK, status: { ...FALLBACK.status }, em: { ...fallbackEm } } as ThemeColors;
   for (const key of Object.keys(TOKEN_MAP) as (keyof typeof TOKEN_MAP)[]) {
     const v = resolveVarHex(TOKEN_MAP[key]);
     if (v != null) out[key] = v;
@@ -179,6 +220,10 @@ export function initTheme(): ThemeColors {
       core: core ?? FALLBACK.status[key].core,
       base: base ?? FALLBACK.status[key].base,
     };
+  }
+  for (const key of Object.keys(EM_TOKEN_MAP) as (keyof EmTiers)[]) {
+    const v = resolveVarHex(EM_TOKEN_MAP[key]);
+    out.em![key] = v ?? fallbackEm[key];
   }
   resolved = out;
   return out;
