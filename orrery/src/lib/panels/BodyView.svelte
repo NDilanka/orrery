@@ -186,7 +186,7 @@
     border-left: 1px solid var(--panel-edge);
     border-radius: 0;
     box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5);
-    z-index: 9;
+    z-index: var(--z-drawer);
     animation: drawerIn var(--dur-zoom) var(--ease-out);
   }
   @keyframes drawerIn {

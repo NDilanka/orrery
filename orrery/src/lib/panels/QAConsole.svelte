@@ -135,7 +135,7 @@
     padding: 16px 18px;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
-    border-left: 3px solid var(--plasma-cyan);
+    border-left: var(--accent-border-w) solid var(--plasma-cyan);
     border-radius: var(--radius);
     backdrop-filter: blur(10px);
   }

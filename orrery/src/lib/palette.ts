@@ -9,16 +9,23 @@
 // cards render (a non-hue separator so status survives greyscale/color-blindness).
 
 // The subset of hues both Observatory and Cosmos need for `restColor` below. Numeric (0xRRGGBB)
-// because that's what Pixi consumes; kept in sync with tokens.css by hand (same convention both
-// callers already followed).
-const HUE = {
-  starlight: 0xeaf0ff,
-  ember: 0xff7a3c,
-  amber: 0xffc24b,
-  green: 0x5bf09b,
-  crimson: 0xff3b5c,
-  frost: 0x9fb6ff,
-} as const;
+// because that's what Pixi consumes. Previously a hand-synced literal copy of tokens.css;
+// now resolved through theme.ts (the single color source, plan §M0.4) — read at CALL time
+// (not module load) so it reflects whatever initTheme() resolved during onMount, with the
+// exact same literal fallback values if it hasn't run yet (e.g. this module import order).
+import { theme } from './theme';
+
+function hue() {
+  const t = theme();
+  return {
+    starlight: t.starlight,
+    ember: t.ember,
+    amber: t.amber,
+    green: t.green,
+    crimson: t.crimson,
+    frost: t.frost,
+  };
+}
 
 /**
  * The star/glyph color for a run's status + restState. Identical precedence in both callers:
@@ -29,6 +36,7 @@ const HUE = {
  * the two callers without forcing them to agree on the one they never did.
  */
 export function restColor(status: string, restState: string | null, fallback: number): number {
+  const HUE = hue();
   if (restState === 'failed-dark') return HUE.crimson;
   if (restState === 'quota-frost') return HUE.frost;
   if (restState === 'handoff-beacon') return HUE.crimson;

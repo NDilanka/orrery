@@ -127,7 +127,7 @@
 
 <div class="hud">
   <div class="row top">
-    <span class="pill {pill.cls}">
+    <span class="status-pill {pill.cls}">
       <span class="dot"></span>{pill.label}
     </span>
     {#if model}
@@ -244,7 +244,10 @@
     gap: 10px;
     flex-wrap: wrap;
   }
-  .pill {
+  /* named .status-pill (not .pill) to avoid colliding with the shared .pill primitive
+     (primitives.css, the navbar/ignite-fab chip shape) — this is HUD's own status badge,
+     unrelated to that chip shape and never positioned/blurred like it. */
+  .status-pill {
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -255,33 +258,33 @@
     letter-spacing: 0.12em;
     border: 1px solid transparent;
   }
-  .pill .dot {
+  .status-pill .dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: currentColor;
   }
-  .pill.running {
+  .status-pill.running {
     color: var(--amber);
     border-color: color-mix(in srgb, var(--amber) 40%, transparent);
     background: color-mix(in srgb, var(--amber) 10%, transparent);
   }
-  .pill.done {
+  .status-pill.done {
     color: var(--plasma-green);
     border-color: color-mix(in srgb, var(--plasma-green) 45%, transparent);
     background: color-mix(in srgb, var(--plasma-green) 10%, transparent);
   }
-  .pill.ember {
+  .status-pill.ember {
     color: var(--ember);
     border-color: color-mix(in srgb, var(--ember) 45%, transparent);
     background: color-mix(in srgb, var(--ember) 10%, transparent);
   }
-  .pill.frost {
+  .status-pill.frost {
     color: var(--frost);
     border-color: color-mix(in srgb, var(--frost) 45%, transparent);
     background: color-mix(in srgb, var(--frost) 12%, transparent);
   }
-  .pill.beacon {
+  .status-pill.beacon {
     color: var(--crimson);
     /* the loudest state. Urgency reads as a slow breathing GLOW, never an opacity
        blink; the static border+shadow stays high-contrast so reduced-motion
@@ -293,12 +296,12 @@
   }
   /* the crashed state — crimson like beacon, but STEADY (no breathing). failed-dark
      reads as dim/dead (no glow), not an urgent call to act right now. */
-  .pill.failed {
+  .status-pill.failed {
     color: var(--crimson);
     border-color: var(--crimson);
     background: color-mix(in srgb, var(--crimson) 14%, transparent);
   }
-  .pill.idle {
+  .status-pill.idle {
     color: var(--text-dim);
     border-color: var(--hairline);
   }

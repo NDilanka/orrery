@@ -1,0 +1,118 @@
+/* Shared primitives (docs/ui-modernization-plan.md §M0.3) — imported once, right after
+   tokens.css, in +page.svelte. Everything here replaces a pattern that was previously
+   copy-pasted across 4-5 files (the modal/popover surface, the attention pulse, the nav/fab
+   chip shape) or missing entirely app-wide (scrollbars, a visible slider focus state). */
+
+/* ══ .floating-card — the ONE modal/popover surface ═══════════════════════════════════
+   Replaces the identical gradient+shadow+border block that was hand-copied into
+   HelpOverlay, DecisionSheet, TuningConsole, ShareButton, and Cosmos's onboarding card.
+   --radius (10px) → --radius-lg (14px) on all five: a deliberate, acceptable bump (plan
+   §M0.3) now that they share one class instead of five slightly-different ones. */
+.floating-card {
+  background: var(--floating-card-grad);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--floating-card-shadow);
+}
+
+/* ══ .pill — the navbar / ignite-fab chip shape ═══════════════════════════════════════
+   The structural bits +page.svelte's navbar and ignite-fab both hand-duplicated; each
+   keeps its own color/padding/content styling on top. */
+.pill {
+  position: absolute;
+  top: var(--chrome-inset);
+  border-radius: var(--radius-pill);
+  backdrop-filter: blur(8px);
+  z-index: var(--z-chrome);
+}
+
+/* ══ one parameterized attention keyframe ═════════════════════════════════════════════
+   Every "this needs attention" pulse in the app (RunControlBar's working/braking states,
+   PlanetariumOverlay's loud threshold + NEEDS-A-DECISION chip, LogPanel's liveness dot)
+   now animates the SAME shape — a slow tightening glow, never a blink (plan §1: "urgency =
+   tightening/slowing, never blinking; opacity-blink is retired"). Consumers set --glow
+   (the color) and optionally --breathe-r (the resting glow radius, default 24px) and their
+   own `animation: breathe <duration> var(--ease-standard) infinite;` for per-consumer pacing. */
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--glow) 40%, transparent),
+      0 0 var(--breathe-r, 24px) color-mix(in srgb, var(--glow) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--glow) 70%, transparent),
+      0 0 calc(var(--breathe-r, 24px) / 2) color-mix(in srgb, var(--glow) 60%, transparent);
+  }
+}
+
+/* ══ styled scrollbars, app-wide ═══════════════════════════════════════════════════════
+   WebView2/Chromium is the only engine that matters in Tauri on Windows (::-webkit-*);
+   scrollbar-width/-color cover Firefox for `npm run dev` in a browser. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--n4) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--n4);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--n4) 80%, white 20%);
+}
+
+/* ══ .slider — shared range-input treatment ════════════════════════════════════════════
+   The fix for "slider focus invisible" (audit #8): a visible double-ring on
+   :focus-visible, layered onto EITHER rendering style —
+     · native browser thumb (TransportBar's .scrub, styled via accent-color — kept as-is)
+     · a fully custom-drawn thumb (opt in via the `.thumb-brass` modifier below, used by
+       TuningConsole's dials)
+   so both keep their own resting look but gain the same accessible focus state. */
+.slider {
+  cursor: pointer;
+}
+.slider::-webkit-slider-thumb,
+.slider::-moz-range-thumb {
+  transition: box-shadow var(--dur-feedback) var(--ease-standard);
+}
+
+/* the custom brass thumb (TuningConsole's three dials) — same size/colors as before this
+   sweep, just centralized instead of duplicated per ::-webkit-/::-moz- pair. */
+.slider.thumb-brass::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--starlight);
+  border: 2px solid var(--brass);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(201, 162, 75, 0.5);
+}
+.slider.thumb-brass::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--starlight);
+  border: 2px solid var(--brass);
+  cursor: pointer;
+}
+
+/* focus-visible double ring — declared last so it wins the (equal-specificity) cascade
+   over `.thumb-brass`'s resting box-shadow. void ring first (separates the glow from
+   whatever the thumb sits on), plasma-cyan ring second (the app's one interactive/focus
+   accent — plan §1 "two accent families"). */
+.slider:focus-visible {
+  outline: none;
+}
+.slider:focus-visible::-webkit-slider-thumb,
+.slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--void), 0 0 0 4px var(--plasma-cyan);
+}

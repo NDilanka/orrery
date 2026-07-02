@@ -94,7 +94,7 @@
 
   {#if shareStore.open}
     <div
-      class="popover"
+      class="popover floating-card"
       role="dialog"
       aria-label="Share to phone"
       tabindex="-1"
@@ -181,12 +181,8 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(201, 162, 75, 0.1);
     backdrop-filter: blur(10px);
-    z-index: 45;
+    z-index: var(--z-popover);
   }
   .phead {
     display: flex;

@@ -13,6 +13,7 @@
   import { browser } from '$app/environment';
   import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { resolveVarRgbTriple } from '../theme';
 
   let host: HTMLDivElement;
 
@@ -60,6 +61,13 @@
       const meta = cssVar('--text-meta', 'rgba(234,240,255,0.66)');
       const axisFont = '11px JetBrains Mono, monospace';
 
+      // Grid/tick/quota-wash colors used to be raw rgba literals that silently drifted from
+      // tokens.css on any token change (audit #11) — resolve the same "r, g, b" triples the
+      // literals were hand-copied from (theme.ts's probe-based resolver, shared with the Pixi
+      // color bridge) and re-apply the SAME alphas, so a token edit propagates here too.
+      const gridRgb = resolveVarRgbTriple('--starlight') ?? '234, 240, 255';
+      const frostRgb = resolveVarRgbTriple('--frost') ?? '159, 182, 255';
+
       // quota-band plugin: paint a frost wash over x-ranges that were waiting,
       // with a top hairline so the band is clearly legible (not a faint tint).
       let quotaBands: [number, number][] = [];
@@ -74,7 +82,7 @@
               const cx1 = self.valToPos(x1, 'x', true);
               const w = Math.max(1, cx1 - cx0);
               // raised wash so the waiting window reads at a glance
-              ctx.fillStyle = 'rgba(159,182,255,0.18)';
+              ctx.fillStyle = `rgba(${frostRgb}, 0.18)`;
               ctx.fillRect(cx0, self.bbox.top, w, self.bbox.height);
               // top hairline in --frost to crown the band
               ctx.fillStyle = frost;
@@ -101,8 +109,8 @@
         axes: [
           {
             stroke: meta,
-            grid: { stroke: 'rgba(234,240,255,0.05)', width: 1 },
-            ticks: { stroke: 'rgba(234,240,255,0.08)' },
+            grid: { stroke: `rgba(${gridRgb}, 0.05)`, width: 1 },
+            ticks: { stroke: `rgba(${gridRgb}, 0.08)` },
             font: axisFont,
             // x is the sample INDEX, so ticks MUST be unique integers. uPlot's
             // default chooses fractional increments over a small range (giving
@@ -130,7 +138,7 @@
           {
             scale: '$',
             stroke: brass,
-            grid: { stroke: 'rgba(234,240,255,0.05)', width: 1 },
+            grid: { stroke: `rgba(${gridRgb}, 0.05)`, width: 1 },
             font: axisFont,
             size: 42,
             values: (_self: any, ticks: number[]) => ticks.map((v) => '$' + v.toFixed(0)),

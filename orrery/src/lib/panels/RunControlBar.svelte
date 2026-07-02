@@ -320,22 +320,32 @@
     background: color-mix(in srgb, var(--crimson) 20%, transparent);
   }
   /* a start/resume in flight: keep the button lit (not greyed) and gently pulsing so the
-     click clearly registered while the engine cold-starts. */
+     click clearly registered while the engine cold-starts. Uses the shared `breathe`
+     keyframe (primitives.css) — one attention grammar app-wide instead of a bespoke
+     workPulse/stopPulse pair. */
   .btn.working {
     opacity: 1;
-    animation: workPulse 1.2s ease-in-out infinite;
+    --glow: var(--amber);
+    --breathe-r: 12px;
+    animation: breathe 1.2s ease-in-out infinite;
   }
   .pending {
     font-size: var(--text-xs);
     letter-spacing: 0.06em;
   }
+  /* was an opacity-blink (brakePulse) — retired per plan §1 ("opacity-blink is retired");
+     the same glow-breathe as everything else, just a smaller radius for inline text. */
   .pending.braking {
     color: var(--ember);
-    animation: brakePulse 1.4s ease-in-out infinite;
+    --glow: var(--ember);
+    --breathe-r: 8px;
+    animation: breathe 1.4s ease-in-out infinite;
   }
   .pending.igniting {
     color: var(--amber);
-    animation: brakePulse 1.4s ease-in-out infinite;
+    --glow: var(--amber);
+    --breathe-r: 8px;
+    animation: breathe 1.4s ease-in-out infinite;
   }
   /* gave up waiting for the engine: steady ember, no pulse (it's a quiet warning, not in-flight) */
   .pending.igniting.stalled {
@@ -351,22 +361,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  @keyframes brakePulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  @keyframes workPulse {
-    0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 12px 0 color-mix(in srgb, var(--amber) 45%, transparent); }
-  }
-  /* stop:now in flight — crimson glow (not the generic amber workPulse), so the
-     danger button never pulses the wrong hue while "stopping…" */
+  /* stop:now in flight — crimson glow (not the generic amber), so the danger button never
+     pulses the wrong hue while "stopping…" */
   .btn.stopnow.working {
-    animation: stopPulse 1.2s ease-in-out infinite;
-  }
-  @keyframes stopPulse {
-    0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 12px 0 color-mix(in srgb, var(--crimson) 50%, transparent); }
+    --glow: var(--crimson);
+    animation: breathe 1.2s ease-in-out infinite;
   }
   /* reduced-motion: no pulsing (urgency reads from text, not blink) */
   @media (prefers-reduced-motion: reduce) {

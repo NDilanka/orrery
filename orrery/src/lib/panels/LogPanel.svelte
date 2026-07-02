@@ -260,24 +260,27 @@
     border-radius: 50%;
     background: var(--text-faint);
   }
+  /* was an opacity-blink (`pulse`) — retired per plan §1 ("opacity-blink is retired"); a
+     subtle glow-breathe via the shared `breathe` keyframe (primitives.css) instead, same
+     as every other attention state in the app. */
   .dot.live {
     background: var(--plasma-green);
     box-shadow: 0 0 6px var(--plasma-green);
-    animation: pulse 1.8s ease-in-out infinite;
+    --glow: var(--plasma-green);
+    --breathe-r: 7px;
+    animation: breathe 1.8s ease-in-out infinite;
   }
   /* running but the heartbeat has gone quiet (gate run / between steps) — alive, not working */
   .dot.idle {
     background: var(--amber);
     box-shadow: 0 0 5px var(--amber);
-    animation: pulse 3.2s ease-in-out infinite;
+    --glow: var(--amber);
+    --breathe-r: 6px;
+    animation: breathe 3.2s ease-in-out infinite;
   }
   .dot.live.still,
   .dot.idle.still {
     animation: none;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
   }
   .count {
     color: var(--text-meta);

@@ -48,7 +48,7 @@
 <!-- scrim + bottom-sheet -->
 <div class="scrim" role="presentation" onclick={onClose}>
   <div
-    class="sheet"
+    class="sheet floating-card"
     class:reduced={uiStore.reducedMotion}
     role="dialog"
     aria-modal="true"
@@ -115,17 +115,11 @@
     justify-content: center;
     background: var(--scrim);
     backdrop-filter: blur(4px);
-    z-index: 41; /* above the planetarium overlay (z 13) */
+    z-index: var(--z-sheet); /* above the planetarium overlay (--z-scene-overlay) */
     padding: var(--space-4);
   }
   .sheet {
     width: min(560px, 100%);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    box-shadow:
-      0 24px 80px rgba(0, 0, 0, 0.6),
-      inset 0 1px 0 rgba(201, 162, 75, 0.12);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);

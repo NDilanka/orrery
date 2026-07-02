@@ -113,7 +113,7 @@
     padding: var(--space-4);
     background: var(--panel);
     border: 1px solid var(--panel-edge);
-    border-left-width: 3px;
+    border-left-width: var(--accent-border-w);
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
     font-size: var(--text-sm);

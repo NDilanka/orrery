@@ -86,7 +86,7 @@
 <!-- scrim + dialog -->
 <div class="scrim" role="presentation" onclick={onClose}>
   <div
-    class="card"
+    class="card floating-card"
     role="dialog"
     aria-modal="true"
     aria-labelledby="help-title"
@@ -180,17 +180,13 @@
     justify-content: center;
     background: var(--scrim);
     backdrop-filter: blur(4px);
-    z-index: 40;
+    z-index: var(--z-modal);
     padding: var(--chrome-inset);
   }
   .card {
     width: min(460px, 94vw);
     max-height: 90vh;
     overflow-y: auto;
-    background: linear-gradient(180deg, rgba(11, 14, 28, 0.96), rgba(7, 9, 18, 0.98));
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(201, 162, 75, 0.12);
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
