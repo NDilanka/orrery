@@ -1,7 +1,7 @@
 <script lang="ts">
-  // ModeBar (A7) — the System-view mode toggle: Observatory · Planetarium · Rewind.
+  // ModeBar (A7) — the System-view mode toggle: Observatory · Ambient · Rewind.
   //   Observatory = full interactive instrument (all tiers).
-  //   Planetarium = full-screen ambient Tier-1 (the overnight / second-screen view).
+  //   Ambient (internally 'planetarium') = full-screen Tier-1 (the overnight / second-screen view).
   //   Rewind      = scrub the run with the cyan time-shimmer (replay only).
   // Reflects uiStore.mode. Rewind is only offered when a scrubbable (playback)
   // transport is present — the live ws/Tauri feeds have no timeline to scrub.
@@ -12,7 +12,7 @@
 
   const modes = $derived<{ id: ViewMode; label: string; glyph: string; on: boolean }[]>([
     { id: 'observatory', label: 'Observatory', glyph: '✦', on: true },
-    { id: 'planetarium', label: 'Planetarium', glyph: '◐', on: true },
+    { id: 'planetarium', label: 'Ambient', glyph: '◐', on: true },
     { id: 'rewind', label: 'Rewind', glyph: '⟲', on: canRewind },
   ]);
 

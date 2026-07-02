@@ -1,8 +1,10 @@
 <script lang="ts">
-  // HelpOverlay — the keyboard-shortcut LEGEND modal (Wave 3, H-polish-help).
-  // A glance card listing every key the instrument answers to, in the same
-  // boxed-mono / dot-header vocabulary as the other panels. The orchestrator
-  // renders it from +page when showHelp is true; ? toggles it, Esc closes.
+  // HelpOverlay — the instrument's REFERENCE CARD (Wave U1, plain-language pass).
+  // A terse cheat-sheet covering the views, the five rest-states, the trust
+  // signal (claimed vs verified), the run controls + keyboard, and the canvas
+  // grammar — all in the same boxed-mono / dot-header vocabulary as the other
+  // panels. The orchestrator renders it from +page when showHelp is true; ?
+  // toggles it, Esc closes.
   //
   // Modal contract mirrors TuningConsole: --scrim backdrop, role=dialog +
   // aria-modal, focus moves in on open + restores to the trigger on close, and
@@ -12,15 +14,70 @@
 
   let { onClose }: { onClose: () => void } = $props();
 
-  // ── the legend. `keys` render as boxed-mono chips; a verb is paired with each
-  //    so the shortcut survives a glance (and a screen reader) without colour. ──
+  // ── 1. VIEWS — the three zoom levels ─────────────────────────────────────
+  const VIEWS: { term: string; desc: string }[] = [
+    { term: 'Cosmos', desc: 'all loops at a glance.' },
+    {
+      term: 'System',
+      desc:
+        'one loop — Observatory (live) · Ambient (full-screen overnight view) · Rewind (scrub a replay’s timeline).',
+    },
+    { term: 'Body', desc: 'one work item’s detail.' },
+  ];
+
+  // ── 2. STATUS — the five rest-states (not-running palettes). Glyphs match
+  //    Cosmos.svelte's stateGlyph(); labels match the wave U1 copy sweep used
+  //    everywhere else in the app, so this card never disagrees with the UI. ──
+  const STATUS: { glyph: string; label: string; meaning: string }[] = [
+    {
+      glyph: '✓',
+      label: 'DONE · VERIFIED',
+      meaning: 'an independent verifier confirmed it — nothing to do.',
+    },
+    {
+      glyph: '▬',
+      label: 'PAUSED',
+      meaning: 'stopped mid-work, resumable from checkpoint — press Resume to continue.',
+    },
+    {
+      glyph: '❄',
+      label: 'QUOTA PAUSE',
+      meaning: 'waiting out a rate limit — resumes automatically, or Resume once the window opens.',
+    },
+    {
+      glyph: '!',
+      label: 'NEEDS YOU',
+      meaning: 'the loop is waiting on a human answer or decision.',
+    },
+    {
+      glyph: '⚠',
+      label: 'FAILED',
+      meaning: 'the run crashed — Resume from the last checkpoint, or Restart fresh.',
+    },
+  ];
+
+  // ── 3. TRUST is a static two-sentence blurb, inlined directly in the markup
+  //    below (no data array needed for a single paragraph). ──
+
+  // ── 4. CONTROLS — keyboard legend. `keys` render as boxed-mono chips; a verb
+  //    is paired with each so the shortcut survives a glance (and a screen
+  //    reader) without colour. Exactly 6 entries, by design — verified against
+  //    +page.svelte's onKeydown. ──
   const SHORTCUTS: { keys: string[]; verb: string }[] = [
     { keys: ['?'], verb: 'toggle this help' },
-    { keys: ['Esc'], verb: 'close · leave a Body' },
-    { keys: ['i'], verb: 'Ignite the loop' },
+    { keys: ['Esc'], verb: 'close help · leave a Body' },
+    { keys: ['i'], verb: 'Start the loop' },
     { keys: ['b'], verb: 'Brake at the next phase' },
-    { keys: ['r'], verb: 'Reignite a banked ember' },
-    { keys: ['click'], verb: 'inspect a planet' },
+    { keys: ['r'], verb: 'Resume from checkpoint' },
+    { keys: ['click'], verb: 'inspect a body / planet' },
+  ];
+
+  // ── 5. READING THE CANVAS — the Observatory's visual grammar, terse ──────
+  const CANVAS: string[] = [
+    'the star = the loop itself — its size tracks cumulative spend.',
+    'ring segments = groups / epics.',
+    'the ring tightening around the star = the budget ceiling — closes in as spend nears it.',
+    'body/planet colour = status, never colour alone — each also carries a distinct ring, dash or glyph (a brass seal ring = verified · a dashed pulsing green ring = claimed, not yet verified).',
   ];
 
   // ── modal contract: focus move-in / trap / restore ──────────────────────────
@@ -85,26 +142,77 @@
   >
     <header class="hdr">
       <span class="dot" aria-hidden="true"></span>
-      <span id="help-title" class="title mono">KEYBOARD</span>
-      <span class="sub mono">the keys the instrument answers to</span>
+      <span id="help-title" class="title mono">REFERENCE</span>
+      <span class="sub mono">how to read the instrument</span>
       <button class="x" aria-label="close" onclick={onClose}>✕</button>
     </header>
 
-    <dl class="legend">
-      {#each SHORTCUTS as s (s.verb)}
-        <div class="srow">
-          <dt class="keys">
-            {#each s.keys as k (k)}
-              <kbd class="kbd mono">{k}</kbd>
-            {/each}
-          </dt>
-          <dd class="verb">{s.verb}</dd>
-        </div>
-      {/each}
-    </dl>
+    <section class="sec">
+      <h3 class="h mono">VIEWS</h3>
+      <dl class="reflist">
+        {#each VIEWS as v (v.term)}
+          <div class="rrow">
+            <dt class="term mono">{v.term}</dt>
+            <dd>{v.desc}</dd>
+          </div>
+        {/each}
+      </dl>
+    </section>
+
+    <section class="sec">
+      <h3 class="h mono">STATUS <span class="hnote">— rest states</span></h3>
+      <dl class="legend">
+        {#each STATUS as st (st.label)}
+          <div class="srow">
+            <dt class="keys">
+              <kbd class="kbd mono">{st.glyph}</kbd>
+            </dt>
+            <dd class="verb"><strong class="slabel">{st.label}</strong> — {st.meaning}</dd>
+          </div>
+        {/each}
+      </dl>
+    </section>
+
+    <section class="sec">
+      <h3 class="h mono">TRUST</h3>
+      <p class="prose">
+        <strong class="slabel">Claimed</strong> — the agent asserts its own work passed.
+        <strong class="slabel">Verified</strong> — an independent auditor (a separate check, not
+        the same agent grading itself) confirmed it. Only verified work is DONE · VERIFIED.
+      </p>
+    </section>
+
+    <section class="sec">
+      <h3 class="h mono">CONTROLS</h3>
+      <p class="prose">
+        Start · Brake · phase · Brake · story · Stop now (most urgent — cooperative, not a kill) ·
+        Resume (from a checkpoint) · Restart fresh.
+      </p>
+      <dl class="legend">
+        {#each SHORTCUTS as s (s.verb)}
+          <div class="srow">
+            <dt class="keys">
+              {#each s.keys as k (k)}
+                <kbd class="kbd mono">{k}</kbd>
+              {/each}
+            </dt>
+            <dd class="verb">{s.verb}</dd>
+          </div>
+        {/each}
+      </dl>
+    </section>
+
+    <section class="sec">
+      <h3 class="h mono">READING THE CANVAS</h3>
+      <ul class="bullets">
+        {#each CANVAS as line (line)}
+          <li>{line}</li>
+        {/each}
+      </ul>
+    </section>
 
     <footer class="ftr mono">
-      the run-controls (Ignite · Brake · Reignite) act inside a System.
+      the run-controls (Start · Brake · Resume) act inside a System.
     </footer>
   </div>
 </div>
@@ -122,7 +230,7 @@
     padding: var(--chrome-inset);
   }
   .card {
-    width: min(380px, 94vw);
+    width: min(460px, 94vw);
     max-height: 90vh;
     overflow-y: auto;
     background: linear-gradient(180deg, rgba(11, 14, 28, 0.96), rgba(7, 9, 18, 0.98));
@@ -178,6 +286,64 @@
     color: var(--crimson);
   }
 
+  /* ── section scaffold: a small mono uppercase heading + its body, reusing
+     the .title/.sub letterspaced convention but scaled down for in-card use ── */
+  .sec {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .h {
+    margin: 0;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.16em;
+    color: var(--brass);
+    opacity: 0.85;
+  }
+  .hnote {
+    font-family: var(--font-grotesk);
+    letter-spacing: 0.02em;
+    color: var(--text-meta);
+    opacity: 0.9;
+  }
+  .prose {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .slabel {
+    color: var(--starlight);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  /* VIEWS — term/desc definition rows */
+  .reflist {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .reflist .rrow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .reflist .term {
+    flex: none;
+    width: 60px;
+    font-size: var(--text-xs);
+    color: var(--starlight);
+  }
+  .reflist dd {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* STATUS + CONTROLS — key/glyph chip rows (shared pattern) */
   .legend {
     margin: 0;
     display: flex;
@@ -193,7 +359,7 @@
     flex: none;
     display: flex;
     gap: var(--space-1);
-    min-width: 84px;
+    min-width: 40px;
   }
   /* boxed-mono key chips — the same border/box vocabulary as the log's .ev chip */
   .kbd {
@@ -214,6 +380,29 @@
     font-size: var(--text-sm);
     color: var(--text-dim);
     line-height: 1.4;
+  }
+
+  /* READING THE CANVAS — terse bullets */
+  .bullets {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .bullets li {
+    position: relative;
+    padding-left: var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .bullets li::before {
+    content: '\00b7';
+    position: absolute;
+    left: 0;
+    color: var(--brass);
   }
 
   .ftr {

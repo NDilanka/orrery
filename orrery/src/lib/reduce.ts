@@ -15,6 +15,14 @@ import type {
 
 const COST_RATE_WINDOW = 8; // samples used for ratePerMin (kept in sync with reducer.rs RATE_WINDOW)
 
+// Format `t` (ms since epoch, PROTOCOL §3 — synthetic line-index×1000 in tests, caller-stamped
+// real wall-clock otherwise) as an ISO-8601 UTC string with millisecond precision, byte-identical
+// to Rust's `iso_from_ts` (reducer.rs) so startedAt/lastEventAt stay in cross-language golden
+// parity.
+function isoFromTs(t: number): string {
+  return new Date(t).toISOString();
+}
+
 // The synthetic key a generic loop folds all its iterations into (matches reducer.rs "iter").
 const GENERIC_ITEM_KEY = 'iter';
 
@@ -50,6 +58,7 @@ export function initialState(loopId = 'unknown'): RunState {
       stopPending: null,
       resumeCmd: null,
       startedAt: null,
+      lastEventAt: null,
       updatedAt: null,
     },
     groups: {},
@@ -186,11 +195,17 @@ function bumpCum(state: RunState, ev: RawEvent, t: number) {
   // instead of carrying a prior run's high-water forward. bmad's `start`-reset still applies.
   let next: number;
   if (bk(state).runEnded) {
+    // first cum of a new run → rebase the per-run running-max. This is the generic-loop
+    // equivalent of bmad's explicit 'start' boundary (no 'start' event exists for generic
+    // logs), so it anchors startedAt the same way (mirrors reducer.rs bump_cum).
     next = c;
     bk(state).runEnded = false;
+    state.run.startedAt = isoFromTs(t);
   } else {
     next = Math.max(state.run.cumUsd, c); // running-max, never additive
   }
+  // very first run of a generic loop (no prior stop → no runEnded rebase above).
+  if (state.run.startedAt === null) state.run.startedAt = isoFromTs(t);
   state.run.cumUsd = next;
   state.cost.cumUsd = next;
   // series tracks the raw per-event cum (the sawtooth), not the running-max.
@@ -226,6 +241,8 @@ function sixPhaseOf(label: string | undefined): SixPhase | null {
  */
 export function apply(state: RunState, ev: RawEvent, t: number): RunState {
   state.events += 1;
+  // lastEventAt: the ts of the last applied event, unconditionally (mirrors reducer.rs).
+  state.run.lastEventAt = isoFromTs(t);
 
   switch (ev.event) {
     // ─── core engine ─────────────────────────────────────────────────────
@@ -412,22 +429,28 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
     // ─── BMAD superset ─────────────────────────────────────────────────────
     case 'engine-start': {
       // Heartbeat emitted before the slow preflight so the UI shows life immediately. Just mark
-      // running; the per-run cost reset + target wiring happen on the subsequent `start`.
+      // running; the per-run cost reset + target wiring happen on the subsequent `start`. It IS a
+      // run-starting event though, so it anchors startedAt (the subsequent `start` re-stamps it
+      // moments later — last-write-wins, "most recent run-starting event").
       // Mirrors reducer.rs on_engine_start.
       state.run.status = 'running';
+      state.run.startedAt = isoFromTs(t);
       break;
     }
     case 'start': {
       // A new run begins. Per-run running-max → reset the high-water mark so the final cumUsd
       // reflects the *current* run (matches checkpoint.cumUsd). Mirrors reducer.rs on_start
       // (PROTOCOL §4.2). The cost series is NOT cleared (multi-run sawtooth). Kept minimal to
-      // match Rust: no gate/status/lastEventTs side-effects here.
+      // match Rust: no gate/status/lastEventTs side-effects here. Same boundary anchors
+      // startedAt — this is bmad's explicit "new run" event (the generic-loop equivalent
+      // boundary is the runEnded rebase in bumpCum above).
       state.run.cumUsd = 0;
       state.cost.cumUsd = 0;
       bk(state).runEnded = false; // explicit start supersedes any pending stop-rebase
       state.run.status = 'running';
       state.quota.active = false;
       state.run.restState = null;
+      state.run.startedAt = isoFromTs(t);
       if (typeof ev.target === 'string') {
         state.run.target = ev.target;
         state.currentItem = ev.target;
@@ -732,8 +755,6 @@ export function reduce(
   });
   if (opts.checkpoint) applyCheckpoint(state, opts.checkpoint);
   deriveRestState(state);
-  // NB: run.startedAt is intentionally NOT synthesized from the synthetic baseTs (matches
-  // reducer.rs reduce_events, which leaves it null). It carries no meaning under index×1000.
   return state;
 }
 

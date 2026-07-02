@@ -202,6 +202,8 @@ pub struct Run {
     pub stop_pending: Option<StopPending>,
     pub resume_cmd: Option<String>,
     pub started_at: Option<String>,
+    /// ts of the last applied log event (independent of `updatedAt`, which is checkpoint-only).
+    pub last_event_at: Option<String>,
     pub updated_at: Option<String>,
 }
 
@@ -219,6 +221,7 @@ impl Default for Run {
             stop_pending: None,
             resume_cmd: None,
             started_at: None,
+            last_event_at: None,
             updated_at: None,
         }
     }

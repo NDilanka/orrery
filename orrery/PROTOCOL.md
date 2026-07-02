@@ -141,8 +141,11 @@ interface RunState {
     stage: string|null;              // from checkpoint
     stopPending: 'phase'|'story'|'now'|null;
     resumeCmd: string|null;
-    startedAt: string|null;
-    updatedAt: string|null;
+    startedAt: string|null;          // ISO ts of the most recent run-starting event (bmad: `start`/
+                                      // `engine-start`; generic: the first cum-bearing event after a
+                                      // run_ended rebase, or the very first one — §4.2 boundary)
+    lastEventAt: string|null;        // ISO ts of the last applied log event (every event, unconditionally)
+    updatedAt: string|null;          // from checkpoint.json only, NOT synthesized per-event
   };
   groups: Record<string, Group>;     // epics (rings). generic loops may have 0-1 group.
   items: Record<string, WorkItem>;   // stories / iterations-as-one-item
@@ -206,6 +209,13 @@ interface Verdict{ pass: boolean; failingCriteria: string[]; evidence?: string; 
    on `stop{ok:false}` surfaces `'error'` in the final `RunState` (→ `restState: 'failed-dark'`).
    `cooperative-stop` is a distinct event that never carries `ok` — a user-requested brake (STOP file) is
    never reclassified as an error.
+8. **`startedAt`/`lastEventAt`** are ISO-8601 strings formatted from an event's `t` (`new Date(t)
+   .toISOString()` / chrono `to_rfc3339_opts(Millis, true)` — byte-identical). `lastEventAt` is set
+   unconditionally at the top of `apply()`, every event. `startedAt` is set at the SAME "new run"
+   boundary as rule 2's `cumUsd` reset: on `start`/`engine-start` for bmad, and — since generic logs
+   have no `start` event — on the first `cum`-bearing event after a `run_ended` rebase (or the very
+   first `cum`-bearing event of the log, when no prior run ended). It is NOT set on `story-start`
+   (a per-story, not per-run, boundary).
 
 ---
 

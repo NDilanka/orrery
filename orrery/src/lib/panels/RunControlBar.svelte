@@ -15,7 +15,7 @@
   const running = $derived(s.run.status === 'running' || s.run.status === 'quota-wait');
   const stopPending = $derived(s.run.stopPending);
   const rest = $derived(s.run.restState);
-  // banked ember (you stopped it) or there is a resume command → can reignite
+  // paused (you stopped it) or there is a resume command → can Resume
   const banked = $derived(rest === 'stopped-ember' || s.run.status === 'stopped');
   // a GENUINE crash (stop{ok:false}) — never confused with a cooperative brake/ember.
   // failed-dark is authoritative; status==='error' is a defensive fallback in case a
@@ -50,9 +50,9 @@
   // In-flight feedback. invoke('start_loop') resolves the instant the engine is SPAWNED, but
   // the run only visibly "starts" once that process writes its first log event (a cold start
   // can take a few seconds: git preflight, gate baseline). Without a pending state the click
-  // looks inert. We show "igniting…" until the run goes running, escalate to a slow note, and
+  // looks inert. We show "starting…" until the run goes running, escalate to a slow note, and
   // finally GIVE UP — so a crash-on-start (engine spawns then dies before any log event, e.g.
-  // the cp1252 bug) can never strand the button as a permanent disabled "igniting…".
+  // the cp1252 bug) can never strand the button as a permanent disabled "starting…".
   let pending = $state<null | 'start' | 'resume'>(null);
   let phase = $state<'spawning' | 'slow' | 'stalled' | null>(null);
   let slowTimer: ReturnType<typeof setTimeout> | null = null;
@@ -75,7 +75,7 @@
   }
 
   // The run going live clears the indicator entirely (success). Note: we do NOT treat a
-  // stopped/banked status as failure here — that is the STARTING state for a Reignite — so
+  // stopped/banked status as failure here — that is the STARTING state for a Resume — so
   // the give-up timer below is what catches a spawn that never reaches running.
   $effect(() => {
     if (running && (pending || phase)) resetPending();
@@ -134,13 +134,13 @@
     <button
       class="btn ignite"
       class:working={pending === 'start'}
-      aria-label="Ignite — start the loop"
+      aria-label="Start the loop"
       disabled={pending === 'start'}
-      onclick={() => fire('start')}>{pending === 'start' ? '✦ igniting…' : '✦ Ignite'}</button
+      onclick={() => fire('start')}>{pending === 'start' ? '✦ starting…' : '✦ Start'}</button
     >
   {/if}
 
-  <!-- a crashed loop NEVER shows a bare "Ignite" — it's honest about what happened
+  <!-- a crashed loop NEVER shows a bare "Start" — it's honest about what happened
        and offers the real recovery paths: resume the banked checkpoint (if one
        exists) and/or start over. -->
   {#if failed}
@@ -207,9 +207,9 @@
     <button
       class="btn resume"
       class:working={pending === 'resume'}
-      aria-label="Reignite — resume the loop"
+      aria-label="Resume the loop"
       disabled={pending === 'resume'}
-      onclick={() => fire('resume')}>{pending === 'resume' ? '↻ reigniting…' : '↻ Reignite'}</button
+      onclick={() => fire('resume')}>{pending === 'resume' ? '↻ resuming…' : '↻ Resume'}</button
     >
   {/if}
 
@@ -228,7 +228,7 @@
     >
   {:else if banked}
     <span class="pending mono ember" role="status"
-      >banked ember · parked at {s.run.stage ?? 'last checkpoint'}</span
+      >paused · resumable from checkpoint · parked at {s.run.stage ?? 'last checkpoint'}</span
     >
   {/if}
 

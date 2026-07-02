@@ -49,21 +49,21 @@
   type Threshold = { label: string; cls: string; loud: boolean } | null;
   const threshold = $derived.by<Threshold>((): Threshold => {
     const rest = s.run.restState;
-    // a genuine crash outranks everything — as loud as NEEDS A HUMAN (plan §3
+    // a genuine crash outranks everything — as loud as NEEDS YOU (plan §3
     // "only beacon + weekly-crystal may be loud"; a failure earns the same voice).
     if (rest === 'failed-dark') return { label: 'FAILED', cls: 'beacon', loud: true };
-    if (rest === 'handoff-beacon') return { label: 'NEEDS A HUMAN', cls: 'beacon', loud: true };
+    if (rest === 'handoff-beacon') return { label: 'NEEDS YOU', cls: 'beacon', loud: true };
     if (rest === 'quota-frost' || s.run.status === 'quota-wait') {
       const left = runStore.quotaSecondsLeft;
       const weekly = s.quota.resetType === 'weekly';
       return {
-        label: `${weekly ? 'POLAR NIGHT' : 'DUSK'} · resumes ${fmtCountdown(left) || 'soon'}`,
+        label: `QUOTA PAUSE${weekly ? ' (weekly)' : ''} · resumes ${fmtCountdown(left) || 'soon'}`,
         cls: 'frost',
         loud: weekly, // only the weekly crystal may be loud
       };
     }
-    if (rest === 'certified-done') return { label: 'CERTIFIED DONE', cls: 'done', loud: false };
-    if (rest === 'stopped-ember') return { label: 'BANKED EMBER', cls: 'ember', loud: false };
+    if (rest === 'certified-done') return { label: 'DONE · VERIFIED', cls: 'done', loud: false };
+    if (rest === 'stopped-ember') return { label: 'PAUSED', cls: 'ember', loud: false };
     // defensive fallback: status flipped to error but restState hasn't (shouldn't
     // happen — the reducer derives both together — but never silently stay quiet).
     if (s.run.status === 'error') return { label: 'FAILED', cls: 'beacon', loud: true };
@@ -118,7 +118,7 @@
 
   <!-- recessed exit back to the full instrument -->
   <button class="exit mono" onclick={() => uiStore.setMode('observatory')}>
-    ✦ exit planetarium
+    ✦ EXIT AMBIENT
   </button>
 </div>
 

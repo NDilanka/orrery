@@ -10,9 +10,20 @@
 //! event counter and are otherwise ignored.
 
 use crate::model::*;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 const RATE_WINDOW: usize = 8;
+
+/// Format a `ts` (ms since epoch, PROTOCOL §3 — synthetic line-index×1000 in tests, caller-
+/// stamped real wall-clock otherwise) as an ISO-8601 UTC string with millisecond precision and a
+/// literal `Z`, byte-identical to JS's `new Date(t).toISOString()` (mirrored in reduce.ts's
+/// `isoFromTs`) so `startedAt`/`lastEventAt` stay in cross-language golden parity.
+fn iso_from_ts(ts: f64) -> String {
+    DateTime::<Utc>::from_timestamp_millis(ts.round() as i64)
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .unwrap_or_default()
+}
 
 /// Holds the reduced state plus a little reducer-private bookkeeping that is not on the wire.
 pub struct Reducer {
@@ -39,6 +50,8 @@ impl Reducer {
     /// Apply one already-parsed JSON event with a caller-supplied timestamp (ms since epoch).
     pub fn apply(&mut self, obj: &Value, ts: f64) {
         self.state.events += 1;
+        // lastEventAt: the ts of the last applied event, unconditionally (mirrors reduce.ts).
+        self.state.run.last_event_at = Some(iso_from_ts(ts));
 
         let event = match obj.get("event").and_then(Value::as_str) {
             Some(e) => e,
@@ -74,8 +87,8 @@ impl Reducer {
             "quota-resume" => self.on_quota_resume(obj),
 
             // ---- BMAD adapter superset ---------------------------------------------
-            "engine-start" => self.on_engine_start(),
-            "start" => self.on_start(obj),
+            "engine-start" => self.on_engine_start(ts),
+            "start" => self.on_start(obj, ts),
             "story-start" => self.on_story_start(obj, ts),
             "dev-gate" => self.on_dev_gate(obj, ts),
             "review-question" => self.on_review_question(obj),
@@ -126,11 +139,18 @@ impl Reducer {
     fn bump_cum(&mut self, obj: &Value, ts: f64) {
         if let Some(c) = Self::read_cum(obj) {
             if self.run_ended {
-                // first cum of a new run → rebase the per-run running-max
+                // first cum of a new run → rebase the per-run running-max. This is the generic-
+                // loop equivalent of bmad's explicit `start` boundary (no `start` event exists
+                // for generic logs), so it anchors startedAt the same way.
                 self.state.run.cum_usd = c;
                 self.run_ended = false;
+                self.state.run.started_at = Some(iso_from_ts(ts));
             } else if c > self.state.run.cum_usd {
                 self.state.run.cum_usd = c;
+            }
+            // very first run of a generic loop (no prior stop → no run_ended rebase above).
+            if self.state.run.started_at.is_none() {
+                self.state.run.started_at = Some(iso_from_ts(ts));
             }
             self.state.cost.cum_usd = self.state.run.cum_usd;
             // series tracks the raw per-event cum (sawtooth), keyed by (t, cum) for the tie-break.
@@ -502,22 +522,28 @@ impl Reducer {
     // BMAD adapter
     // -----------------------------------------------------------------------
 
-    fn on_engine_start(&mut self) {
+    fn on_engine_start(&mut self, ts: f64) {
         // Heartbeat emitted before the slow preflight so the UI shows life immediately. Just mark
-        // running; the per-run cost reset + target wiring happen on the subsequent `start`.
+        // running; the per-run cost reset + target wiring happen on the subsequent `start`. It IS
+        // a run-starting event though, so it anchors startedAt (the subsequent `start` re-stamps
+        // it moments later — last-write-wins, "most recent run-starting event").
         // Mirrors reduce.ts 'engine-start'.
         self.state.run.status = RunStatus::Running;
+        self.state.run.started_at = Some(iso_from_ts(ts));
     }
 
-    fn on_start(&mut self, obj: &Value) {
+    fn on_start(&mut self, obj: &Value, ts: f64) {
         // A new run begins. Per-run running-max → reset the high-water mark so the final
         // cumUsd reflects the *current* run (matches checkpoint.cumUsd & test expectation).
+        // Same boundary anchors startedAt — this is the bmad explicit "new run" event (the
+        // generic-loop equivalent boundary is the run_ended rebase in bump_cum below).
         self.state.run.cum_usd = 0.0;
         self.state.cost.cum_usd = 0.0;
         self.run_ended = false; // explicit start supersedes any pending stop-rebase
         self.state.run.status = RunStatus::Running;
         self.state.quota.active = false;
         self.state.run.rest_state = None;
+        self.state.run.started_at = Some(iso_from_ts(ts));
 
         if let Some(target) = obj.get("target").and_then(Value::as_str) {
             self.state.run.target = Some(target.to_string());

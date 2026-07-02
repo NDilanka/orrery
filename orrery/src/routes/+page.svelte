@@ -64,7 +64,7 @@
   // truth for the badge) — vs `mode`, which is only the environment's capability at the Cosmos.
   let transportKind = $state<'tauri' | 'ws' | 'replay' | null>(null);
   const isLiveTransport = $derived(transportKind === 'tauri' || transportKind === 'ws');
-  // A live loop that has never emitted an event: guide the user to Ignite instead of showing
+  // A live loop that has never emitted an event: guide the user to Start instead of showing
   // a silent, pre-populated $0.00/IDLE instrument that reads as "broken".
   const liveAndEmpty = $derived(isLiveTransport && runStore.state.events === 0);
   const badgeLabel = $derived(
@@ -203,7 +203,7 @@
 
   // ── app-wide keyboard shortcuts (guarded vs text entry + open dialogs) ──
   //   ?  toggle the shortcut legend · Esc  close help / leave a Body
-  //   i  ignite · b  brake(phase) · r  reignite   (only inside a System/Body)
+  //   i  start · b  brake(phase) · r  resume   (only inside a System/Body)
   function onKeydown(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
     if (
@@ -341,7 +341,7 @@
               <div class="empty-hint" role="status">
                 <p class="eh-title">This loop hasn't run yet</p>
                 <p class="eh-sub">
-                  Press <strong>✦ Ignite</strong> below to start it — events stream in here live.
+                  Press <strong>✦ Start</strong> below to start it — events stream in here live.
                 </p>
               </div>
             {/if}
@@ -404,19 +404,19 @@
           class:islive={view !== 'cosmos' && isLiveTransport}
           class:isreplay={view !== 'cosmos' && transportKind === 'replay'}
           title={view !== 'cosmos' && transportKind === 'replay'
-            ? 'Watching a recorded fixture — controls (Ignite/Reignite) are inert here.'
+            ? 'Watching a recorded fixture — controls (Start/Resume) are inert here.'
             : isLiveTransport
-              ? 'Driving the real loop — Ignite/Reignite spawn the engine.'
+              ? 'Driving the real loop — Start/Resume spawn the engine.'
               : ''}>{badgeLabel}</span
         >
       </div>
     </nav>
 
-    <!-- ✦ ignite-new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
+    <!-- ✦ new-loop (Cosmos altitude only). The per-loop ✎ edit affordance
          now lives in the Cosmos roster — the single home for enter + edit. -->
     {#if view === 'cosmos'}
       <button class="ignite-fab" onclick={() => cosmosStore.igniteNew()}>
-        <span aria-hidden="true">✦</span> ignite new loop
+        <span aria-hidden="true">✦</span> new loop
       </button>
     {/if}
 
@@ -434,7 +434,7 @@
         onCreated={(id, ctx) => {
           void cosmosStore.load();
           // Follow through ONLY for a NEW loop that was actually persisted: fly into its System,
-          // where the run is started with ✦ Ignite (disambiguating "create a loop" from "start a
+          // where the run is started with ✦ Start (disambiguating "create a loop" from "start a
           // run"). A SAVE (edit) or a dev-mode no-op create stays at the Cosmos rather than
           // dead-mounting a transport-less System.
           if (id && ctx.mode === 'create' && ctx.persisted) void enterSystem(id);

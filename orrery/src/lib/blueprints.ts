@@ -6,8 +6,8 @@
 //   3 DIALS    — three coordinated forces, each a bundle that sets several
 //                engine params at once (Ambition⟷Thrift · Patience⟷Fussiness ·
 //                Autonomy⟷Company).
-//   DESTINATION— the human-authored heart: acceptance criteria (→ ghost target)
-//                and ordered gate stages (→ airlock). Can't be a preset.
+//   DESTINATION— the human-authored heart: acceptance criteria (the definition
+//                of done) and ordered gate stages (the test gate). Can't be a preset.
 //   DRAWERS    — advanced overrides; any change is an Amber override-dot.
 //
 // This module is pure + framework-free so it can be unit-checked and reused by
@@ -528,8 +528,8 @@ export function validateDraft(
   else if (existingIds.includes(input.id)) errors.push(`A loop “${input.id}” already exists.`);
   if (!input.name.trim()) errors.push('Give the loop a name.');
   if (input.gateStages.filter((s) => s.command.trim() || s.name.trim()).length === 0)
-    errors.push('Add at least one gate stage (the airlock).');
+    errors.push('Add at least one gate stage (the test gate).');
   if (input.acceptanceCriteria.filter((a) => a.trim()).length === 0)
-    errors.push('Describe at least one acceptance criterion (the ghost target).');
+    errors.push('Describe at least one acceptance criterion.');
   return { ok: errors.length === 0, errors };
 }

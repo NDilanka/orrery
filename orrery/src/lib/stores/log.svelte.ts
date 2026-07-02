@@ -14,6 +14,10 @@ export interface LogEntry {
   /** one-line salient summary (story / target / stage / question / phase …) */
   detail: string;
   raw: RawEvent;
+  /** wall-clock ms epoch when the UI received/rendered this entry. The wire protocol doesn't
+   *  carry a real per-event timestamp today, so this is arrival time, not origin time — still
+   *  the honest thing to show as "how long ago" in a live log. */
+  ts: number;
 }
 
 const CAP = 300;
@@ -41,7 +45,7 @@ class LogStore {
   push(ev: RawEvent): void {
     if (!ev || typeof ev !== 'object') return;
     const event = typeof ev.event === 'string' ? ev.event : '?';
-    this.entries.push({ seq: this.seq++, event, detail: detailOf(ev), raw: ev });
+    this.entries.push({ seq: this.seq++, event, detail: detailOf(ev), raw: ev, ts: Date.now() });
     if (this.entries.length > CAP) this.entries.splice(0, this.entries.length - CAP);
   }
 
@@ -49,11 +53,13 @@ class LogStore {
    *  based (the visible log must always match the current cursor) rather than append-only. */
   setAll(events: RawEvent[]): void {
     const slice = events.length > CAP ? events.slice(events.length - CAP) : events;
+    const ts = Date.now();
     this.entries = slice.map((ev, i) => ({
       seq: i,
       event: ev && typeof ev.event === 'string' ? ev.event : '?',
       detail: detailOf(ev),
       raw: ev,
+      ts,
     }));
     this.seq = slice.length;
   }

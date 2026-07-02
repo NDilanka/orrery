@@ -137,6 +137,8 @@ export interface RunMeta {
   stopPending: 'phase' | 'story' | 'now' | null;
   resumeCmd: string | null;
   startedAt: string | null;
+  /** ts of the last applied log event (independent of updatedAt, which is checkpoint-only). */
+  lastEventAt: string | null;
   updatedAt: string | null;
 }
 
