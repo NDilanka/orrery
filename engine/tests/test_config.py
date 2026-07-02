@@ -98,6 +98,7 @@ def test_empty_engine_uses_loop_ps1_defaults():
     assert cfg.task == "TASK.md"
     assert cfg.models == {}
     assert cfg.max_turns == 30
+    assert cfg.iter_timeout_min == 60
     assert cfg.permission_mode == "acceptEdits"
     assert cfg.allowed_tools == [
         "Read", "Edit", "Write", "Bash(bun test)", "Bash(bun test:*)",
@@ -160,3 +161,31 @@ def test_snake_case_keys_accepted():
 
 def test_isinstance_engine_config():
     assert isinstance(from_loop_json(HELLO), EngineConfig)
+
+
+# =====================================================================
+# iter_timeout_min (Task 1a — wall-clock cap on the generic loop's execute call)
+# =====================================================================
+
+
+def test_iter_timeout_min_default_is_60():
+    assert EngineConfig().iter_timeout_min == 60
+
+
+def test_iter_timeout_min_camel_case():
+    cfg = from_loop_json({"engine": {"iterTimeoutMin": 45}})
+    assert cfg.iter_timeout_min == 45
+
+
+def test_iter_timeout_min_snake_case():
+    cfg = from_loop_json({"engine": {"iter_timeout_min": 15}})
+    assert cfg.iter_timeout_min == 15
+
+
+def test_iter_timeout_min_zero_disables():
+    cfg = from_loop_json({"engine": {"iterTimeoutMin": 0}})
+    assert cfg.iter_timeout_min == 0
+
+
+def test_loop_json_field_default_empty():
+    assert EngineConfig().loop_json == ""

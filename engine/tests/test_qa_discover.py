@@ -9,9 +9,11 @@ no ``claude`` spawned.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
+from loop import lockfile
 from loop.qa.discover import InvokeResult, QaConfig, findings_to_events, run, story_gate
 
 
@@ -143,3 +145,40 @@ def test_run_blocks_epic_when_agent_writes_nothing(tmp_path):
     assert acs and all(e["status"] == "blocked" for e in acs)
     verdict = next(e for e in events if e["event"] == "verdict")
     assert verdict["pass"] is False
+
+
+def test_run_takes_the_shared_lock_and_refuses_when_live(tmp_path, monkeypatch):
+    """Task 4: loop.qa.discover.run() now acquires the SAME shared lock as loop/loop-bmad, so
+    it can't race a generic/BMAD run (or another QA run) against the same state dir."""
+    mpath = tmp_path / "ac-manifest.json"
+    mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+
+    other_pid = os.getpid() + 1
+    (state / lockfile.LOCK_NAME).write_text(str(other_pid), encoding="utf-8")
+    monkeypatch.setattr(lockfile, "pid_alive", lambda pid: True)
+
+    def boom_invoke(prompt: str, *, timeout_sec: int):  # pragma: no cover - must never run
+        raise AssertionError("invoke must not be called when the lock is refused")
+
+    rc = run(cfg, state_dir=str(state), invoke=boom_invoke, emit=lambda e: None)
+    assert rc == 2
+    # the live lock is untouched
+    assert (state / lockfile.LOCK_NAME).read_text(encoding="utf-8").strip() == str(other_pid)
+
+
+def test_run_acquires_and_releases_the_lock_on_a_clean_run(tmp_path):
+    mpath = tmp_path / "ac-manifest.json"
+    mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
+    state = tmp_path / "state"
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+
+    def silent_invoke(prompt: str, *, timeout_sec: int) -> InvokeResult:
+        return InvokeResult(raw="", text="", cost_usd=0.0, is_error=True, timed_out=True)
+
+    rc = run(cfg, state_dir=str(state), invoke=silent_invoke, emit=lambda e: None)
+    assert rc == 0
+    # the lock is released once the run finishes (no lingering lockfile)
+    assert not (state / lockfile.LOCK_NAME).exists()

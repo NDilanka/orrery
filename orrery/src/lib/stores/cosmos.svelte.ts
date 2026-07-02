@@ -155,6 +155,7 @@ const DEV_CEILINGS: Record<string, number> = {
   calc: 3,
   bmad: 30,
   demo: 8,
+  'failed-dark': 8,
 };
 
 /** Reduce one dev loop's fixture into a Tier-1 summary. */

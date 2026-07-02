@@ -6,7 +6,10 @@
   // learning trajectory, not k independent draws).
   //
   // Reads runStore.state.metrics; renders a muted placeholder until the engine
-  // emits the summary (it lands once, at stop). camelCase-on-the-wire shape.
+  // emits its first `metrics` event. The engine (when metrics are enabled) now
+  // emits one after EVERY iteration, not just at stop — the reducer is
+  // last-write-wins, so this panel simply reflects the latest partial fold
+  // live and settles on the final report at stop. camelCase-on-the-wire shape.
 
   import { runStore } from '../stores/run.svelte';
 
@@ -63,7 +66,10 @@
          not the event stream — surfacing them needs a new protocol event. A lessons
          panel would mount here once that event exists (out of scope; see report). -->
   {:else}
-    <p class="placeholder mono">no run-quality summary yet — emitted once at stop.</p>
+    <p class="placeholder mono">
+      no run-quality data yet — updates each iteration when metrics are enabled; final report at
+      stop.
+    </p>
   {/if}
 </section>
 

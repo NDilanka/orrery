@@ -18,6 +18,7 @@ loop = "loop.cli:main"
 loop-stop = "loop.cli:main_stop"
 loop-bmad = "loop.cli:main_bmad"
 loop-qa = "loop.cli:main_qa"
+loop-supervise = "loop.cli:main_supervise"
 
 [tool.hatch.build.targets.wheel]
 packages = ["loop"]

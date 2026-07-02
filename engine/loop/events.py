@@ -640,3 +640,26 @@ def token_usage_event(
     if story:
         o["story"] = story
     return o
+
+
+def supervisor_restart_event(
+    attempt: int,
+    exit_code: int,
+    restarts_in_window: int,
+    max_restarts: int,
+) -> dict[str, Any]:
+    """Additive ``supervisor-restart`` event — :mod:`loop.supervise` relaunched its wrapped
+    command after a nonzero exit.
+
+    NEW (no PowerShell equivalent, replaces ``supervise.ps1``'s log-only relaunch line): NOT
+    part of the golden corpus and NOT added to ``gen_golden.ps1`` — same additive contract as
+    :func:`metrics_event` / :func:`token_usage_event`; the reducer logs-but-ignores unknown
+    events, so this is backward-compatible with older UI builds.
+    """
+    return {
+        "event": "supervisor-restart",
+        "attempt": attempt,
+        "exitCode": exit_code,
+        "restartsInWindow": restarts_in_window,
+        "maxRestarts": max_restarts,
+    }

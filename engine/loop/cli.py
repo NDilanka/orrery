@@ -38,11 +38,16 @@ def _build_config(args) -> EngineConfig:
         config = from_loop_json(args.loop_json)
     else:
         config = EngineConfig()
+    # Carry the --loop-json path (if any) into the checkpoint `resume` string (Task 5 — a
+    # resume/Reignite must re-point at it, not silently drop the file's tuning).
+    config.loop_json = args.loop_json or ""
 
     if args.task is not None:
         config.task = args.task
     if args.max_iters is not None:
         config.stop.max_iters = args.max_iters
+    if args.iter_timeout_min is not None:
+        config.iter_timeout_min = args.iter_timeout_min
     if args.cost_ceiling is not None:
         config.cost.ceiling_usd = args.cost_ceiling
     if args.verify:
@@ -70,6 +75,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--loop-json", default=None, help="optional loop.json engine config")
     parser.add_argument("--runner", default="claude", help="agent backend (default: claude)")
     parser.add_argument("--max-iters", type=int, default=None, help="iteration cap")
+    parser.add_argument(
+        "--iter-timeout-min", type=int, default=None,
+        help="per-iteration execute wall-clock cap in minutes (0=disabled; default 60)",
+    )
     parser.add_argument("--cost-ceiling", type=float, default=None, help="cumulative USD ceiling")
     parser.add_argument(
         "--verify",
@@ -104,13 +113,20 @@ def main(argv: list[str] | None = None) -> int:
 
     config = _build_config(args)
     runner = get_runner(args.runner)
-    return run_loop(
-        config,
-        runner=runner,
-        state_dir=args.state_dir,
-        cwd=args.cwd,
-        dry_run=args.dry_run,
-    )
+    try:
+        return run_loop(
+            config,
+            runner=runner,
+            state_dir=args.state_dir,
+            cwd=args.cwd,
+            dry_run=args.dry_run,
+        )
+    except KeyboardInterrupt:
+        # run_loop's own try/finally has already released the lock and proc.py has already
+        # killed any child process tree by the time this unwinds here — just exit cleanly
+        # (130 = "terminated by Ctrl-C", the POSIX convention) instead of a raw traceback.
+        print("\n[INTERRUPTED] stopping.")
+        return 130
 
 
 def main_stop(argv: list[str] | None = None) -> int:
@@ -204,6 +220,22 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-smoke-iters", type=int, default=None, help="browser-smoke iter cap")
     parser.add_argument("--smoke-timeout-min", type=int, default=None, help="per-smoke wall-clock cap")
     parser.add_argument("--max-retro-turns", type=int, default=None, help="retrospective Q&A cap")
+    parser.add_argument(
+        "--create-timeout-min", type=int, default=None,
+        help="create-story phase wall-clock cap in minutes (0=disabled; default 30)",
+    )
+    parser.add_argument(
+        "--dev-timeout-min", type=int, default=None,
+        help="dev-story phase wall-clock cap in minutes (0=disabled; default 120)",
+    )
+    parser.add_argument(
+        "--review-timeout-min", type=int, default=None,
+        help="code-review phase per-call wall-clock cap in minutes (0=disabled; default 60)",
+    )
+    parser.add_argument(
+        "--retro-timeout-min", type=int, default=None,
+        help="epic-retro phase per-call wall-clock cap in minutes (0=disabled; default 30)",
+    )
     parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
     parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
     parser.add_argument(
@@ -252,8 +284,22 @@ def main_bmad(argv: list[str] | None = None) -> int:
             config.smoke_mode = file_config.smoke_mode
         if getattr(args, "retro_mode", None) is None:
             config.retro_mode = file_config.retro_mode
+        if getattr(args, "create_timeout_min", None) is None:
+            config.create_timeout_min = file_config.create_timeout_min
+        if getattr(args, "dev_timeout_min", None) is None:
+            config.dev_timeout_min = file_config.dev_timeout_min
+        if getattr(args, "review_timeout_min", None) is None:
+            config.review_timeout_min = file_config.review_timeout_min
+        if getattr(args, "retro_timeout_min", None) is None:
+            config.retro_timeout_min = file_config.retro_timeout_min
     runner = get_runner(args.runner)
-    return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)
+    try:
+        return driver.run(config, runner=runner, state_dir=args.state_dir, cwd=args.cwd)
+    except KeyboardInterrupt:
+        # driver.run's own try/finally has already released the lock and proc.py has already
+        # killed any child process tree by the time this unwinds here.
+        print("\n[INTERRUPTED] stopping.")
+        return 130
 
 
 def main_qa(argv: list[str] | None = None) -> int:
@@ -309,7 +355,71 @@ def main_qa(argv: list[str] | None = None) -> int:
     if args.cost_ceiling is not None:
         config.cost_ceiling_usd = args.cost_ceiling
 
-    return discover.run(config, state_dir=args.state_dir)
+    try:
+        return discover.run(config, state_dir=args.state_dir)
+    except KeyboardInterrupt:
+        print("\n[INTERRUPTED] stopping.")
+        return 130
+
+
+def main_supervise(argv: list[str] | None = None) -> int:
+    """``loop-supervise`` entry point — restart a wrapped command on failure (replaces
+    ``supervise.ps1``).
+
+    Usage::
+
+        loop-supervise --state-dir <dir> [--max-restarts 5] [--window-min 90] \\
+            [--poll-sec 5] -- <command...>
+
+    ``<command...>`` (everything after the literal ``--``) is spawned as a killable process
+    tree and waited on; a nonzero exit restarts it unless a ``STOP`` file or a
+    ``STOP-SUPERVISOR`` sentinel exists in ``--state-dir``, or the thrash guard trips (more than
+    ``--max-restarts`` restarts within the rolling ``--window-min`` window). Exit code ``0``
+    from the wrapped command ends supervision cleanly. See :mod:`loop.supervise`.
+    """
+    from loop.supervise import SupervisorConfig, supervise
+
+    parser = argparse.ArgumentParser(
+        prog="loop-supervise",
+        description="Restart a wrapped loop command on failure (replaces supervise.ps1).",
+    )
+    parser.add_argument("--state-dir", required=True, help="state dir (STOP/STOP-SUPERVISOR/log.jsonl/supervisor.log)")
+    parser.add_argument(
+        "--max-restarts", type=int, default=5,
+        help="thrash guard: max restarts within --window-min before giving up (default 5)",
+    )
+    parser.add_argument(
+        "--window-min", type=float, default=90.0,
+        help="thrash guard rolling window in minutes (default 90)",
+    )
+    parser.add_argument(
+        "--poll-sec", type=float, default=5.0,
+        help="pause before each restart, in seconds (default 5)",
+    )
+    parser.add_argument(
+        "command", nargs=argparse.REMAINDER,
+        help="the command to supervise, e.g.: -- loop-bmad --project-root ...",
+    )
+    args = parser.parse_args(argv)
+
+    command = list(args.command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        parser.error("missing command to supervise — pass it after a literal '--'")
+
+    config = SupervisorConfig(
+        state_dir=args.state_dir,
+        command=command,
+        max_restarts=args.max_restarts,
+        window_min=args.window_min,
+        poll_sec=args.poll_sec,
+    )
+    try:
+        return supervise(config)
+    except KeyboardInterrupt:
+        print("\n[INTERRUPTED] stopping.")
+        return 130
 
 
 if __name__ == "__main__":

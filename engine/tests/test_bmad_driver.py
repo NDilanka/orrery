@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from loop import lockfile
 from loop.bmad import driver, pr, recovery
 from loop.bmad import phases as phases_mod
 from loop.runners.base import AgentResult, AgentRunner
@@ -495,13 +496,34 @@ def test_concurrency_guard_refuses_when_lock_live(tmp_path, monkeypatch):
     root = _init_project(tmp_path, ONE_READY)
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
-    # a live lock owned by a DIFFERENT (live) process -> refuse with 2.
+    # a live lock owned by a DIFFERENT (live) process -> refuse with 2. The shared lockfile
+    # (loop.lockfile) uses ONE filename ("lock") for every driver now — "bmad-lock" is retired.
     other_pid = __import__("os").getpid() + 1
-    (state / "bmad-lock").write_text(str(other_pid), encoding="utf-8")
-    monkeypatch.setattr(driver, "_pid_alive", lambda pid: True)
+    (state / "lock").write_text(str(other_pid), encoding="utf-8")
+    monkeypatch.setattr(lockfile, "pid_alive", lambda pid: True)
     _patch_externals(monkeypatch, pr_calls={})
     rc = driver.run(_config(root), runner=MockRunner([]), state_dir=str(state))
     assert rc == 2
+
+
+def test_concurrency_guard_ignores_stale_bmad_lock_file(tmp_path, monkeypatch):
+    """A leftover 'bmad-lock' from before the lockfile unification is simply ignored (not read):
+    a live-looking pid in it must NOT refuse the run, since only 'lock' is ever consulted now."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    other_pid = __import__("os").getpid() + 1
+    (state / "bmad-lock").write_text(str(other_pid), encoding="utf-8")
+    monkeypatch.setattr(lockfile, "pid_alive", lambda pid: True)
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    rc = driver.run(_config(root, no_merge=True), runner=MockRunner([]), state_dir=str(state))
+    # NOT refused (2) — the stale bmad-lock is never consulted by the shared lockfile guard.
+    assert rc != 2
+    # the stale bmad-lock file is left untouched (never read, never migrated)...
+    assert (state / "bmad-lock").read_text(encoding="utf-8").strip() == str(other_pid)
+    # ...and the real "lock" file was acquired-then-released (gone once the run finished).
+    assert not (state / "lock").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +745,43 @@ def test_run_retro_single_pass_one_process():
     assert "retro-question" not in kinds
     # the decider stance is folded into the facilitator's own prompt (no separate decider)
     assert "DECIDE every point yourself" in runner.calls[0]["prompt"]
+
+
+def test_run_retro_single_pass_timeout_halts_and_threads_timeout_sec():
+    events: list[dict] = []
+    runner = MockRunner([AgentResult(raw="", text="", is_error=True, timed_out=True)])
+    cfg = driver.BmadConfig(project_root="/p", retro_mode="single-pass", retro_timeout_min=15)
+    ok, cost = driver._run_retro(cfg, runner, "2", emit=events.append, cwd="/repo")
+    assert ok is False
+    assert runner.calls[0]["timeout_sec"] == 900
+    kinds = [e["event"] for e in events]
+    assert "phase-timeout" in kinds
+    assert "retro-complete" not in kinds
+
+
+def test_run_retro_qa_mode_timeout_halts_and_threads_timeout_sec():
+    """Task 1b: a timed-out turn in the QA-mode retro Q&A loop takes the same non-ok exit as
+    is_error/parse_failed — it must not treat the (empty, killed) turn as RETRO_COMPLETE."""
+    events: list[dict] = []
+    runner = MockRunner([AgentResult(raw="", text="", is_error=True, timed_out=True)])
+    cfg = driver.BmadConfig(project_root="/p", retro_mode="qa", retro_timeout_min=20)
+    ok, cost = driver._run_retro(cfg, runner, "3", emit=events.append, cwd="/repo")
+    assert ok is False
+    assert runner.calls[0]["timeout_sec"] == 1200
+    kinds = [e["event"] for e in events]
+    assert "phase-timeout" in kinds
+    assert "retro-complete" not in kinds
+
+
+def test_run_retro_timeout_min_zero_disables_the_cap():
+    events: list[dict] = []
+    runner = MockRunner(
+        [AgentResult(raw="", text="RETRO_COMPLETE: fine.", cost_usd=0.1)]
+    )
+    cfg = driver.BmadConfig(project_root="/p", retro_mode="single-pass", retro_timeout_min=0)
+    ok, cost = driver._run_retro(cfg, runner, "2", emit=events.append, cwd="/repo")
+    assert ok is True
+    assert runner.calls[0]["timeout_sec"] == 0
 
 
 def test_merge_wait_config_roundtrip():
@@ -1054,6 +1113,99 @@ def test_bmadconfig_from_loop_json_camel_and_snake(tmp_path):
 def test_bmadconfig_requires_project_root():
     with pytest.raises(TypeError):
         driver.BmadConfig()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Task 1b — per-phase wall-clock timeout fields
+# ---------------------------------------------------------------------------
+
+
+def test_bmadconfig_phase_timeout_defaults():
+    cfg = driver.BmadConfig(project_root="/p")
+    assert cfg.create_timeout_min == 30
+    assert cfg.dev_timeout_min == 120
+    assert cfg.review_timeout_min == 60
+    assert cfg.retro_timeout_min == 30
+    assert cfg.smoke_timeout_min == 12  # pre-existing field, unchanged
+
+
+def test_bmadconfig_phase_timeouts_from_loop_json_camel_case():
+    cfg = driver.BmadConfig.from_loop_json(
+        {
+            "bmad": {
+                "projectRoot": "/p",
+                "createTimeoutMin": 5,
+                "devTimeoutMin": 90,
+                "reviewTimeoutMin": 45,
+                "retroTimeoutMin": 10,
+            }
+        }
+    )
+    assert cfg.create_timeout_min == 5
+    assert cfg.dev_timeout_min == 90
+    assert cfg.review_timeout_min == 45
+    assert cfg.retro_timeout_min == 10
+
+
+def test_bmadconfig_phase_timeouts_from_loop_json_snake_case():
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"project_root": "/p", "create_timeout_min": 1, "dev_timeout_min": 2}}
+    )
+    assert cfg.create_timeout_min == 1
+    assert cfg.dev_timeout_min == 2
+
+
+def test_bmadconfig_phase_timeout_from_args_zero_disables_not_default():
+    """`is not None` (not `or`) — an explicit 0 on the CLI must not be coerced to the default."""
+    from types import SimpleNamespace
+
+    cfg = driver.BmadConfig.from_args(
+        SimpleNamespace(project_root="/p", dev_timeout_min=0, create_timeout_min=None)
+    )
+    assert cfg.dev_timeout_min == 0  # explicit 0 preserved
+    assert cfg.create_timeout_min == 30  # absent -> default
+
+
+def test_resume_command_roundtrips_phase_timeout_flags():
+    cfg = driver.BmadConfig(
+        project_root="/p", create_timeout_min=5, dev_timeout_min=90,
+        review_timeout_min=45, retro_timeout_min=10,
+    )
+    cmd = driver._resume_command(cfg, "/state")
+    assert "--create-timeout-min 5" in cmd
+    assert "--dev-timeout-min 90" in cmd
+    assert "--review-timeout-min 45" in cmd
+    assert "--retro-timeout-min 10" in cmd
+    # defaults stay OFF the resume command
+    default_cmd = driver._resume_command(driver.BmadConfig(project_root="/p"), "/state")
+    assert "--create-timeout-min" not in default_cmd
+    assert "--dev-timeout-min" not in default_cmd
+    assert "--review-timeout-min" not in default_cmd
+    assert "--retro-timeout-min" not in default_cmd
+
+
+def test_process_story_threads_phase_timeouts_into_dev_and_review_calls(tmp_path, monkeypatch):
+    """End-to-end proof the driver actually passes config.*_timeout_min (in SECONDS) down to
+    the dev-story and code-review runner.run calls."""
+    root = _init_project(tmp_path, ONE_READY)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
+            AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: verified AC1, AC2.", cost_usd=0.5),
+        ]
+    )
+    cfg = _config(
+        root, no_merge=True, dev_timeout_min=45, review_timeout_min=20,
+    )
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+    assert rc == 0
+    assert runner.calls[0]["timeout_sec"] == 45 * 60  # dev-story
+    assert runner.calls[1]["timeout_sec"] == 20 * 60  # code-review
 
 
 # ---------------------------------------------------------------------------

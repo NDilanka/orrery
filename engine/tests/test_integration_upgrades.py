@@ -519,8 +519,9 @@ def test_cli_flags_flip_the_right_config_fields():
     """Each new CLI flag sets exactly its config field; absent flags leave defaults (off)."""
     # all flags on
     args = cli.argparse.Namespace(
-        loop_json=None, task="TASK.md", max_iters=2, cost_ceiling=100.0, verify=False,
-        compact_feedback=True, memory="m.jsonl", mutation_audit=True, emit_metrics=True,
+        loop_json=None, task="TASK.md", max_iters=2, iter_timeout_min=None, cost_ceiling=100.0,
+        verify=False, compact_feedback=True, memory="m.jsonl", mutation_audit=True,
+        emit_metrics=True,
     )
     cfg = cli._build_config(args)
     assert cfg.metrics.emit is True
@@ -530,16 +531,17 @@ def test_cli_flags_flip_the_right_config_fields():
 
     # --memory with no PATH -> enabled, default path (None -> <state_dir>/memory.jsonl at runtime)
     args2 = cli.argparse.Namespace(
-        loop_json=None, task="TASK.md", max_iters=None, cost_ceiling=None, verify=False,
-        compact_feedback=False, memory="", mutation_audit=False, emit_metrics=False,
+        loop_json=None, task="TASK.md", max_iters=None, iter_timeout_min=None, cost_ceiling=None,
+        verify=False, compact_feedback=False, memory="", mutation_audit=False, emit_metrics=False,
     )
     cfg2 = cli._build_config(args2)
     assert cfg2.memory.enabled is True and cfg2.memory.path is None
 
     # all flags absent -> everything default-off (parity)
     args3 = cli.argparse.Namespace(
-        loop_json=None, task="TASK.md", max_iters=None, cost_ceiling=None, verify=False,
-        compact_feedback=False, memory=cli._MEMORY_UNSET, mutation_audit=False, emit_metrics=False,
+        loop_json=None, task="TASK.md", max_iters=None, iter_timeout_min=None, cost_ceiling=None,
+        verify=False, compact_feedback=False, memory=cli._MEMORY_UNSET, mutation_audit=False,
+        emit_metrics=False,
     )
     cfg3 = cli._build_config(args3)
     assert cfg3.metrics.emit is False

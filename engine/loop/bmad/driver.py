@@ -32,7 +32,6 @@ follow-up) are noted in the module docstring of the final report rather than cha
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -41,6 +40,7 @@ from typing import Any, Callable
 
 from loop import gitutil
 from loop.heartbeat import Heartbeat
+from loop.lockfile import LOCK_NAME, acquire_lock, release_lock
 from loop.bmad import phases, pr, recovery
 from loop.bmad.decider import retro_decider, review_decider
 from loop.bmad.sprint import (
@@ -58,6 +58,7 @@ from loop.events import (
     engine_start_event,
     gate_retry_event,
     new_checkpoint,
+    phase_timeout_event,
     pr_created_event,
     pr_merged_event,
     retro_answer_event,
@@ -82,8 +83,6 @@ from loop.verdict import question_marker
 # --- where bmad-loop.ps1 finds the sprint file + the story files (~58-59) -----
 _ARTIFACTS_REL = ("_bmad-output", "implementation-artifacts")
 _SPRINT_FILE = "sprint-status.yaml"
-
-_LOCK_NAME = "bmad-lock"
 
 # The three authoritative gate stages from bmad-loop.ps1 (~284-286): codegen, lint, test
 # (vitest). OVERRIDABLE via config; the test/extension hook may swap the commands for callables.
@@ -166,6 +165,14 @@ class BmadConfig:
     max_review_turns: int = 8
     max_smoke_iters: int = 3
     smoke_timeout_min: int = 12
+    # Per-phase wall-clock caps in MINUTES (0 = disabled/unbounded), threaded into each phase's
+    # `runner.run(..., timeout_sec=...)` call so a hung agent process can't block an unattended
+    # run forever (Wave A1 "don't hang"). `smoke_timeout_min` above already existed for
+    # browser-smoke; these cover the other agent-spawning phases.
+    create_timeout_min: int = 30
+    dev_timeout_min: int = 120
+    review_timeout_min: int = 60
+    retro_timeout_min: int = 30
     max_retro_turns: int = 10
     default_quota_wait_min: int = 30
     max_quota_waits: int = 30
@@ -232,6 +239,26 @@ class BmadConfig:
             max_review_turns=getattr(args, "max_review_turns", None) or 8,
             max_smoke_iters=getattr(args, "max_smoke_iters", None) or 3,
             smoke_timeout_min=getattr(args, "smoke_timeout_min", None) or 12,
+            # `is not None` (NOT `or`) — 0 is a legitimate explicit "disable this timeout"
+            # value on the CLI and must not be coerced back to the default.
+            create_timeout_min=(
+                args.create_timeout_min
+                if getattr(args, "create_timeout_min", None) is not None
+                else 30
+            ),
+            dev_timeout_min=(
+                args.dev_timeout_min if getattr(args, "dev_timeout_min", None) is not None else 120
+            ),
+            review_timeout_min=(
+                args.review_timeout_min
+                if getattr(args, "review_timeout_min", None) is not None
+                else 60
+            ),
+            retro_timeout_min=(
+                args.retro_timeout_min
+                if getattr(args, "retro_timeout_min", None) is not None
+                else 30
+            ),
             max_retro_turns=getattr(args, "max_retro_turns", None) or 10,
             default_quota_wait_min=getattr(args, "default_quota_wait_min", None) or 30,
             max_quota_waits=getattr(args, "max_quota_waits", None) or 30,
@@ -272,6 +299,10 @@ class BmadConfig:
             ("max_review_turns", "maxReviewTurns"),
             ("max_smoke_iters", "maxSmokeIters"),
             ("smoke_timeout_min", "smokeTimeoutMin"),
+            ("create_timeout_min", "createTimeoutMin"),
+            ("dev_timeout_min", "devTimeoutMin"),
+            ("review_timeout_min", "reviewTimeoutMin"),
+            ("retro_timeout_min", "retroTimeoutMin"),
             ("max_retro_turns", "maxRetroTurns"),
             ("default_quota_wait_min", "defaultQuotaWaitMin"),
             ("max_quota_waits", "maxQuotaWaits"),
@@ -571,35 +602,6 @@ def _scope_pool(sprint: SprintStatus, *, epic_only: str | None) -> list[Story]:
     return [s for s in sprint.stories if s.epic == epic_only]
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        import psutil
-
-        return psutil.pid_exists(pid)
-    except Exception:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return False
-        except Exception:
-            return True
-        return True
-
-
-def _acquire_lock(lock_path: Path) -> bool:
-    """pid lockfile concurrency guard (mirrors :func:`loop.core._acquire_lock`)."""
-    if lock_path.exists():
-        try:
-            existing = int((lock_path.read_text(encoding="utf-8") or "0").strip() or "0")
-        except (ValueError, OSError):
-            existing = 0
-        if existing and existing != os.getpid() and _pid_alive(existing):
-            return False
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(str(os.getpid()), encoding="utf-8")
-    return True
-
-
 def _checkout(repo, ref: str) -> None:
     gitutil._git(["checkout", ref], repo)
 
@@ -674,6 +676,10 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         ("--max-review-turns", config.max_review_turns, 8),
         ("--max-smoke-iters", config.max_smoke_iters, 3),
         ("--smoke-timeout-min", config.smoke_timeout_min, 12),
+        ("--create-timeout-min", config.create_timeout_min, 30),
+        ("--dev-timeout-min", config.dev_timeout_min, 120),
+        ("--review-timeout-min", config.review_timeout_min, 60),
+        ("--retro-timeout-min", config.retro_timeout_min, 30),
         ("--max-retro-turns", config.max_retro_turns, 10),
         ("--default-quota-wait-min", config.default_quota_wait_min, 30),
         ("--max-quota-waits", config.max_quota_waits, 30),
@@ -703,7 +709,7 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
     log_path = state / "log.jsonl"
     checkpoint_path = state / "checkpoint.json"
     stop_path = state / "STOP"
-    lock_path = state / _LOCK_NAME
+    lock_path = state / LOCK_NAME
 
     def emit(event: dict[str, Any]) -> None:
         append_event(log_path, event)
@@ -712,8 +718,11 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
     if config.dry_run:
         return _dry_run(config, project_root, repo)
 
-    # --- concurrency guard --------------------------------------------------
-    if not _acquire_lock(lock_path):
+    # --- concurrency guard ---------------------------------------------------
+    # ONE lockfile name ("lock") shared with loop.core / loop.qa.discover (loop.lockfile) — a
+    # generic loop, a BMAD run, and a QA run racing the SAME state dir now correctly see each
+    # other. A leftover "bmad-lock" from before this unification is simply ignored (not read).
+    if not acquire_lock(lock_path):
         print(f"[GUARD] another bmad driver is already running against '{state}'.")
         return 2
 
@@ -741,13 +750,7 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
             emit=emit,
         )
     finally:
-        try:
-            if lock_path.exists() and (
-                lock_path.read_text(encoding="utf-8") or ""
-            ).strip() == str(os.getpid()):
-                os.remove(lock_path)
-        except OSError:
-            pass
+        release_lock(lock_path)
 
 
 def _dry_run(config: BmadConfig, project_root: Path, repo: Path) -> int:
@@ -1099,6 +1102,7 @@ def _process_story(
             model=create_model,
             effort=create_effort,
             produced=produced,
+            timeout_sec=config.create_timeout_min * 60 if config.create_timeout_min > 0 else 0,
         )
         cum += res.cost
         resilient.set_cum(cum)
@@ -1131,6 +1135,7 @@ def _process_story(
             baseline_pass=baseline_pass,
             cum=cum,
             status="review",
+            timeout_sec=config.dev_timeout_min * 60 if config.dev_timeout_min > 0 else 0,
         )
         cum += res.cost
         resilient.set_cum(cum)
@@ -1187,6 +1192,7 @@ def _process_story(
                 gate_fn=gate_fn,
                 model=review_model,
                 effort=review_effort,
+                timeout_sec=config.review_timeout_min * 60 if config.review_timeout_min > 0 else 0,
             )
         else:
             res = phases.code_review(
@@ -1201,6 +1207,7 @@ def _process_story(
                 effort=review_effort,
                 decider_model=decider_model,
                 decider_effort=decider_effort,
+                timeout_sec=config.review_timeout_min * 60 if config.review_timeout_min > 0 else 0,
             )
         cum += res.cost
         resilient.set_cum(cum)
@@ -1440,6 +1447,7 @@ def _run_retro_single_pass(
     """
     retro_model = config.model_for("retro")
     retro_effort = config.effort_for("retro")
+    timeout_sec = config.retro_timeout_min * 60 if config.retro_timeout_min > 0 else 0
     if hasattr(runner, "set_context"):
         runner.set_context(f"retro-epic-{epic}", None)
     res = runner.run(
@@ -1450,8 +1458,12 @@ def _run_retro_single_pass(
         max_turns=0,
         cwd=cwd,
         effort=retro_effort,
+        timeout_sec=timeout_sec,
     )
     cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if getattr(res, "timed_out", False):
+        emit(phase_timeout_event(f"retro-epic-{epic}", timeout_sec))
+        return False, cost
     if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
         return False, cost
     text = getattr(res, "text", "") or ""
@@ -1486,6 +1498,7 @@ def _run_retro(
     retro_model = config.model_for("retro")
     retro_effort = config.effort_for("retro")
     decider_effort = config.effort_for("decider")
+    timeout_sec = config.retro_timeout_min * 60 if config.retro_timeout_min > 0 else 0
     use_sessions = getattr(runner, "supports_sessions", False)
     if hasattr(runner, "set_context"):
         runner.set_context(f"retro-epic-{epic}", None)
@@ -1500,6 +1513,7 @@ def _run_retro(
                 max_turns=0,
                 cwd=cwd,
                 effort=retro_effort,
+                timeout_sec=timeout_sec,
             )
         else:
             res = runner.run(
@@ -1511,9 +1525,13 @@ def _run_retro(
                 cwd=cwd,
                 resume_session=session_id,
                 effort=retro_effort,
+                timeout_sec=timeout_sec,
             )
         total_cost += float(getattr(res, "cost_usd", 0.0) or 0.0)
 
+        if getattr(res, "timed_out", False):
+            emit(phase_timeout_event(f"retro-epic-{epic} (turn {turn})", timeout_sec))
+            return False, total_cost
         if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
             return False, total_cost
         if session_id is None and use_sessions:

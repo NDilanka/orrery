@@ -40,6 +40,7 @@ from typing import Any
 from loop import proc
 from loop.events import (
     dev_gate_event,
+    phase_timeout_event,
     review_answer_event,
     review_complete_event,
     review_question_event,
@@ -148,6 +149,7 @@ def create_story(
     max_turns: int = 0,
     produced: Callable[[], bool] | None = None,
     max_attempts: int = 3,
+    timeout_sec: int = 0,
 ) -> PhaseResult:
     """Port of the create-story phase (``bmad-loop.ps1`` ~736-756).
 
@@ -158,6 +160,11 @@ def create_story(
     falls back to a greeting heuristic on the run's text. Returns ``ok`` + cumulative cost; the
     created/last result text is in ``extra['text']`` and the attempt count in
     ``extra['attempts']``.
+
+    ``timeout_sec`` (0 = unbounded) bounds EACH attempt's wall clock. A timed-out attempt is
+    NOT special-cased beyond emitting a ``phase-timeout`` event: it falls through to the same
+    ``produced()``/greeting check as any other attempt (almost always False for a killed run),
+    so it is simply retried like any other unproductive attempt — conservative, no new halt path.
     """
     total_cost = 0.0
     last_text = ""
@@ -170,9 +177,13 @@ def create_story(
             permission_mode=permission_mode,
             max_turns=max_turns,
             cwd=cwd,
+            timeout_sec=timeout_sec,
         )
         total_cost += float(getattr(res, "cost_usd", 0.0) or 0.0)
         last_text = getattr(res, "text", "") or ""
+
+        if getattr(res, "timed_out", False):
+            emit(phase_timeout_event(f"create-story (attempt {attempt})", timeout_sec))
 
         if produced is not None:
             made = bool(produced())
@@ -259,6 +270,7 @@ def dev_story(
     baseline_pass: int = 0,
     cum: float = 0.0,
     status: str = "review",
+    timeout_sec: int = 0,
 ) -> PhaseResult:
     """Port of the dev-story phase (``bmad-loop.ps1`` ~766-800).
 
@@ -268,6 +280,12 @@ def dev_story(
     ``ok`` is the gate's ``green``. The story's resulting ``status`` is passed through (the
     driver reads it from the story file after the run); ``cum`` is the running cumulative cost
     the driver feeds in for the event. Returns the gate in ``.gate``.
+
+    ``timeout_sec`` (0 = unbounded) bounds the dev-story run's wall clock. dev-story never
+    special-cased ``is_error``/``parse_failed`` on ``res`` — it always runs the gate and lets
+    THAT decide ``ok`` (partial work may still be gate-green after a killed run). A timeout
+    follows that SAME existing path: it only additionally ``emit``s a ``phase-timeout`` event
+    for visibility before falling through to the (almost certainly red) gate check.
     """
     res = runner.run(
         prompt=_DEV_STORY_PROMPT,
@@ -277,8 +295,11 @@ def dev_story(
         permission_mode=permission_mode,
         max_turns=max_turns,
         cwd=cwd,
+        timeout_sec=timeout_sec,
     )
     cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if getattr(res, "timed_out", False):
+        emit(phase_timeout_event(f"dev-story:{story}", timeout_sec))
 
     gate = gate_fn()
     codegen_ok = _stage_ok(gate, "codegen")
@@ -349,6 +370,7 @@ def code_review(
     decider_effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
+    timeout_sec: int = 0,
 ) -> PhaseResult:
     """Port of ``Invoke-CodeReviewPhase`` (``bmad-loop.ps1`` ~390-435).
 
@@ -363,6 +385,12 @@ def code_review(
     On a ``REVIEW_COMPLETE:`` marker — or NO marker at all (treat as complete, don't spin) —
     ``emit`` a ``review-complete`` event and run the injected ``gate_fn()``. Exceeding
     ``max_turns`` (a question loop) is a non-ok stop. Returns the gate in ``.gate``.
+
+    ``timeout_sec`` (0 = unbounded) bounds EACH turn's wall clock. A timed-out turn takes the
+    SAME non-ok exit as the existing ``is_error``/``parse_failed`` check just below it (it must
+    NOT fall through to the "no marker -> treat as complete" branch, which would wrongly accept
+    a killed run as a finished review) — it just gets its own clearer reason + a
+    ``phase-timeout`` event first.
     """
     prompt = _CODE_REVIEW_PROMPT_TEMPLATE.format(story=story)
     session_id: str | None = None
@@ -379,6 +407,7 @@ def code_review(
                 permission_mode=permission_mode,
                 max_turns=0,
                 cwd=cwd,
+                timeout_sec=timeout_sec,
             )
         else:
             res = runner.run(
@@ -390,8 +419,18 @@ def code_review(
                 max_turns=0,
                 cwd=cwd,
                 resume_session=session_id,
+                timeout_sec=timeout_sec,
             )
         total_cost += float(getattr(res, "cost_usd", 0.0) or 0.0)
+
+        if getattr(res, "timed_out", False):
+            emit(phase_timeout_event(f"code-review:{story} (turn {turn})", timeout_sec))
+            return PhaseResult(
+                ok=False,
+                reason=f"code-review timed out (turn {turn})",
+                cost=total_cost,
+                extra={"turns": turn},
+            )
 
         if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
             return PhaseResult(
@@ -486,6 +525,7 @@ def code_review_single_pass(
     effort: str = "",
     allowed_tools=BMAD_TOOLS,
     permission_mode: str = "acceptEdits",
+    timeout_sec: int = 0,
 ) -> PhaseResult:
     """Single-pass autonomous code review — ONE warm process, no QUESTION/decider Q&A loop.
 
@@ -499,6 +539,8 @@ def code_review_single_pass(
 
     Returns the SAME gate-checked :class:`PhaseResult` shape as :func:`code_review` (the driver's
     regression-floor + commit handling is identical), so it is a drop-in for the review phase.
+    ``timeout_sec`` (0 = unbounded) bounds the single run's wall clock; a timeout takes the same
+    non-ok exit as ``is_error``/``parse_failed`` (see :func:`code_review`'s docstring).
     """
     res = runner.run(
         prompt=_CODE_REVIEW_SINGLE_PASS_PROMPT.format(story=story),
@@ -508,8 +550,17 @@ def code_review_single_pass(
         permission_mode=permission_mode,
         max_turns=0,
         cwd=cwd,
+        timeout_sec=timeout_sec,
     )
     cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if getattr(res, "timed_out", False):
+        emit(phase_timeout_event(f"code-review:{story} (single-pass)", timeout_sec))
+        return PhaseResult(
+            ok=False,
+            reason="code-review timed out (single-pass)",
+            cost=cost,
+            extra={"turns": 1, "mode": "single-pass"},
+        )
     if getattr(res, "is_error", False) or getattr(res, "parse_failed", False):
         return PhaseResult(
             ok=False,

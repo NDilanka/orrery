@@ -77,8 +77,10 @@
       case 'handoff-beacon':
       case 'handoff':
         return '!'; // needs you
+      case 'failed-dark':
+        return '⚠'; // crashed — dim cracked disc (Observatory mirror)
       case 'error':
-        return '×'; // crashed
+        return '×'; // crashed (no restState yet — defensive fallback)
       case 'stopping':
         return '◇'; // winding down
       default:
@@ -102,6 +104,8 @@
       case 'handoff-beacon':
       case 'handoff':
         return 'needs you';
+      case 'failed-dark':
+        return 'failed';
       case 'error':
         return 'error';
       case 'stopping':
@@ -124,6 +128,7 @@
 
   // star color by status / rest-state (mirrors the Observatory's starColor)
   function glyphColor(l: LoopSummary): number {
+    if (l.restState === 'failed-dark') return C.crimson;
     if (l.restState === 'quota-frost') return C.frost;
     if (l.restState === 'handoff-beacon') return C.crimson;
     if (l.restState === 'certified-done') return C.green;
@@ -351,8 +356,9 @@
             ease.set(l.id, e);
           }
           e.col = lerpColor(e.col, target, 0.08);
-          // running = warm live glow; idle = dim ember; rest-states sit steady
-          const wantGlow = running ? 1 : l.restState ? 0.5 : 0.18;
+          // running = warm live glow; idle = dim ember; rest-states sit steady.
+          // failed-dark gets NO glow (it should read dead, not radiant).
+          const wantGlow = running ? 1 : l.restState === 'failed-dark' ? 0.08 : l.restState ? 0.5 : 0.18;
           e.glow = lerp(e.glow, wantGlow, 0.06);
           const col = e.col;
 
@@ -378,8 +384,28 @@
             g.circle(cx, cy, r + k * 5).fill({ color: col, alpha: 0.05 * (4 - k) * e.glow });
           }
 
-          // ── the FOUR rest-state silhouettes (greyscale-separable) ──────────
-          if (l.restState === 'quota-frost' || l.status === 'quota-wait') {
+          // ── the FIVE rest-state silhouettes (greyscale-separable) ──────────
+          if (l.restState === 'failed-dark') {
+            // crashed: a dim crimson disc, no glow (see wantGlow above), cut by a
+            // fixed jagged fracture — mirrors the Observatory's star silhouette.
+            const flicker = reduced ? 1 : 0.82 + Math.sin(t * 0.55 + i * 0.4) * 0.18;
+            g.circle(cx, cy, r).fill({ color: col, alpha: 0.4 * flicker });
+            g.circle(cx, cy, r * 0.5).fill({ color: C.void, alpha: 0.5 });
+            const crack: [number, number][] = [
+              [-0.05, -0.95],
+              [0.22, -0.5],
+              [-0.15, -0.15],
+              [0.3, 0.1],
+              [-0.1, 0.45],
+              [0.18, 0.95],
+            ];
+            g.moveTo(cx + crack[0][0] * r, cy + crack[0][1] * r);
+            for (let k = 1; k < crack.length; k++) g.lineTo(cx + crack[k][0] * r, cy + crack[k][1] * r);
+            g.stroke({ width: 1.8, color: C.void, alpha: 0.85 });
+            g.moveTo(cx + crack[0][0] * r, cy + crack[0][1] * r);
+            for (let k = 1; k < crack.length; k++) g.lineTo(cx + crack[k][0] * r, cy + crack[k][1] * r);
+            g.stroke({ width: 0.7, color: col, alpha: 0.6 });
+          } else if (l.restState === 'quota-frost' || l.status === 'quota-wait') {
             // cold crystal: sharp 6-point star
             const spikes = 6;
             g.moveTo(cx + r, cy);
@@ -671,6 +697,7 @@
   }
   .s-stat.handoff-beacon,
   .s-stat.handoff,
+  .s-stat.failed-dark,
   .s-stat.error {
     color: var(--crimson);
   }
@@ -903,5 +930,24 @@
   }
   .retry:hover {
     border-color: var(--brass);
+  }
+
+  /* phone: the centred needs-you badge has nowhere to go on a ~360-390px width
+     without overlapping the top-left ignite-fab (+page.svelte) — drop it (and the
+     filter bar that stacks below it) beneath that row instead of colliding. Only
+     surfaces once a real loop needs attention, so this was previously untested
+     at narrow widths. */
+  @media (max-width: 640px) {
+    .needsbadge {
+      top: 60px;
+      padding: 4px var(--space-2);
+      gap: var(--space-1);
+    }
+    .needsbadge .nblabel {
+      display: none;
+    }
+    .filters {
+      top: 100px;
+    }
   }
 </style>

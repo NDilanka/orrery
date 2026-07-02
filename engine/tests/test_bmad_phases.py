@@ -126,6 +126,30 @@ def test_create_story_fails_after_three_greetings():
     assert "after 3 attempts" in res.reason
 
 
+def test_create_story_timeout_sec_threaded_to_runner_and_emits_phase_timeout():
+    """Task 1b: a timed-out attempt is NOT special-cased beyond a phase-timeout event — it
+    falls through to the same produced()/greeting check as any other unproductive attempt
+    (conservative: no new halt path), so it is simply retried."""
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="", is_error=True, timed_out=True),
+            AgentResult(raw="", text="Story 4-1 drafted and set to ready-for-dev.", cost_usd=0.5),
+        ]
+    )
+    log, emit = _events("create")
+    res = create_story(
+        runner, emit=emit, cwd="/repo", model="sonnet", timeout_sec=1800
+    )
+    assert res.ok is True
+    assert res.extra["attempts"] == 2
+    assert runner.calls[0]["timeout_sec"] == 1800
+    assert runner.calls[1]["timeout_sec"] == 1800
+    timeouts = [e for e in log if e["event"] == "phase-timeout"]
+    assert len(timeouts) == 1
+    assert timeouts[0]["timeoutSec"] == 1800
+    assert "create-story" in timeouts[0]["label"]
+
+
 # --- dev_story -------------------------------------------------------------
 
 
@@ -194,6 +218,32 @@ def test_dev_story_reports_failed_stages_in_dev_gate():
     assert g["lintOk"] is False
     assert g["testOk"] is False
     assert g["green"] is False
+
+
+def test_dev_story_timeout_emits_phase_timeout_but_still_checks_gate():
+    """Task 1b: dev-story never special-cased is_error/parse_failed on the run result — it
+    always runs the gate and lets THAT decide `ok`. A timeout follows that SAME existing path:
+    it only additionally emits a phase-timeout event before falling through to the gate check."""
+    runner = MockRunner([AgentResult(raw="", text="", is_error=True, timed_out=True)])
+    log, emit = _events("dev")
+    res = dev_story(
+        runner,
+        "3-4",
+        emit=emit,
+        cwd="/repo",
+        gate_fn=lambda: gate(green=False, pass_=1, fail=1),
+        model="sonnet",
+        timeout_sec=7200,
+    )
+    assert runner.calls[0]["timeout_sec"] == 7200
+    timeouts = [e for e in log if e["event"] == "phase-timeout"]
+    assert len(timeouts) == 1
+    assert timeouts[0]["timeoutSec"] == 7200
+    assert "dev-story:3-4" in timeouts[0]["label"]
+    # the gate (red, since nothing finished) is what actually decides ok — unchanged semantics.
+    assert res.ok is False
+    devgate = [e for e in log if e["event"] == "dev-gate"]
+    assert len(devgate) == 1 and devgate[0]["green"] is False
 
 
 # --- code_review (Q&A loop) ------------------------------------------------
@@ -323,6 +373,31 @@ def test_code_review_post_complete_gate_red_is_not_ok():
     assert "review-complete" in [e["event"] for e in log]
 
 
+def test_code_review_timeout_halts_instead_of_treating_no_marker_as_complete():
+    """Task 1b: a timed-out turn must take the SAME non-ok exit as is_error/parse_failed — it
+    must NOT fall through to the 'no marker -> treat as complete' branch, which would wrongly
+    accept a killed run as a finished review."""
+    runner = MockRunner([AgentResult(raw="", text="", is_error=True, timed_out=True)])
+    log, emit = _events("review")
+    res = code_review(
+        runner,
+        stub_decider,
+        "1-1",
+        emit=emit,
+        cwd="/repo",
+        gate_fn=lambda: gate(green=True),  # would be ok=True if wrongly treated as complete
+        max_turns=8,
+        model="sonnet",
+        timeout_sec=3600,
+    )
+    assert res.ok is False
+    assert "timed out" in res.reason
+    assert runner.calls[0]["timeout_sec"] == 3600
+    kinds = [e["event"] for e in log]
+    assert "phase-timeout" in kinds
+    assert "review-complete" not in kinds  # never wrongly marked complete
+
+
 # --- code_review_single_pass (one warm process, no Q&A) --------------------
 
 
@@ -364,6 +439,26 @@ def test_code_review_single_pass_post_gate_red_is_not_ok():
     )
     assert res.ok is False
     assert "review-complete" in [e["event"] for e in log]
+
+
+def test_code_review_single_pass_timeout_halts():
+    runner = MockRunner([AgentResult(raw="", text="", is_error=True, timed_out=True)])
+    log, emit = _events("review")
+    res = phases.code_review_single_pass(
+        runner,
+        "1-1",
+        emit=emit,
+        cwd="/repo",
+        gate_fn=lambda: gate(green=True),
+        model="sonnet",
+        timeout_sec=1200,
+    )
+    assert res.ok is False
+    assert "timed out" in res.reason
+    assert runner.calls[0]["timeout_sec"] == 1200
+    kinds = [e["event"] for e in log]
+    assert "phase-timeout" in kinds
+    assert "review-complete" not in kinds
 
 
 # --- browser_smoke ---------------------------------------------------------

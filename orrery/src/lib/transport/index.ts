@@ -152,6 +152,18 @@ export const LOOPS: LoopChoice[] = [
     fixtureUrl: 'fixtures/calc-log.jsonl',
     rateMs: 600,
   },
+  {
+    // exercises the 'failed-dark' rest state: a run that ends on stop{ok:false}
+    // (a halted epic retro) rather than a cooperative brake — the crimson
+    // cracked-disc silhouette, never confusable with a banked ember.
+    id: 'failed-dark',
+    name: 'Failed dark — a genuinely crashed retro',
+    theme: 'ember',
+    adapter: 'bmad',
+    stateDir: '.loop',
+    fixtureUrl: 'fixtures/failed-dark-log.jsonl',
+    rateMs: 500,
+  },
 ];
 
 export { ReplayTransport, TauriTransport, WsTransport };

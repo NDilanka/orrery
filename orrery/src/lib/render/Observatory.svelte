@@ -66,6 +66,7 @@
   };
 
   function starColor(status: string, restState: string | null): number {
+    if (restState === 'failed-dark') return C.crimson;
     if (restState === 'quota-frost') return C.frost;
     if (restState === 'handoff-beacon') return C.crimson;
     if (restState === 'certified-done') return C.green;
@@ -692,8 +693,9 @@
         corona.clear();
         const coronaR = vis.starR * pulse;
         const bloom = 1 + vis.burn * 1.4;
-        // corona is suppressed for the cold frost state (it should read "cold")
-        const coronaAlpha = rest === 'quota-frost' ? 0.4 : 1;
+        // corona is suppressed for the cold frost state (it should read "cold"); a
+        // crashed run gets NO glow at all (failed-dark reads as dead, not radiant)
+        const coronaAlpha = rest === 'quota-frost' ? 0.4 : rest === 'failed-dark' ? 0.1 : 1;
         // layer count scales with burn so a quiet/idle loop is cheaper to draw
         const coronaLayers = rest ? 4 : Math.max(2, Math.round(2 + vis.burn * 3));
         for (let i = coronaLayers; i >= 1; i--) {
@@ -713,14 +715,50 @@
           supernovaG.circle(cx, cy, sr * 0.7).stroke({ width: 1, color: C.crimson, alpha: supernova * 0.4 });
         }
 
-        // ── the star core: FOUR mutually-distinct rest silhouettes ──
+        // ── the star core: FIVE mutually-distinct rest silhouettes ──
         // certified-done = sealed green disc + brass seal · stopped-ember = banked
         // warm dome · quota-frost = cold crystal spikes · handoff-beacon = rotating
-        // amber→crimson wedge. Each differs by SHAPE + motion + color (greyscale
+        // amber→crimson wedge · failed-dark = a dim crimson disc, no glow, cut by a
+        // jagged fracture. Each differs by SHAPE + motion + color (greyscale
         // separable per §F). restForm eases the transition so it "sets" at rest.
         starG.clear();
         const rf = vis.restForm;
-        if (rest === 'quota-frost') {
+        if (rest === 'failed-dark') {
+          // crashed: a DIM crimson disc — the corona above is already suppressed
+          // (coronaAlpha), so there is no radiant glow, only the wound. A fixed
+          // jagged fracture cuts across the disc (a glass-crack read, not
+          // decoration) with a dark under-stroke for depth + a short branch.
+          // Motion is a slow, faint flicker (a guttering ember, never a blink);
+          // reduced-motion holds it perfectly still. Triple-coded: shape
+          // (cracked disc) + motion (flicker/still) + color (crimson).
+          const flicker = reduced ? 1 : 0.82 + Math.sin(vis.t * 0.55) * 0.18;
+          starG
+            .circle(cx, cy, coronaR)
+            .fill({ color: C.crimson, alpha: (0.24 + rf * 0.1) * flicker });
+          starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.void, alpha: 0.5 * rf });
+          // the fracture: a fixed jagged crack through the disc, plus a short branch
+          const crack: [number, number][] = [
+            [-0.05, -0.95],
+            [0.22, -0.5],
+            [-0.15, -0.15],
+            [0.3, 0.1],
+            [-0.1, 0.45],
+            [0.18, 0.95],
+          ];
+          starG.moveTo(cx + crack[0][0] * coronaR, cy + crack[0][1] * coronaR);
+          for (let i = 1; i < crack.length; i++) {
+            starG.lineTo(cx + crack[i][0] * coronaR, cy + crack[i][1] * coronaR);
+          }
+          starG.stroke({ width: 2.5, color: C.void, alpha: 0.85 * rf });
+          starG.moveTo(cx + crack[0][0] * coronaR, cy + crack[0][1] * coronaR);
+          for (let i = 1; i < crack.length; i++) {
+            starG.lineTo(cx + crack[i][0] * coronaR, cy + crack[i][1] * coronaR);
+          }
+          starG.stroke({ width: 0.9, color: C.crimson, alpha: 0.55 * rf });
+          starG.moveTo(cx + crack[2][0] * coronaR, cy + crack[2][1] * coronaR);
+          starG.lineTo(cx - 0.6 * coronaR, cy + 0.1 * coronaR);
+          starG.stroke({ width: 1.6, color: C.void, alpha: 0.75 * rf });
+        } else if (rest === 'quota-frost') {
           // cold crystal: sharp 6-point star, no warm core, faint frost shimmer
           const spikes = 6;
           const rr0 = coronaR;
