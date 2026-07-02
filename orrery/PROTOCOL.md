@@ -32,7 +32,11 @@ from it (see §5) but `log.jsonl` is authoritative.
 
 Every object has a string `event`. **Core** events any loop should emit; **BMAD** events are a
 superset the `bmad` adapter understands. Unknown events are logged but ignored by the reducer.
-All numeric costs are USD. Timestamps are ISO-8601 strings unless noted.
+All numeric costs are USD. Timestamps are ISO-8601 strings unless noted. The Python engine
+additionally stamps a numeric `_t` (ms since epoch) onto EVERY event line at write time
+(`loop.logio.append_event`, unless the caller already set one) — the real-time wire convention
+both reducers honor per rule 4 in §4; this is what gives a LIVE run its real "running 2h" /
+"5m ago" durations instead of synthesized `index × 1000` time.
 
 ### Core (generic engine — see `.loop/log.jsonl`)
 ```

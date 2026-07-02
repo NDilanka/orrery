@@ -3,6 +3,7 @@ engine-block loader (loads the real seeded hello/loop.json + asserts defaults fi
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from loop.config import EngineConfig, from_loop_json, model_for_phase
@@ -236,3 +237,21 @@ def test_load_brain2_regression_seed():
     assert cfg.gate.stages[0].name == "e2e"
     assert cfg.cost.ceiling_usd == 2.0
     assert not hasattr(cfg.gate, "green_when")
+
+
+def test_seed_brain2_regression_intra_loop_paths_are_relative():
+    """A4 Task 3: stateDir/stopFlag/checkpoint + the --state-dir/--loop-json args are RELATIVE.
+    `--cwd` (the external brain2 repo the gate/git run against) and `engine.task` both stay
+    ABSOLUTE on purpose: core.py resolves `config.task` as `work / config.task` first (`work` =
+    `--cwd` = the brain2 repo, NOT this loop's dir), so a relative task path would be looked up
+    in the WRONG repo first (and only fall through to the loop dir if no same-named file exists
+    there) -- a silent footgun if brain2 ever grows its own TASK.md. Absolute keeps it unambiguous."""
+    data = json.loads(Path("orrery/loops/brain2-regression/loop.json").read_text(encoding="utf-8"))
+    assert data["stateDir"] == ".loop"
+    assert data["stopFlag"] == ".loop/STOP"
+    assert data["checkpoint"] == ".loop/checkpoint.json"
+    args = data["start"]["args"]
+    assert args[args.index("--state-dir") + 1] == ".loop"
+    assert args[args.index("--loop-json") + 1] == "loop.json"
+    assert args[args.index("--cwd") + 1] == "D:/dev/brain2"
+    assert data["engine"]["task"] == "D:/dev/loop/orrery/loops/brain2-regression/TASK.md"

@@ -179,14 +179,28 @@
   .threshold.ember { color: var(--ember); }
   .threshold.frost { color: var(--frost); }
   .threshold.beacon { color: var(--crimson); }
-  /* only "loud" thresholds (beacon, weekly night) get a slow attention pulse */
+  /* "loud" thresholds (a genuine crash + the weekly quota-night) get the SAME glowing-chip
+     treatment as the NEEDS-A-DECISION pill below (`--glow` + `chipBreathe`, shared) — a
+     failure earns the same voice, not just bigger pulsing text. Non-interactive (a div,
+     not a button): there's nothing to DO from inside Planetarium besides exit to the full
+     instrument, so unlike `.needs` this never gets `cursor:pointer` or a hover state. */
   .threshold.loud {
-    font-size: 18px;
-    animation: loudPulse 2.4s ease-in-out infinite;
+    --glow: var(--crimson);
+    left: 50%;
+    right: auto;
+    bottom: 15%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 2 * var(--space-5));
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glow);
+    background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
+    animation: chipBreathe 2.6s var(--ease-standard) infinite;
   }
-  @keyframes loudPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
+  .threshold.loud.frost {
+    --glow: var(--frost);
   }
   .planetarium.reduced .threshold.loud {
     animation: none;
@@ -196,6 +210,7 @@
      rides on hue alone. Urgency reads as a slow TIGHTENING breath, never a
      blink; reduced-motion drops the animation but keeps the loud styling. */
   .needs {
+    --glow: var(--crimson);
     position: absolute;
     left: 50%;
     bottom: 22%;
@@ -212,17 +227,14 @@
     color: var(--starlight);
     padding: 12px 22px;
     border-radius: var(--radius-pill);
-    border: 1px solid var(--crimson);
-    background: color-mix(in srgb, var(--crimson) 22%, var(--void-3));
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--crimson) 40%, transparent),
-      0 0 24px color-mix(in srgb, var(--crimson) 45%, transparent);
+    border: 1px solid var(--glow);
+    background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
     cursor: pointer;
     backdrop-filter: blur(6px);
-    animation: needsBreath 2.6s var(--ease-standard) infinite;
+    animation: chipBreathe 2.6s var(--ease-standard) infinite;
   }
   .needs:hover {
-    background: color-mix(in srgb, var(--crimson) 32%, var(--void-3));
+    background: color-mix(in srgb, var(--glow) 32%, var(--void-3));
   }
   .needs-glyph {
     color: var(--crimson);
@@ -233,18 +245,20 @@
     font-size: 12px;
     font-weight: 700;
   }
-  /* a slow tightening of the glow ring — attention without a blink */
-  @keyframes needsBreath {
+  /* shared by `.needs` and `.threshold.loud` — a slow tightening of the glow ring
+     (attention without a blink), parameterized by `--glow` so both a crimson crash/beacon
+     and the frost weekly-night read equally "loud" without duplicating the animation. */
+  @keyframes chipBreathe {
     0%,
     100% {
       box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--crimson) 40%, transparent),
-        0 0 24px color-mix(in srgb, var(--crimson) 45%, transparent);
+        0 0 0 1px color-mix(in srgb, var(--glow) 40%, transparent),
+        0 0 24px color-mix(in srgb, var(--glow) 45%, transparent);
     }
     50% {
       box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--crimson) 70%, transparent),
-        0 0 12px color-mix(in srgb, var(--crimson) 60%, transparent);
+        0 0 0 1px color-mix(in srgb, var(--glow) 70%, transparent),
+        0 0 12px color-mix(in srgb, var(--glow) 60%, transparent);
     }
   }
   .needs.reduced {

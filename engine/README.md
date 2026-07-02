@@ -93,6 +93,18 @@ when off; each has a `loop.json` `engine.*` key and a CLI flag. See
 first-failure feedback, lint/type pre-gate, cross-run lessons memory, mutation strength
 audit, run-quality metrics, and an anti-false-green verifier.
 
+### Gate commands and shells
+
+Each gate stage's `command` string (`loop.json` `engine.gate.stages[].command`) runs through
+`subprocess.run(..., shell=True)` (`loop.gate._run_command`) — i.e. **`cmd.exe` on Windows,
+`/bin/sh` on POSIX**. Those are different shells: `&&`/`||` chaining, quoting rules, glob
+expansion, and builtins (`export`, `set`, `[[ ]]`) are NOT portable between them, and a command
+written for one will often fail silently or parse-error on the other. Prefer a single simple
+binary invocation per stage (`pytest -q`, `npx playwright test e2e/functional`) over shell
+chains; if you truly need OS-specific logic, write it into a small per-OS script (`.ps1` /
+`.sh`) and point the gate `command` at that script instead of inlining shell syntax in
+`loop.json`.
+
 ## Module map
 
 ```
@@ -158,6 +170,18 @@ All three shipped drivers (`loop`, `loop-bmad`, `loop-qa`) run inside the same s
 6. **Keep decisions pure.** Put any go/no-go logic in pure functions with injected inputs
    (see `loop.decide`) and inject every side effect (runner, gate, emit) so your driver is
    testable with mocks — no network, no real agent.
+
+**Frontend side.** The Orrery UI (Rust `control.rs` + TS `reduce.ts`) reduces `log.jsonl` into
+one `RunState` shared by every adapter — it never special-cases a driver by name. Emit
+[`PROTOCOL.md`](../orrery/PROTOCOL.md) §2's **core** events (`iter`/`stop`/`gate`/`verdict`/
+`model`/`cost-alert`/quota-*/...) wherever your run maps onto them and you get the full UI for
+free: cost/rate charts, item status, stop reasons, live durations. Anything adapter-specific you
+also emit is **ignored by design** — both reducers skip unknown `event` values without error, so
+new adapters never require a lockstep UI change (§2 "Adapter-specific events + artifacts"). The
+precedent to copy is `loop-qa`: it maps its per-AC judging onto the core `verdict`/`gate`/`iter`
+events for full UI support, and separately emits a driver-specific `qa-ac` event (plus
+`findings/epic-<N>.json` / `report.md` artifact files) that the UI doesn't consume yet but a
+human or downstream tool can.
 
 ## Tests
 

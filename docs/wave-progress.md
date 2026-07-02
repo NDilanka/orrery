@@ -15,10 +15,16 @@ Owner decisions: personal-tool-first; hybrid UX (ops clarity + cosmic identity).
 | U1 plain language, trust chips, body labels, timestamps, help reference | DONE | 79b5ff0 |
 | U2 grid dock, Mechanism/lighthouse retired, phone Observatory, BodyView drawer | DONE (recovered from session-limit interruption) | 8a88330 |
 | A2 driver shell, floor_breach, configkeys loader, single-file configs, greenWhen removed, PROTOCOL refresh | DONE — pytest 538 | 8a88330 |
-| U3 creation & onboarding (TASK.md scaffold, probe-gate, honest dials incl. blueprints greenWhen/dial-field cleanup, empty state) | pending | — |
-| A3 watcher/perf/LAN + frontend dedup | pending | — |
-| U4 remote & ambient (QR share, phone polish, notifications) | pending | — |
-| A4 OSS readiness subset | pending | — |
+| U3 creation & onboarding (honest dials + schema-guard test, write_loop_file TASK.md scaffold, probe_command gate test, empty-state checklist) | DONE — cargo 59+8, vitest 28 | 3b79f1d |
+| A3 watcher lifecycle, incremental reduce, tailer rotation, real `_t` timestamps in caller, /ws token auth, no-0.0.0.0, sessionStore/focusTrap/answerFlow/palette dedup | DONE — cargo 66+8 | f2060b5 |
+| U4 remote & ambient (Share button + QR via qrcode-generator, ambient loudness parity for FAILED/quota, edge-detected alert banners w/ 14 tests; native OS notifications deferred — needs tauri-plugin-notification) | DONE — vitest 42 | see final commit |
+| A4 portability + live timestamps (engine stamps `_t` at append_event, POSIX process_group(0), relative intra-loop seed paths, shell-dialect + adapter docs; RunState neutralization DEFERRED; also fixed 8 wire-contract tests broken by A3's fixture `_t`) | DONE — pytest 543 | see final commit |
+
+**PLAN COMPLETE 2026-07-02.** Final integrated verification: ruff clean, pytest 543,
+cargo 67 lib + 8 golden, vitest 42, svelte-check 0 errors (3 pre-existing a11y warnings),
+final screenshot pass reviewed. Known deferred items: native OS notifications (Tauri
+plugin), RunState schema neutralization (until a third adapter shape needs it),
+failed-dark fixture `_t` backfill, third-party adapter guide beyond README section.
 
 ## Verification protocol per wave
 - `cargo test --manifest-path orrery/src-tauri/Cargo.toml`

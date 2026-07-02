@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from typing import Callable
 
 
 def _ensure_parent(path) -> None:
@@ -28,13 +30,30 @@ def _ensure_parent(path) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
-def append_event(log_path, event: dict) -> None:
+def append_event(
+    log_path,
+    event: dict,
+    now_ms: Callable[[], float] = time.time,
+) -> None:
     """Append ONE line of compact JSON (``one object per line`` — PROTOCOL §1).
 
     Compact = ``json.dumps(event, separators=(',', ':'))`` (no space after ``:`` or ``,``)
     plus a trailing newline. Creates the parent directory if needed.
+
+    Stamps a numeric ``_t`` (epoch milliseconds) onto the event before writing, UNLESS the
+    caller already set one. This is PROTOCOL.md §2's wire convention for a real per-line
+    timestamp: both reducers (Rust ``control.rs`` / TS ``reduce.ts``) already treat a
+    numeric ``_t`` as the authoritative event time, falling back to a synthesized
+    ``index * 1000`` only when no line in the run carries one. Before this, no engine path
+    ever wrote ``_t``, so LIVE runs always fell back to synthetic time. ``now_ms`` is the
+    injected wall clock — seconds since the epoch, e.g. ``time.time`` (the codebase's usual
+    clock-injection shape; see ``loop.supervise``'s ``clock`` param) — multiplied by 1000
+    to produce the millisecond stamp. Callers that pre-stamp ``_t`` (e.g. replaying a
+    fixture with real historical times) are passed through unchanged.
     """
     _ensure_parent(log_path)
+    if "_t" not in event:
+        event = {**event, "_t": int(now_ms() * 1000)}
     line = json.dumps(event, separators=(",", ":"))
     with open(log_path, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")

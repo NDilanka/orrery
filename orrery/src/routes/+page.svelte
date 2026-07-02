@@ -34,11 +34,14 @@
   import PlanetariumOverlay from '$lib/panels/PlanetariumOverlay.svelte';
   import LogPanel from '$lib/panels/LogPanel.svelte';
   import HelpOverlay from '$lib/panels/HelpOverlay.svelte';
+  import ShareButton from '$lib/panels/ShareButton.svelte';
+  import AlertBanner from '$lib/panels/AlertBanner.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import { sessionStore } from '$lib/stores/session.svelte';
+  import { alertStore } from '$lib/stores/alerts.svelte';
   import { hasTauri, hasWsServer, LOOPS } from '$lib/transport';
 
   type View = 'cosmos' | 'system' | 'body';
@@ -161,6 +164,26 @@
     return () => window.removeEventListener('focus', refreshCosmosIfDue);
   });
 
+  // ── Task 3 (wave U4): unattended-run alerts ─────────────────────────────
+  // Edge-detect the mounted System's restState transitions (System-sourced: no jump
+  // action needed, you're already there). NOT fed while the transport is 'replay' —
+  // stores/alerts.svelte.ts's module comment explains why (a human is actively
+  // watching/scrubbing a fixture; there's no "while I wasn't looking" to alert about,
+  // and scrubbing back and forth across a boundary would otherwise spam fire/clear).
+  $effect(() => {
+    if (!activeLoop || sessionStore.transportKind === 'replay' || sessionStore.transportKind === null)
+      return;
+    alertStore.observe(activeLoop, runStore.state.run.restState, 'system', runStore.state.quota.resumeAt);
+  });
+  // Cosmos-sourced: catch a transition on a loop you're NOT currently inside, while
+  // sitting at the roster. Only meaningful when the Cosmos is polling a live backend
+  // (cosmosShouldPoll() above) — a static dev fixture never changes after its first
+  // load, so it establishes its baseline once and never fires.
+  $effect(() => {
+    if (cosmosStore.source !== 'tauri') return;
+    for (const l of cosmosStore.loops) alertStore.observe(l.id, l.restState, 'cosmos');
+  });
+
   onMount(() => {
     mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
     const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
@@ -181,6 +204,15 @@
 
 <main class="stage">
   {#if browser}
+    <!-- ── unattended-run alerts (Task 3): a REAL flex row, not an absolute overlay —
+         everything below (`.stage-body`) is its own positioning context, so the banner
+         pushes the navbar / ModeBar / ignite-fab down instead of covering them. Top of
+         System + Cosmos, not Body. -->
+    {#if view !== 'body'}
+      <AlertBanner onJump={(id) => void enterSystem(id)} />
+    {/if}
+
+    <div class="stage-body">
     <!-- ── COSMOS (default home) ───────────────────────────────────────────── -->
     <div class="layer cosmos-layer {view === 'cosmos' ? 'in' : 'out-far'}">
       {#if view === 'cosmos'}
@@ -323,6 +355,14 @@
             <button class="nbtn body" onclick={() => enterBody(sel)}>fly into body →</button>
           {/if}
         {/if}
+        <!-- Share to phone (Task 1): desktop/tauri-source affordance — hidden for the
+             actual phone/web client served BY the LAN server (hasWsServer()), which has no
+             Tauri invoke bridge to start its own server and would just be confusing there.
+             Left visible in plain `vite dev` (no Tauri) via shareStore's dev-preview fallback
+             so the popover/QR remain screenshot-able without a packaged app. -->
+        {#if view === 'cosmos' && !hasWsServer()}
+          <ShareButton />
+        {/if}
         <span
           class="mode mono"
           class:islive={view !== 'cosmos' && isLiveTransport}
@@ -365,6 +405,7 @@
         }}
       />
     {/if}
+    </div>
   {/if}
 </main>
 
@@ -374,6 +415,19 @@
     inset: 0;
     overflow: hidden;
     background: var(--void);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Task 3: everything except the (optional) alert banner lives in here. A real flex
+     sibling below the banner rather than a shared position:fixed/absolute stack — the
+     banner takes its natural height and this claims the rest, so it becomes the
+     containing block for the navbar / ignite-fab / zoom layers (all position:absolute)
+     WITHOUT any of them needing to know the banner exists. */
+  .stage-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
   }
 
   /* zoom layers — eased scale/opacity for the orrery "fly in / out" feel */
