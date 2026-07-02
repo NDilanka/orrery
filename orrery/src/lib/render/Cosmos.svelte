@@ -2,12 +2,14 @@
   // THE COSMOS (A4) — the multi-loop home. Every registered loop is a small
   // star-system glyph laid out on a field; the platform made visible. This is
   // Tier-1 ONLY (plan §3): a glance answers "is it healthy / does it need me?"
-  //   - star color + glow by status (running = warm live glow)
+  //   - star color + glow by status (M4.5: running is grayscale, distinguished from
+  //     idle/done by motion + brightness, never hue — only failed/handoff/quota stay
+  //     chromatic, plan §5 "the only chromatic pixels in the app are alerts")
   //   - the FOUR not-running palettes for rest-states (greyscale-separable
-  //     silhouettes: certified-seal · banked-ember dome · frost crystal ·
+  //     silhouettes: certified-seal · banked dome · frost crystal ·
   //     handoff beacon wedge) — never hue alone
   //   - a thin cost-horizon ring whose tightness reads spend (invisible <50%)
-  //   - running loops gently animate; idle ones are dim embers
+  //   - running loops gently animate; idle ones are dim
   //
   // The DOM roster below the field is the single home for both ENTER and EDIT
   // (the duplicate edit-rail in +page.svelte is removed). Each row carries a
@@ -69,6 +71,10 @@
     auditor: FALLBACK.auditor,
     horizonRose: FALLBACK.horizonRose,
     frost: FALLBACK.frost,
+    // M4.5 monochrome sweep — grayscale text-emphasis tiers (theme.ts exposes these
+    // specifically so Cosmos/Observatory can draw calm states off them instead of the
+    // retired hue aliases; see glyphColor() below).
+    em: FALLBACK.em,
   };
 
   function fmtUsd(n: number): string {
@@ -91,8 +97,17 @@
   // status branch doesn't cover it, so that one case stays local. The fallback (0x6c779e, a dim
   // idle ember) is Cosmos-specific — the Observatory's star instead falls back to a bright
   // starlight, so it's passed explicitly rather than baked into the shared function.
+  //
+  // M4.5 monochrome sweep (owner: "the only chromatic pixels in the app are alerts") — restColor
+  // is shared with Observatory.svelte and out of scope for this file's edit, but it still
+  // returns its pre-M4 amber/ember hues for the two calm, non-alert states ('running' and
+  // 'stopped-ember' == idle/paused). Override just those two here rather than touch the shared
+  // function; failed-dark/handoff-beacon (alerts) and certified-done/quota-frost (already
+  // grayscale-or-neutral via tokens.css) pass through restColor untouched.
   function glyphColor(l: LoopSummary): number {
     if (l.status === 'quota-wait' && !l.restState) return C.frost;
+    if (!l.restState && l.status === 'running') return C.em?.hi ?? C.starlight;
+    if (l.restState === 'stopped-ember') return C.em?.low ?? C.frost;
     return restColor(l.status, l.restState, 0x6c779e);
   }
 
@@ -145,6 +160,7 @@
       auditor: t.auditor,
       horizonRose: t.horizonRose,
       frost: t.frost,
+      em: t.em ?? FALLBACK.em,
     };
 
     (async () => {
@@ -484,10 +500,12 @@
             g.fill({ color: base, alpha: 0.9 });
             g.circle(cx, cy, r * 0.35).fill({ color: C.frost, alpha: 0.6 });
           } else if (l.restState === 'stopped-ember') {
-            // banked ember: warm dome with a bank line
+            // banked dome with a bank line — idle/paused, not an alert (M4.5: grayscale
+            // only), so the accent uses the eased `col` (now glyphColor()'s grayscale
+            // override), not the chromatic C.ember token.
             g.circle(cx, cy, r).fill({ color: base, alpha: 0.85 });
             g.rect(cx - r, cy + r * 0.15, r * 2, r * 0.55).fill({ color: C.void, alpha: 0.55 });
-            g.circle(cx, cy - r * 0.15, r * 0.5).fill({ color: C.ember, alpha: 0.8 });
+            g.circle(cx, cy - r * 0.15, r * 0.5).fill({ color: col, alpha: 0.8 });
           } else if (l.restState === 'handoff-beacon') {
             // distress beacon: rotating amber→crimson wedge (slow = urgency)
             g.circle(cx, cy, r).fill({ color: base, alpha: 0.92 });
@@ -786,7 +804,9 @@
     background: color-mix(in srgb, var(--brass) 12%, var(--surface-panel));
   }
   .station.needs .enter {
-    border-color: color-mix(in srgb, var(--crimson) 45%, var(--hairline));
+    /* "needs you" (handoff or crash awaiting a human) — amber, matching .needsbadge
+       below (plan §5 M4.5 #5: needs-you/handoff stays amber, not the failed red). */
+    border-color: color-mix(in srgb, var(--status-warn-core) 45%, var(--hairline));
   }
   .s-id {
     font-size: var(--text-xs);
@@ -813,24 +833,29 @@
   .s-glyph {
     font-size: var(--text-xs);
   }
+  /* M4.5 monochrome sweep: running/done/idle are grayscale-only (motion + the shape/
+     glyph already carry the distinction, never hue alone) — only failed (red) and
+     needs-you/handoff/quota (amber) stay chromatic (plan §5). */
   .s-stat.running {
-    color: var(--amber);
+    color: var(--status-run-core);
   }
   .s-stat.certified-done {
-    color: var(--plasma-green);
+    color: var(--status-ok-core);
   }
-  .s-stat.stopped-ember {
-    color: var(--ember);
-  }
+  /* any PAUSED chip (banked-ember or quota) is a deliberate attention color even though
+     the glyph body itself stays neutral gray (plan §5 M4.5 — "PAUSED → warn-amber") */
+  .s-stat.stopped-ember,
   .s-stat.quota-frost,
   .s-stat.quota-wait {
-    color: var(--frost);
+    color: var(--status-warn-core);
   }
-  .s-stat.handoff-beacon,
-  .s-stat.handoff,
   .s-stat.failed-dark,
   .s-stat.error {
-    color: var(--crimson);
+    color: var(--status-err-core);
+  }
+  .s-stat.handoff-beacon,
+  .s-stat.handoff {
+    color: var(--status-warn-core);
   }
   .s-cost {
     font-size: var(--text-2xs);
@@ -859,10 +884,10 @@
     text-transform: uppercase;
   }
   .s-trust.unverified {
-    color: var(--amber);
+    color: var(--status-warn-core);
   }
   .s-trust.verified {
-    color: var(--plasma-green);
+    color: var(--status-ok-core);
   }
   .s-retro {
     display: inline-flex;
@@ -873,8 +898,10 @@
     text-transform: uppercase;
     color: var(--text-faint);
   }
+  /* retro-pending is an informational "not done yet" meta state, not an alert — stays
+     grayscale (M4.5); only failed/needs-you/quota keep chroma. */
   .s-retro.pending {
-    color: var(--amber);
+    color: var(--em-mid);
   }
   /* the per-station edit affordance — quiet until hover / keyboard focus */
   .station .edit {
@@ -897,7 +924,9 @@
     color: var(--brass);
   }
 
-  /* ── N-needs-you badge — the one element allowed to be loud ──────────────── */
+  /* ── N-needs-you badge — the one element allowed to be loud (amber, plan §5 M4.5 #5:
+     needs-you/handoff — including the "waiting on a human" crash case cosmosStore folds
+     in here — is the amber alert, distinct from the failed/crashed red used elsewhere) ── */
   .needsbadge {
     position: absolute;
     top: var(--chrome-inset);
@@ -909,8 +938,8 @@
     gap: var(--space-2);
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-pill);
-    border: 1px solid color-mix(in srgb, var(--crimson) 55%, var(--panel-edge));
-    background: color-mix(in srgb, var(--crimson) 16%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--status-warn-core) 55%, var(--panel-edge));
+    background: color-mix(in srgb, var(--status-warn-core) 16%, var(--panel));
     color: var(--starlight);
     backdrop-filter: blur(8px);
     cursor: pointer;
@@ -920,8 +949,8 @@
   }
   .needsbadge:hover,
   .needsbadge[aria-pressed='true'] {
-    border-color: var(--crimson);
-    background: color-mix(in srgb, var(--crimson) 24%, var(--panel));
+    border-color: var(--status-warn-core);
+    background: color-mix(in srgb, var(--status-warn-core) 24%, var(--panel));
   }
   .needsbadge .nbglyph {
     display: inline-flex;
@@ -930,7 +959,7 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: var(--crimson);
+    background: var(--status-warn-core);
     color: var(--void);
     font-weight: 700;
     font-size: var(--text-xs);
@@ -945,7 +974,7 @@
     font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    color: color-mix(in srgb, var(--crimson) 30%, var(--starlight));
+    color: color-mix(in srgb, var(--status-warn-core) 30%, var(--starlight));
   }
 
   /* ── at-scale filter bar (top, below the needs-you badge) ─────────────────── */
@@ -1006,13 +1035,14 @@
     background: color-mix(in srgb, var(--brass) 22%, var(--surface-3));
     color: var(--brass);
   }
-  /* the Needs-you chip earns a crimson edge when the count is nonzero */
+  /* the Needs-you chip earns an amber edge when the count is nonzero — matches
+     .needsbadge (M4.5: needs-you is amber, not the failed/crashed red). */
   .fchip.has {
-    border-color: color-mix(in srgb, var(--crimson) 40%, var(--hairline));
+    border-color: color-mix(in srgb, var(--status-warn-core) 40%, var(--hairline));
     color: var(--starlight);
   }
   .fchip.has .pcount {
-    background: color-mix(in srgb, var(--crimson) 30%, var(--surface-3));
+    background: color-mix(in srgb, var(--status-warn-core) 30%, var(--surface-3));
     color: var(--starlight);
   }
 

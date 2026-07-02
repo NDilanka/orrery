@@ -131,7 +131,7 @@
 <div class="control" role="group" aria-label="Run control">
   {#if !running && !banked && !failed}
     <button
-      class="btn ignite"
+      class="btn btn-primary btn-md"
       class:working={pending === 'start'}
       aria-label="Start the loop"
       disabled={pending === 'start'}
@@ -145,7 +145,7 @@
   {#if failed}
     {#if canResume}
       <button
-        class="btn resume"
+        class="btn btn-primary btn-md"
         class:working={pending === 'resume'}
         aria-label="Resume from checkpoint — re-engage the last banked tooth"
         disabled={pending !== null}
@@ -153,9 +153,11 @@
         >{pending === 'resume' ? '↻ resuming…' : '↻ Resume from checkpoint'}</button
       >
     {/if}
+    <!-- when a Resume path exists it leads (primary); Restart fresh is then the
+         secondary choice (ghost) — same action, just visually quieter so Resume
+         wins. With no checkpoint at all, Restart fresh IS the primary action. -->
     <button
-      class="btn ignite restart"
-      class:secondary={canResume}
+      class="btn btn-md {canResume ? 'btn-ghost' : 'btn-primary'}"
       class:working={pending === 'start'}
       aria-label="Restart fresh — start the loop over, discarding the crashed run"
       disabled={pending !== null}
@@ -166,7 +168,7 @@
 
   {#if running}
     <button
-      class="btn stop"
+      class="btn btn-ghost btn-md"
       aria-label="Brake at next phase boundary"
       disabled={effectiveStop != null}
       onclick={() => fire('stop:phase')}
@@ -174,19 +176,20 @@
       Brake · phase
     </button>
     <button
-      class="btn stop"
+      class="btn btn-ghost btn-md"
       aria-label="Brake at next story boundary"
       disabled={effectiveStop != null}
       onclick={() => fire('stop:story')}
     >
       Brake · story
     </button>
-    <!-- the most urgent brake — visually distinct (danger). Still cooperative (a
-         STOP file, not a kill): the honest tooltip says so. Stays clickable to
-         ESCALATE from an already-pending phase/story brake; only disables once
-         a stop:now itself is in flight. -->
+    <!-- the most urgent brake — visually distinct (danger, the one hue besides
+         warn that survives M4). Still cooperative (a STOP file, not a kill):
+         the honest tooltip says so. Stays clickable to ESCALATE from an
+         already-pending phase/story brake; only disables once a stop:now
+         itself is in flight. -->
     <button
-      class="btn stopnow"
+      class="btn btn-danger btn-md stopnow"
       class:working={effectiveStop === 'now'}
       aria-label="Stop now — request an immediate stop; a running agent call finishes first"
       title="Stops at the engine's next check — a running agent call finishes first."
@@ -197,14 +200,14 @@
   {/if}
 
   {#if effectiveStop}
-    <button class="btn cancel" aria-label="Cancel the pending brake" onclick={() => fire('cancel-stop')}
+    <button class="btn btn-ghost btn-md" aria-label="Cancel the pending brake" onclick={() => fire('cancel-stop')}
       >Cancel brake</button
     >
   {/if}
 
   {#if !failed && (banked || s.run.resumeCmd)}
     <button
-      class="btn resume"
+      class="btn btn-primary btn-md"
       class:working={pending === 'resume'}
       aria-label="Resume the loop"
       disabled={pending === 'resume'}
@@ -251,137 +254,77 @@
 
 <style>
   .control {
-    /* placed by the System dock's bottom row (+page.svelte .g-bottom); wraps on narrow widths */
+    /* placed by the System dock's single bottom bar (+page.svelte merges this
+       with TransportBar into one full-width dock — plan §M4.3/M4.5). M4.5:
+       this component no longer draws its own pill-card chrome (background/
+       border/backdrop-filter/padding, max-width) — the dock container supplies
+       that now; this is just the button row's internal layout, wrapping on
+       narrow widths. Buttons themselves are the shared `.btn` system
+       (primitives.css) — see the variant classes in the markup above. */
     display: flex;
     align-items: center;
-    justify-content: center;
     flex-wrap: wrap;
     gap: var(--space-2);
-    max-width: min(620px, 92vw);
-    padding: 9px 12px;
-    background: var(--panel);
-    border: 1px solid var(--panel-edge);
-    border-radius: var(--radius);
-    backdrop-filter: blur(8px);
   }
-  .btn {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 7px 15px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--void-3);
-    color: var(--starlight);
-    cursor: pointer;
-    /* hover is a +1 surface step (M1.4) — the feedback timing (--dur-feedback) is on the
-       surface-changing properties; transform keeps its own slightly slower feel. */
-    transition: border-color var(--dur-feedback) var(--ease-standard),
-      background var(--dur-feedback) var(--ease-standard),
-      transform var(--dur-fast) var(--ease-standard);
-  }
-  .btn:hover:not(:disabled) {
-    border-color: var(--brass);
-    background: color-mix(in srgb, var(--void-3) 70%, var(--n4) 30%);
-    transform: translateY(-1px);
-  }
-  .btn:active:not(:disabled) { transform: translateY(0); }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  /* button family (plan §1 + M1.2): "go forward" actions (Start/Restart/Resume) are the
-     primary family — solid, tinted fill. Brake/Cancel are secondary — ghost, hairline only,
-     no fill (already were). Stop-now is destructive — see .btn.stopnow below. */
-  .btn.ignite {
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 45%, transparent);
-    background: color-mix(in srgb, var(--amber) 8%, transparent);
-  }
-  .btn.stop {
-    color: var(--ember);
-    border-color: color-mix(in srgb, var(--ember) 35%, transparent);
-  }
-  .btn.resume {
-    color: var(--plasma-green);
-    border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
-    /* primary-solid parity with .ignite — Resume is a "go forward" action too. */
-    background: color-mix(in srgb, var(--plasma-green) 8%, transparent);
-  }
-  /* "Restart fresh" alongside a "Resume from checkpoint" reads as the secondary
-     choice — same ignite/amber styling (it IS the same start action), just
-     visually quieter so Resume leads. */
-  .btn.restart.secondary {
-    opacity: 0.75;
-  }
-  .btn.restart.secondary:hover:not(:disabled) {
-    opacity: 1;
-  }
-  .btn.cancel { color: var(--text-dim); }
-  /* the loudest, most urgent action — destructive styling, visually distinct from the
-     ember brake buttons so it never gets mistaken for a graceful brake. Uses the M0
-     two-tier status-err token (core = small/bright text+border) instead of the raw
-     --crimson literal — the plan's explicit mapping for destructive actions. */
-  .btn.stopnow {
-    color: var(--status-err-core);
-    border-color: color-mix(in srgb, var(--status-err-core) 55%, transparent);
-    background: color-mix(in srgb, var(--status-err-core) 10%, transparent);
-  }
-  .btn.stopnow:hover:not(:disabled) {
-    border-color: var(--status-err-core);
-    background: color-mix(in srgb, var(--status-err-core) 20%, transparent);
-  }
-  /* a start/resume in flight: keep the button lit (not greyed) and gently pulsing so the
-     click clearly registered while the engine cold-starts. Uses the shared `breathe`
-     keyframe (primitives.css) — one attention grammar app-wide instead of a bespoke
-     workPulse/stopPulse pair. */
+  /* a start/resume in flight: keep the primary button lit and gently pulsing so
+     the click clearly registered while the engine cold-starts. White breathe —
+     Start/Resume are `.btn-primary` (monochrome) now, not an alert, so the glow
+     is em-hi rather than the old amber. Uses the shared `breathe` keyframe
+     (primitives.css) — one attention grammar app-wide. */
   .btn.working {
-    opacity: 1;
-    --glow: var(--amber);
+    --glow: var(--em-hi);
     --breathe-r: 12px;
+    animation: breathe 1.2s ease-in-out infinite;
+  }
+  /* stop:now in flight — the destructive glow (err-red, not the primary white),
+     so the danger button never pulses the wrong hue while "stopping…" */
+  .stopnow.working {
+    --glow: var(--status-err-core);
     animation: breathe 1.2s ease-in-out infinite;
   }
   .pending {
     font-size: var(--text-xs);
     letter-spacing: 0.06em;
   }
-  /* was an opacity-blink (brakePulse) — retired per plan §1 ("opacity-blink is retired");
-     the same glow-breathe as everything else, just a smaller radius for inline text. */
+  /* M4.5 monochrome sweep: cooperative process narration (braking/igniting/
+     banked) is not an alert — the user asked for it, nothing needs their
+     attention — so it goes grayscale. Only genuine failures (crashed/
+     stalled/a rejected control call) stay err-red below. Was an opacity-blink
+     (brakePulse) before that; the same glow-breathe as everything else now,
+     just a smaller radius for inline text. */
   .pending.braking {
-    color: var(--ember);
-    --glow: var(--ember);
+    color: var(--em-mid);
+    --glow: var(--em-hi);
     --breathe-r: 8px;
     animation: breathe 1.4s ease-in-out infinite;
   }
   .pending.igniting {
-    color: var(--amber);
-    --glow: var(--amber);
+    color: var(--em-mid);
+    --glow: var(--em-hi);
     --breathe-r: 8px;
     animation: breathe 1.4s ease-in-out infinite;
   }
-  /* gave up waiting for the engine: steady ember, no pulse (it's a quiet warning, not in-flight) */
+  /* gave up waiting for the engine: a genuine failure to start → err-red, no
+     pulse (it's a settled state, not in-flight) */
   .pending.igniting.stalled {
-    color: var(--ember);
+    color: var(--status-err-core);
     animation: none;
   }
-  .pending.ember { color: var(--ember); opacity: 0.8; }
+  .pending.ember { color: var(--em-mid); opacity: 0.8; }
   .pending.crashed { color: var(--status-err-core); }
   .pending.failed {
-    color: var(--ember);
+    /* a rejected control call (e.g. AlreadyRunning) → a genuine error, err-red */
+    color: var(--status-err-core);
     max-width: 320px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  /* stop:now in flight — the destructive glow (not the generic amber), so the danger button
-     never pulses the wrong hue while "stopping…" */
-  .btn.stopnow.working {
-    --glow: var(--status-err-core);
-    animation: breathe 1.2s ease-in-out infinite;
   }
   /* reduced-motion: no pulsing (urgency reads from text, not blink) */
   @media (prefers-reduced-motion: reduce) {
     .pending.braking,
     .pending.igniting { animation: none; }
     .btn.working,
-    .btn.stopnow.working { animation: none; }
+    .stopnow.working { animation: none; }
   }
 </style>

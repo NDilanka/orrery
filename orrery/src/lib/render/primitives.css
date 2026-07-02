@@ -247,7 +247,7 @@
   background: var(--starlight);
   border: 2px solid var(--brass);
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(201, 162, 75, 0.5);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
 }
 .slider.thumb-brass::-moz-range-thumb {
   width: 14px;

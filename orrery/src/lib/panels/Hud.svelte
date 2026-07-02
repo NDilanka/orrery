@@ -125,10 +125,14 @@
   });
 </script>
 
-<div class="hud">
+<div class="hud panel panel-tier-a">
   <div class="row top">
     <span class="status-pill {pill.cls}">
-      <span class="dot"></span>{pill.label}
+      {#if pill.cls === 'done'}
+        <span class="seal" aria-hidden="true">✓</span>
+      {:else}
+        <span class="dot"></span>
+      {/if}{pill.label}
     </span>
     {#if model}
       <span class="model-chip {model}">{model}</span>
@@ -180,7 +184,7 @@
       <span class="key mono">{s.currentItem}</span>
       {#if runStore.current?.gate}
         {@const g = runStore.current.gate}
-        <span class="gate num {g.green ? 'green' : 'red'}">
+        <span class="gate num">
           {g.pass}/{g.total} {g.green ? 'green' : 'red'}
         </span>
       {/if}
@@ -224,18 +228,15 @@
 <style>
   .hud {
     /* wave U2 Task 1: docked at the top of the left rail — the grid places it,
-       this is internal styling only now. */
+       this is internal styling only now. M4.4: Tier A, the screen's only elevated
+       rail surface — `.panel .panel-tier-a` (primitives.css) supply the raised --n3
+       background + hairline + radius + padding; this rule only adds the layout this
+       component needs on top. */
     width: 100%;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-4);
-    /* docked rail — flat surface-panel + hairline, no shadow, no blur (glass is
-       reserved for overlays above the scene, plan §1 principle 6) */
-    background: var(--surface-panel);
-    border: 1px solid var(--border-hairline);
-    border-radius: var(--radius);
     pointer-events: none;
     user-select: none;
   }
@@ -248,15 +249,18 @@
   /* named .status-pill (not .pill) to avoid colliding with the shared .pill primitive
      (primitives.css, the navbar/ignite-fab chip shape) — this is HUD's own status badge,
      unrelated to that chip shape and never positioned/blurred like it. */
+  /* M4.4: the status word is one of the two loudest elements on the whole screen
+     (the other is the spend figure below) — a real scale jump off the old --text-xs
+     badge size, so it reads before anything else in the rail. */
   .status-pill {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
-    font-size: var(--text-xs);
+    font-size: var(--text-lg);
     font-weight: 600;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.06em;
     border: 1px solid transparent;
   }
   .status-pill .dot {
@@ -265,48 +269,67 @@
     border-radius: 50%;
     background: currentColor;
   }
-  /* status colors now come from the two-tier --status-*-core/-base pairs (tokens.css
-     tier 1): core (small/bright) on the text + dot + border rim, base (large/muted)
-     on the background fill — the chroma-budget-by-area rule (plan §1 principle 2). */
+  .status-pill .seal {
+    font-size: var(--text-md);
+    line-height: 1;
+  }
+  /* M4.1/M4.4 monochrome-by-default: running/done/paused/idle carry no hue at all —
+     status-run-core/status-ok-core already resolve to --em-hi and status-idle-core to
+     --em-low (tokens.css M4.1 remap), so these three rules are already grayscale;
+     kept on the semantic --status-* tokens (not raw --em-*) so the token STRUCTURE
+     stays consistent with the rest of the status system. ONLY failed (crashed) and
+     beacon (handoff) below keep real chroma — the app's two genuine alert colors. */
   .status-pill.running {
     color: var(--status-run-core);
     border-color: color-mix(in srgb, var(--status-run-core) 40%, transparent);
     background: color-mix(in srgb, var(--status-run-base) 16%, transparent);
+  }
+  .status-pill.running .dot {
+    /* the one breathing element in the calm-state set — a slow white glow marks
+       "alive and working", not an alert; shares the app's one attention keyframe. */
+    --glow: var(--status-run-core);
+    --breathe-r: 8px;
+    animation: breathe 2.4s var(--ease-standard) infinite;
   }
   .status-pill.done {
     color: var(--status-ok-core);
     border-color: color-mix(in srgb, var(--status-ok-core) 45%, transparent);
     background: color-mix(in srgb, var(--status-ok-base) 16%, transparent);
   }
+  /* paused (resumable-from-checkpoint) is a calm rest state, not an alert — M4.1
+     owner decision moved it off its old warn-amber treatment onto the same
+     monochrome --status-idle-* family as plain idle. */
   .status-pill.ember {
+    color: var(--status-idle-core);
+    border-color: var(--hairline);
+  }
+  /* quota-frost: M4.1 owner decision reclassified quota-pause as a needs-attention
+     state, so it now shares the warn-amber family with handoff/beacon below (was its
+     own literal --frost blue). */
+  .status-pill.frost {
     color: var(--status-warn-core);
     border-color: color-mix(in srgb, var(--status-warn-core) 45%, transparent);
     background: color-mix(in srgb, var(--status-warn-base) 16%, transparent);
   }
-  /* quota-frost keeps its own literal --frost — it's one of the five triple-coded
-     rest-state silhouettes (a keeper, plan §0) with no equivalent in the generic
-     run/ok/warn/err/idle status set; nearest would be --status-idle-*, which would
-     erase the frost hue this rest-state is specifically identified by. */
-  .status-pill.frost {
-    color: var(--frost);
-    border-color: color-mix(in srgb, var(--frost) 45%, transparent);
-    background: color-mix(in srgb, var(--frost) 12%, transparent);
-  }
+  /* handoff/"needs you" — M4.1: the app's alert palette is red (failed/crashed) and
+     amber (needs-you/handoff/quota); beacon is a needs-you state, not a crash, so it
+     moved off --status-err-* onto --status-warn-* here. */
   .status-pill.beacon {
-    color: var(--status-err-core);
+    color: var(--status-warn-core);
     /* the loudest state. Urgency reads as a slow breathing GLOW, never an opacity
        blink; the static border+shadow stays high-contrast so reduced-motion
        (which freezes the animation) never makes the state disappear. Now consumes
        the shared `breathe` keyframe (primitives.css) instead of a bespoke one — one
        attention grammar app-wide (plan §1 principle 5). */
-    border-color: var(--status-err-core);
-    background: color-mix(in srgb, var(--status-err-base) 20%, transparent);
-    --glow: var(--status-err-core);
+    border-color: var(--status-warn-core);
+    background: color-mix(in srgb, var(--status-warn-base) 20%, transparent);
+    --glow: var(--status-warn-core);
     --breathe-r: 14px;
     animation: breathe 2.2s var(--ease-standard) infinite;
   }
-  /* the crashed state — same err hue as beacon, but STEADY (no breathing). failed-dark
-     reads as dim/dead (no glow), not an urgent call to act right now. */
+  /* the crashed state — the app's other surviving hue (red), but STEADY (no
+     breathing). failed-dark reads as dim/dead (no glow), not an urgent call to act
+     right now. */
   .status-pill.failed {
     color: var(--status-err-core);
     border-color: var(--status-err-core);
@@ -330,22 +353,18 @@
     align-items: center;
     gap: var(--space-1);
   }
+  /* M4.4: grayscale — the active dot is just the brightest tier (--em-hi), not the
+     model's spectral tint (that distinction still lives in the model chip below). */
   .pdot {
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: var(--hairline);
+    background: var(--em-faint);
   }
   .pdot.active {
     width: 6px;
     height: 6px;
-    background: var(--spectral-sonnet);
-  }
-  .pdot.active.haiku {
-    background: var(--spectral-haiku);
-  }
-  .pdot.active.opus {
-    background: var(--spectral-opus);
+    background: var(--em-hi);
   }
   .pname {
     font-size: var(--text-xs);
@@ -359,10 +378,11 @@
     letter-spacing: 0.02em;
     margin-top: calc(var(--space-1) * -1);
   }
-  /* wall-clock anchors (Task 4): "started HH:MM · running 2h 12m" / "ended 5m ago" */
+  /* wall-clock anchors (Task 4): "started HH:MM · running 2h 12m" / "ended 5m ago" —
+     M4.4: a timestamp, so it recedes to --em-faint, the dimmest tier. */
   .timeline {
     font-size: var(--text-2xs);
-    color: var(--text-meta);
+    color: var(--em-faint);
     letter-spacing: 0.02em;
     margin-top: calc(var(--space-1) * -1);
   }
@@ -394,17 +414,22 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
+  /* M4.4: the loudest figure in the rail — --text-display already gave it scale; --em-hi
+     (was --starlight, a near-identical literal) puts it on the same emphasis system as
+     everything else instead of a one-off hex. */
   .big {
     font-size: var(--text-display);
     font-weight: 600;
-    color: var(--starlight);
+    color: var(--em-hi);
     line-height: 1;
   }
+  /* CUM SPEND / CURRENT labels — the quietest text in the block (--em-faint), so the
+     values they introduce read as the loud part. */
   .label {
     font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--text-meta);
+    color: var(--em-faint);
   }
   .horizon {
     font-size: var(--text-xs);
@@ -435,12 +460,19 @@
     flex-wrap: wrap;
     font-size: var(--text-sm);
   }
+  /* M4.4: the current story name — a secondary-but-still-bright anchor (--em-hi), one
+     scale step down from the spend figure (--text-md, not --text-display). */
   .key {
-    color: var(--starlight);
-    font-size: var(--text-sm);
+    color: var(--em-hi);
+    font-size: var(--text-md);
   }
-  .gate.green { color: var(--plasma-green); }
-  .gate.red { color: var(--crimson); }
+  /* M4.4: "gate count --em-mid" — a plain readout now; the pass/fail count already
+     spells out "green"/"red" in words (never-hue-alone), so the chip doesn't need to
+     also carry it in color. Kept out of the alert palette on purpose: a per-item gate
+     result isn't the same class of event as a crashed/handoff run. */
+  .gate {
+    color: var(--em-mid);
+  }
   /* trust chip — the claimed-vs-verified signal, promoted to text. Auditor-white,
      gently pulsing = actively being audited (was the Observatory lighthouse's job,
      wave U2 Task 3); green (filled) = an independent verifier confirmed it. Never
@@ -455,19 +487,25 @@
     letter-spacing: 0.08em;
     border: 1px solid currentColor;
   }
+  /* claimed-but-unaudited — M4.1: this is a genuine attention state ("claimed,
+     not yet independently verified"), so it's one of the two chips that keeps chroma;
+     warn-amber, same family as handoff/quota. */
   .trust.verifying {
-    color: var(--auditor-white);
+    color: var(--status-warn-core);
     animation: verifyPulse 2.2s ease-in-out infinite;
   }
   @keyframes verifyPulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.55; }
   }
+  /* certified — independently confirmed, the calm/resolved end state: --em-hi + the
+     ✓ seal glyph, no hue (M4.1 "success = pure monochrome"). */
   .trust.verified {
-    color: var(--plasma-green);
-    background: color-mix(in srgb, var(--plasma-green) 12%, transparent);
+    color: var(--em-hi);
+    background: color-mix(in srgb, var(--em-hi) 10%, transparent);
   }
-  .quota .num { color: var(--frost); }
+  /* quota countdown — part of the same needs-attention family as the frost pill above. */
+  .quota .num { color: var(--status-warn-core); }
   .probe.num {
     color: var(--text-meta);
     font-size: var(--text-2xs);
@@ -490,7 +528,7 @@
     display: flex;
     gap: var(--space-1);
     font-size: var(--text-2xs);
-    color: var(--text-meta);
+    color: var(--em-faint);
     flex-wrap: wrap;
   }
 

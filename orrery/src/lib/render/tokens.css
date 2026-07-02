@@ -94,7 +94,8 @@
   --void-2: #0b0e1c;
   --void-3: #11142a;
   --panel: rgba(11, 14, 28, 0.72);
-  --panel-edge: rgba(201, 162, 75, 0.28);
+  /* M4: was brass-tinted rgba(201,162,75,.28) — neutralized; edges are brightness, not hue */
+  --panel-edge: rgba(255, 255, 255, 0.14);
   --scrim: rgba(4, 6, 14, 0.66); /* modal / bottom-sheet backdrop — the ONE value every modal uses */
   /* M4.1: repointed onto the em-* emphasis tiers above (docs/ui-modernization-plan.md §5) —
      was literal starlight-at-alpha; body/label ordering now correctly runs

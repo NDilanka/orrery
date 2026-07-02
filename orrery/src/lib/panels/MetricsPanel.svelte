@@ -26,8 +26,8 @@
   }
 </script>
 
-<section class="metrics" aria-labelledby="metrics-heading">
-  <h2 id="metrics-heading" class="mhead">RUN QUALITY</h2>
+<section class="metrics panel" aria-labelledby="metrics-heading">
+  <h2 id="metrics-heading" class="panel-hd">RUN QUALITY</h2>
 
   {#if m}
     <div class="grid">
@@ -87,27 +87,16 @@
   .metrics {
     /* wave U2 Task 1: docked in the right rail (a scrollable flex column with
        VerdictPanel/QAConsole) — the grid places it, this is internal styling only.
-       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
-       border (no shadow, no glass on docked rails per plan §1.6). */
+       M4.5: card chrome (padding/border/radius/background) now comes from the
+       shared `.panel` primitive (primitives.css) — this class only carries the
+       flex-column layout on top of it. */
     width: 100%;
     flex: none;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-4);
-    background: var(--surface-panel);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius);
     font-size: var(--text-sm);
-  }
-  .mhead {
-    margin: 0;
-    font-size: var(--text-xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--text-meta);
   }
   .grid {
     display: grid;
@@ -128,7 +117,7 @@
   .mval {
     font-size: var(--text-lg);
     font-weight: 600;
-    color: var(--starlight);
+    color: var(--em-hi);
     line-height: 1;
   }
   .mval.num {
@@ -147,14 +136,16 @@
     color: var(--status-err-core);
   }
   .foot {
+    /* meta aside (a running total, not a value) → em-faint */
     font-size: var(--text-2xs);
-    color: var(--text-meta);
+    color: var(--text-faint);
     border-top: 1px solid var(--hairline);
     padding-top: var(--space-2);
   }
   .placeholder {
+    /* explanatory body sentence → em-mid */
     font-size: var(--text-xs);
-    color: var(--text-meta);
+    color: var(--text-dim);
     line-height: 1.4;
     margin: 0;
   }

@@ -65,15 +65,15 @@
 
 {#if pending.length}
   <div
-    class="qa"
+    class="qa panel"
     role="region"
     aria-label="Pending decision"
     aria-live="assertive"
   >
-    <div class="qhead">
+    <div class="qhead panel-hd">
       <span class="qmote" aria-hidden="true">?</span>
       <span class="qtitle mono">DECISION CHAMBER</span>
-      <span class="qcount mono num">{pending.length} pending</span>
+      <span class="qcount panel-meta num">{pending.length} pending</span>
     </div>
 
     {#each pending as q (q.id)}
@@ -98,7 +98,7 @@
           ></textarea>
           <div class="qactions">
             <button
-              class="send"
+              class="btn btn-primary btn-sm"
               onclick={() => send(q)}
               disabled={sending[q.id] || !(drafts[q.id] ?? '').trim()}
             >
@@ -110,8 +110,8 @@
     {/each}
   </div>
 {:else if lastAnswered}
-  <div class="qa answered">
-    <div class="qhead">
+  <div class="qa answered panel">
+    <div class="qhead panel-hd">
       <span class="qmote done">✓</span>
       <span class="qtitle mono">ANSWERED · turn {lastAnswered.turn}</span>
     </div>
@@ -124,8 +124,13 @@
     /* wave U2 Task 1: docked in the right rail (below Metrics/Verdict) instead of
        floating independently at the vertical center of the viewport — the grid
        + the rail's own scroll now own placement; this is internal styling only.
-       M1.2: one shared right-rail card treatment — --surface-panel + a hairline
-       border (no shadow, no glass on docked rails per plan §1.6). */
+       M4.5: card chrome (padding/border/radius/background) now comes from the
+       shared `.panel` primitive — this class keeps the left-border accent (a
+       one-off shape `.panel` doesn't have), the scroll clamp, and the layout.
+       Border-left stays warn-amber: a pending question genuinely blocks on the
+       user (the one Tier-B "needs you" case the monochrome sweep keeps
+       chromatic) — contrast VerdictPanel's "pending" state, which is just
+       system status with nothing for the user to do, and went grayscale. */
     width: 100%;
     flex: none;
     box-sizing: border-box;
@@ -134,20 +139,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-4);
-    background: var(--surface-panel);
-    border: 1px solid var(--hairline);
-    border-left: var(--accent-border-w) solid var(--plasma-cyan);
-    border-radius: var(--radius);
+    border-left: var(--accent-border-w) solid var(--status-warn-core);
   }
   .qa.answered {
     /* pass state on a small element (border accent) → the two-tier system's -core */
     border-left-color: var(--status-ok-core);
-  }
-  .qhead {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
   }
   .qmote {
     display: inline-flex;
@@ -156,11 +152,11 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
-    color: var(--plasma-cyan);
+    background: color-mix(in srgb, var(--status-warn-core) 18%, transparent);
+    color: var(--status-warn-core);
     font-weight: 700;
     font-size: var(--text-md);
-    --glow: var(--plasma-cyan);
+    --glow: var(--status-warn-core);
     --breathe-r: 14px;
     /* was an opacity-blink; the shared `breathe` keyframe (primitives.css) instead —
        one attention grammar app-wide (plan §1: "never blinking"). Reduced motion is
@@ -174,14 +170,13 @@
     animation: none;
   }
   .qtitle {
-    font-size: var(--text-xs);
-    letter-spacing: 0.16em;
-    color: var(--plasma-cyan);
+    /* header text stays the quiet em-low caps `.panel-hd` sets — only the glyph
+       and border accent carry the warn signal, so the right rail still reads
+       as one quiet Tier-B family (plan §M4.4/M4.5). */
     flex: 1;
   }
   .qcount {
     font-size: var(--text-2xs);
-    color: var(--text-meta);
   }
   .qcard {
     display: flex;
@@ -218,9 +213,10 @@
     border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
   }
   .qbody {
+    /* body sentence, not a headline value → content tier */
     font-size: var(--text-sm);
     line-height: 1.5;
-    color: var(--starlight);
+    color: var(--text-dim);
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 30vh;
@@ -236,7 +232,7 @@
     background: var(--n1);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-sm);
-    color: var(--starlight);
+    color: var(--em-hi);
     font-size: var(--text-sm);
     line-height: 1.45;
     padding: 9px 11px;
@@ -249,8 +245,8 @@
     background: var(--n2);
   }
   .qinput:focus {
-    /* keep the global :focus-visible ring — only accent the border */
-    border-color: color-mix(in srgb, var(--plasma-cyan) 50%, transparent);
+    /* keep the global :focus-visible ring — only accent the border, grayscale now */
+    border-color: color-mix(in srgb, var(--em-mid) 50%, transparent);
   }
   .qinput:disabled {
     opacity: 0.4;
@@ -260,35 +256,11 @@
     display: flex;
     justify-content: flex-end;
   }
-  .send {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 7px 16px;
-    border-radius: var(--radius-pill);
-    border: 1px solid color-mix(in srgb, var(--plasma-cyan) 45%, transparent);
-    background: color-mix(in srgb, var(--plasma-cyan) 10%, transparent);
-    color: var(--plasma-cyan);
-    cursor: pointer;
-    transition:
-      background var(--dur-feedback) var(--ease-standard),
-      transform var(--dur-feedback) var(--ease-standard);
-  }
-  .send:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--plasma-cyan) 18%, transparent);
-    transform: translateY(-1px);
-  }
-  .send:active:not(:disabled) {
-    transform: translateY(0);
-  }
-  .send:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
+  /* Send is a "go forward" action → .btn-primary (primitives.css), same family
+     as Start/Resume on RunControlBar. Replaces the bespoke cyan pill button. */
   .observe {
     font-size: var(--text-2xs);
-    color: var(--text-meta);
+    color: var(--text-faint);
     font-style: italic;
     padding: 6px 0;
   }

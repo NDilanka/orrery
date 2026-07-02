@@ -162,9 +162,13 @@
 
   // a body's status hue for its leader line — reuses the same two-tier
   // status-*-core tokens the rest of the app uses for status color (plan §M0.1).
+  // M4.5: 'blocked' moved from the err/red bucket to warn/amber (matches Observatory's
+  // planetPair() — blocked means "a human needs to look at this", not "this crashed"; only
+  // 'failed' stays red). Order matters: failed (red) checked first, then blocked/unverified
+  // (both amber) before the calmer done/running/idle grays.
   function leaderColor(b: BodyLabel): string {
     if (b.status === 'failed') return 'var(--status-err-core)';
-    if (b.trust === 'unverified') return 'var(--status-warn-core)';
+    if (b.status === 'blocked' || b.trust === 'unverified') return 'var(--status-warn-core)';
     if (b.status === 'done') return 'var(--status-ok-core)';
     if (b.status === 'in-progress' || b.status === 'review') return 'var(--status-run-core)';
     return 'var(--status-idle-core)';
@@ -342,12 +346,21 @@
       top var(--dur-mid) var(--ease-standard);
   }
   .cap .usd {
-    color: var(--brass);
+    /* M4.4/M4.5: demoted to em-faint — the HUD is now the canonical spend readout, so this
+       on-canvas caption is a quiet echo, not a competing value (plan §5 M4.4 "kill duplicate
+       emphasis: canvas spend caption drops to em-faint"). `--text-faint` is the semantic alias
+       for `--em-faint` (tokens.css Tier 2) — same tier this file's other decorative text uses.
+       Was var(--brass) at --text-sm. */
+    color: var(--text-faint);
     font-size: var(--text-sm);
     letter-spacing: 0.02em;
   }
   .cap .rate {
-    color: var(--text-meta);
+    /* M4.5: matched to .usd's new em-faint tier — previously --text-meta (em-low) was
+       actually BRIGHTER than usd's old brass, which would have inverted the hierarchy (a
+       secondary rate outshining the primary spend figure) once usd was demoted. Both live in
+       the same faint tier now; .usd's larger font-size is what still marks it primary. */
+    color: var(--text-faint);
     font-size: var(--text-2xs);
   }
 

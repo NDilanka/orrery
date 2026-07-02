@@ -12,7 +12,7 @@
   //                target constellation) + ordered gate stages (→ the airlock).
   //   DRAWERS    — collapsed advanced overrides (Models · Economy · Gate ·
   //                Resilience · Quota · Tools · Q&A). Each shows its blueprint
-  //                default; any change lights an Amber override-dot + offers reset.
+  //                default; any change lights a bright override-dot + offers reset.
   //   PREVIEW    — a live mini-orrery summary: where the cost horizon lands,
   //                est. $, audit on/off, strikes. "Preview night" fast-forwards a
   //                simulated run before any real quota is spent.
@@ -482,11 +482,11 @@
     <!-- blueprint selector -->
     <section class="blueprints">
       <span class="seclab mono">BLUEPRINT</span>
-      <div class="bp-row">
+      <div class="seg" role="group" aria-label="blueprint">
         {#each BLUEPRINT_ORDER as id (id)}
           {@const bp = BLUEPRINTS[id]}
           <button
-            class="bp {blueprintId === id ? 'on' : ''}"
+            class="seg-item bp {blueprintId === id ? 'selected' : ''}"
             onclick={() => selectBlueprint(id)}
             title={bp.tagline}
           >
@@ -582,7 +582,7 @@
           <svg viewBox="0 0 200 130" class="mini">
             <!-- star -->
             <circle cx="100" cy="65" r="11" fill="var(--starlight)" opacity="0.9" />
-            <circle cx="100" cy="65" r="17" fill="none" stroke="var(--brass)" stroke-width="0.6" opacity="0.5" />
+            <circle cx="100" cy="65" r="17" fill="none" stroke="var(--em-mid)" stroke-width="0.6" opacity="0.5" />
             <!-- cost horizon ring (tightens + reddens with est spend) -->
             {#if preview.horizonAtPct >= 0.5}
               <circle
@@ -608,7 +608,7 @@
                 cx={150 + Math.cos(i * 1.4) * 14}
                 cy={40 + Math.sin(i * 1.4) * 14}
                 r="1.6"
-                fill="var(--brass)"
+                fill="var(--em-mid)"
                 opacity="0.7"
               />
             {/each}
@@ -1039,7 +1039,7 @@
         <button class="ghost mono" onclick={onClose}>cancel</button>
         <!-- This writes/edits the loop's loop.json; it does NOT start a run. The run is
              started later with ✦ Start inside the System view — keep the verbs distinct. -->
-        <button class="ignite mono" disabled={!validation.ok || busy} onclick={ignite}>
+        <button class="btn btn-primary btn-lg ignite" disabled={!validation.ok || busy} onclick={ignite}>
           {busy
             ? mode === 'edit'
               ? 'saving…'
@@ -1212,39 +1212,17 @@
     letter-spacing: 0.06em;
   }
 
-  /* blueprint chips */
-  .bp-row {
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-  }
+  /* blueprint chips — M4.5: track shape/border/background/padding/gap and the
+     selected-state color now come from the shared `.seg`/`.seg-item` primitives
+     (primitives.css, same pattern as ModeBar's `.mbtn`); `.bp` only adds the
+     icon+label row layout `.seg-item` doesn't define — no color of its own. */
   .bp {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    padding: 8px 14px;
-    background: var(--void-3);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-pill);
-    color: var(--text-dim);
-    cursor: pointer;
-    transition: all var(--dur-feedback) var(--ease-standard);
-  }
-  .bp:hover {
-    background: color-mix(in srgb, var(--n4) 55%, var(--void-3));
-    border-color: color-mix(in srgb, var(--brass) 40%, transparent);
-  }
-  .bp:active {
-    background: color-mix(in srgb, var(--n4) 80%, var(--void-3));
-  }
-  .bp.on {
-    border-color: var(--brass);
-    color: var(--starlight);
-    background: color-mix(in srgb, var(--brass) 12%, var(--void-3));
   }
   .bp-glyph {
     font-size: var(--text-lg);
-    color: var(--brass);
   }
   .bp-name {
     font-size: var(--text-sm);
@@ -1300,10 +1278,10 @@
        an unlit hairline, so the bright span literally equals the setting. */
     background: linear-gradient(
       90deg,
-      var(--brass) 0%,
-      var(--plasma-cyan) var(--fill, 50%),
-      var(--surface-3) var(--fill, 50%),
-      var(--surface-3) 100%
+      var(--em-hi) 0%,
+      var(--em-mid) var(--fill, 50%),
+      var(--n3) var(--fill, 50%),
+      var(--n3) 100%
     );
   }
   .dial input[type='range']:hover:not(:disabled) {
@@ -1318,7 +1296,7 @@
   .dhint {
     margin-top: 5px;
     font-size: var(--text-xs);
-    color: var(--text-meta);
+    color: var(--em-hi);
     letter-spacing: 0.02em;
   }
 
@@ -1469,10 +1447,10 @@
     color: var(--text-meta);
   }
   .probe-line.ok {
-    color: var(--plasma-green);
+    color: var(--em-hi);
   }
   .probe-line.bad {
-    color: var(--crimson);
+    color: var(--status-err-core);
   }
   .probe-line.warn {
     color: var(--amber);
@@ -1578,8 +1556,8 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--amber);
-    box-shadow: 0 0 6px var(--amber);
+    background: var(--em-hi);
+    box-shadow: 0 0 6px var(--em-hi);
   }
   .drawer-body {
     margin-top: 10px;
@@ -1639,8 +1617,8 @@
   .reset {
     align-self: flex-start;
     background: transparent;
-    border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
-    color: var(--amber);
+    border: 1px solid var(--border-hairline);
+    color: var(--em-mid);
     border-radius: var(--radius-pill);
     padding: 4px 11px;
     font-size: var(--text-2xs);
@@ -1648,10 +1626,10 @@
     transition: background var(--dur-feedback) var(--ease-standard);
   }
   .reset:hover {
-    background: color-mix(in srgb, var(--amber) 14%, transparent);
+    background: var(--n4);
   }
   .reset:active {
-    background: color-mix(in srgb, var(--amber) 24%, transparent);
+    background: color-mix(in srgb, var(--n4) 85%, white 15%);
   }
 
   /* footer */
@@ -1698,28 +1676,18 @@
   .ghost:active {
     background: color-mix(in srgb, var(--n4) 80%, transparent);
   }
+  /* M4.5: fill/border/color/shape/size now come from the shared `.btn`/`.btn-primary`/
+     `.btn-lg` primitives (primitives.css) — solid light replaces solid amber, the
+     monochrome-inversion CTA. `.ignite` only keeps this button's own letter-spacing
+     and press/hover lift. */
   .ignite {
-    background: color-mix(in srgb, var(--amber) 14%, transparent);
-    border: 1px solid var(--amber);
-    color: var(--amber);
-    border-radius: var(--radius-pill);
-    padding: 8px 20px;
-    font-size: var(--text-xs);
-    font-weight: 600;
     letter-spacing: 0.08em;
-    cursor: pointer;
-    transition: all var(--dur-feedback) var(--ease-standard);
   }
   .ignite:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--amber) 24%, transparent);
     transform: translateY(-1px);
   }
   .ignite:active:not(:disabled) {
     transform: translateY(0);
-  }
-  .ignite:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   @media (max-width: 720px) {
