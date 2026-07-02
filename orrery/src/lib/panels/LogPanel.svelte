@@ -8,8 +8,12 @@
   import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
 
-  let open = $state(true);
+  // wave U2 Task 4: on a phone the panel starts collapsed to a 2-line peek (see
+  // `peekEntries` + the `.peek` markup below) instead of the full desktop log —
+  // it still expands to the same full view on tap, nothing is lost.
+  let open = $state(!uiStore.isPhone);
   const entries = $derived(logStore.entries);
+  const peekEntries = $derived(entries.slice(-2));
 
   // ── liveness ────────────────────────────────────────────────────────────────
   // log.jsonl only gains a line at phase boundaries, so a 30-min dev-story looks frozen. The
@@ -199,23 +203,39 @@
         </button>
       {/if}
     </div>
+  {:else if uiStore.isPhone && entries.length}
+    <!-- phone peek (wave U2 Task 4): a 2-line preview of the latest activity so
+         the log reads at a glance without spending a tap to open it. -->
+    <button class="peek" onclick={() => (open = true)} aria-label="expand the live log">
+      {#each peekEntries as e (e.seq)}
+        <div class="peekrow mono">
+          <span class="ev {tone(e.event)}">{e.event}</span>
+          {#if e.detail}<span class="peektext">{e.detail}</span>{/if}
+        </div>
+      {/each}
+    </button>
   {/if}
 </div>
 
 <style>
   .log {
-    /* left side, BELOW the HUD (top-left) and ABOVE the bottom control/transport band — a free
-       zone in the System view, so the log never overlaps the scrubber or control bar. */
-    position: absolute;
-    top: 280px;
-    left: 14px;
-    width: min(340px, 36vw);
+    /* wave U2 Task 1: docked in the left rail (below the HUD), not floated over the
+       canvas — the grid places it, this is purely internal styling now. Flexes to
+       fill the rail's remaining height (see .logwrap/.logbox below); when collapsed
+       it shrinks back to just the header row. */
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
-    z-index: 15;
     overflow: hidden;
+  }
+  .log.closed {
+    height: auto;
   }
   .loghdr {
     display: flex;
@@ -311,9 +331,14 @@
   }
   .logwrap {
     position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
   .logbox {
-    max-height: 26vh;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
     padding: 0 11px 9px;
     display: flex;
@@ -411,7 +436,45 @@
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
-  .log.closed {
-    width: auto;
+  /* phone peek (wave U2 Task 4): a tappable 2-line preview shown while collapsed,
+     instead of nothing — a glance at the latest activity without an extra tap. */
+  .peek {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+    padding: 0 11px 9px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .peekrow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+  }
+  .peektext {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-meta);
+    font-size: 10.5px;
+  }
+  /* phone (wave U2 Task 4): the dock row is content-sized (not a 1fr rail), so
+     height:100% would collapse — size to content, and bound the expanded list
+     so it scrolls internally instead of swallowing the page. */
+  @media (max-width: 640px) {
+    .log {
+      height: auto;
+    }
+    .logbox {
+      max-height: 32vh;
+      flex: none;
+    }
   }
 </style>

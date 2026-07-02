@@ -252,7 +252,7 @@
 
 <style>
   .control {
-    /* positioned by the parent .bottom-dock; wraps on narrow widths */
+    /* placed by the System dock's bottom row (+page.svelte .g-bottom); wraps on narrow widths */
     display: flex;
     align-items: center;
     justify-content: center;

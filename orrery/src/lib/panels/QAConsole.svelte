@@ -130,11 +130,12 @@
 
 <style>
   .qa {
-    position: absolute;
-    top: 50%;
-    right: 18px;
-    transform: translateY(-50%);
-    width: min(360px, 92vw);
+    /* wave U2 Task 1: docked in the right rail (below Metrics/Verdict) instead of
+       floating independently at the vertical center of the viewport — the grid
+       + the rail's own scroll now own placement; this is internal styling only. */
+    width: 100%;
+    flex: none;
+    box-sizing: border-box;
     max-height: 76vh;
     overflow-y: auto;
     display: flex;
@@ -146,7 +147,6 @@
     border-left: 3px solid var(--plasma-cyan);
     border-radius: var(--radius);
     backdrop-filter: blur(10px);
-    z-index: 14;
   }
   .qa.answered {
     border-left-color: var(--plasma-green);

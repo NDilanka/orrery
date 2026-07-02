@@ -8,10 +8,12 @@
 //   Rewind       — scrub the run to time T; framed in the Plasma-cyan time-shimmer,
 //                  with verdicts/strikes/quota pinned on the timeline. (plan §3)
 //
-// Responsive (plan §7): below a phone breakpoint we DROP to Tier-1 — planets,
-// chambers and the gear mechanism are hidden, particles are budget-cut, hover
-// becomes tap. On a phone Planetarium is the implicit default. `prefers-reduced-
-// motion` (plan §F) is read here too so every renderer can consult one source.
+// Responsive (plan §7): on a phone, Planetarium (ambient/Tier-1) is the implicit
+// DEFAULT — but wave U2 gave Observatory a real single-column phone layout, so
+// isPhone alone no longer forces Tier-1 rendering (see `tierOne` below). A phone
+// user who explicitly picks Observatory gets planets, the HUD and controls, just
+// docked in one column instead of three. `prefers-reduced-motion` (plan §F) is
+// read here too so every renderer can consult one source.
 
 import { browser } from '$app/environment';
 
@@ -32,11 +34,14 @@ class UiStore {
   isPhone = $derived(this.vw > 0 && this.vw < PHONE_BREAKPOINT);
 
   /**
-   * Tier-1-only rendering is in force when the mode is Planetarium OR we are on
-   * a phone. Renderers consult this to hide planets/chambers/mechanism, cut the
-   * particle budget, and switch hover→tap.
+   * Tier-1-only rendering is in force when the mode is Planetarium (ambient).
+   * wave U2: a phone is no longer FORCED into Tier-1 just for being narrow — a
+   * phone user who explicitly picks Observatory gets the real instrument (a
+   * responsive single-column dock), not a secret ambient view wearing the
+   * desktop panel stack. Phones still DEFAULT to ambient (see init() below);
+   * this only changes what happens once they leave it.
    */
-  tierOne = $derived(this.mode === 'planetarium' || this.isPhone);
+  tierOne = $derived(this.mode === 'planetarium');
 
   /** Planetarium is "ambient": calm, text only on threshold, no chrome. */
   ambient = $derived(this.mode === 'planetarium');

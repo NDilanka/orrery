@@ -284,15 +284,16 @@
 
 <style>
   .strip {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    /* wave U2 Task 1: the System dock's bottom-most full-width row (grid-area:
+       strip) instead of a viewport-pinned absolute bar — this is internal
+       styling only now. */
+    position: relative;
+    width: 100%;
     height: var(--strip-h);
+    box-sizing: border-box;
     padding: var(--space-2) var(--space-3) var(--space-2);
     background: linear-gradient(to top, var(--void-2), transparent);
     border-top: 1px solid var(--hairline);
-    pointer-events: none;
   }
   .hdr-row {
     display: flex;

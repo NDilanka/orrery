@@ -102,13 +102,11 @@
 
 <style>
   .verdict {
-    position: absolute;
-    /* stack above MetricsPanel: it clears the strip at (strip-h + space-4) and
-       reserves ~200px for its card; sit one gap above that so the two never
-       overlap. On a 700px-tall window this anchors ~352px from the bottom. */
-    bottom: calc(var(--strip-h) + var(--space-4) + var(--metrics-block) + var(--space-3));
-    right: var(--chrome-inset);
-    width: 300px;
+    /* wave U2 Task 1: docked in the right rail below MetricsPanel — normal flow in
+       a flex column, not a hand-computed offset off MetricsPanel's height. */
+    width: 100%;
+    flex: none;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -118,10 +116,7 @@
     border-left-width: 3px;
     border-radius: var(--radius);
     backdrop-filter: blur(8px);
-    z-index: 11;
     font-size: var(--text-sm);
-    /* MetricsPanel's populated card height; keeps the stack math in one place */
-    --metrics-block: 200px;
   }
   .verdict.pass {
     border-left-color: var(--plasma-green);
@@ -236,13 +231,5 @@
   }
   .strikes {
     color: var(--crimson);
-  }
-  /* Tier-1 / phone: full-width bottom sheet so the card never overflows 360px */
-  @media (max-width: 640px) {
-    .verdict {
-      left: var(--space-2);
-      right: var(--space-2);
-      width: auto;
-    }
   }
 </style>

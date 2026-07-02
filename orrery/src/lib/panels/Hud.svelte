@@ -5,8 +5,25 @@
 
   import { runStore } from '../stores/run.svelte';
   import { fmtClock, fmtDuration, fmtRelative } from '../timefmt';
+  import type { SixPhase } from '../types';
 
   const s = $derived(runStore.state);
+
+  // ── phase strip (wave U2 Task 2): the retired 6-gear Mechanism restated the
+  // six phases as spinning gears; this compact strip keeps the same six-step
+  // shape (discover → assemble → execute → verify → persist → decide) as a
+  // row of tiny dots + the active phase name in plain text, tinted by the
+  // active model's spectral color (matches --spectral-* in tokens.css — the
+  // same mapping the Mechanism used).
+  const PHASES: { key: SixPhase; label: string }[] = [
+    { key: 'discover', label: 'discover' },
+    { key: 'assemble', label: 'assemble' },
+    { key: 'execute', label: 'execute' },
+    { key: 'verify', label: 'verify' },
+    { key: 'persist', label: 'persist' },
+    { key: 'decide', label: 'decide' },
+  ];
+  const activePhaseIdx = $derived(PHASES.findIndex((p) => p.key === s.phase.sixPhase));
 
   type Pill = { label: string; cls: string; sub?: string };
   // quota resume sub-text, shared by the quota-frost restState and the transient quota-wait
@@ -69,17 +86,21 @@
     return `${n} ${n === 1 ? singular : plural}`;
   }
 
-  // ── trust chip (Task 2): the product's core trust signal — an agent CLAIMING a pass vs an
-  // independent verifier CONFIRMING it — promoted from a tiny dashed/solid planet ring to a
-  // compact text chip next to the current item. null when there's nothing to report yet
-  // (no gate/verdict seen for the current item).
-  type TrustChip = { label: string; glyph: string; cls: 'verified' | 'unverified' } | null;
+  // ── trust chip (wave U1 Task 2, re-themed wave U2 Task 3): the product's core trust
+  // signal — an agent CLAIMING a pass vs an independent verifier CONFIRMING it —
+  // promoted from a tiny dashed/solid planet ring to a compact text chip next to the
+  // current item. null when there's nothing to report yet (no gate/verdict seen for
+  // the current item). The retired Observatory "lighthouse" used to be the only signal
+  // that an audit was in flight/pending (runStore.auditTargetKey); that meaning now
+  // lives here as the 'verifying' state, so the claimed-but-unaudited item still reads
+  // as "being watched", not just statically unverified.
+  type TrustChip = { label: string; glyph: string; cls: 'verified' | 'verifying' } | null;
   const trustChip = $derived.by<TrustChip>((): TrustChip => {
     const cur = runStore.current;
     if (!cur) return null;
     if (cur.certified) return { label: 'VERIFIED', glyph: '✓', cls: 'verified' };
     if (cur.gate?.green || cur.status === 'review')
-      return { label: 'UNVERIFIED', glyph: '◌', cls: 'unverified' };
+      return { label: 'verifying…', glyph: '◌', cls: 'verifying' };
     return null;
   });
 
@@ -109,15 +130,26 @@
     <span class="pill {pill.cls}">
       <span class="dot"></span>{pill.label}
     </span>
-    {#if s.phase.sixPhase}
-      <span class="phase mono">{s.phase.sixPhase}{s.phase.label ? ' · ' + s.phase.label : ''}</span>
-    {/if}
     {#if model}
       <span class="model-chip {model}">{model}</span>
     {/if}
   </div>
   {#if pill.sub}
     <div class="pill-sub">{pill.sub}</div>
+  {/if}
+  {#if s.phase.sixPhase}
+    <!-- compact phase strip (wave U2 Task 2, replaces the retired 6-gear Mechanism):
+         six tiny dots trace discover→assemble→execute→verify→persist→decide, the
+         active one tinted by the model's spectral color; the name reads in plain
+         text next to it (e.g. "● execute"). Static — no spinning. -->
+    <div class="phasestrip" aria-label="phase {activePhaseIdx + 1} of 6: {s.phase.sixPhase}">
+      <span class="pdots" aria-hidden="true">
+        {#each PHASES as p, i (p.key)}
+          <span class="pdot {i === activePhaseIdx ? 'active ' + model : ''}"></span>
+        {/each}
+      </span>
+      <span class="pname mono">{s.phase.sixPhase}{s.phase.label ? ' · ' + s.phase.label : ''}</span>
+    </div>
   {/if}
   {#if timeline}
     <div class="timeline mono">{timeline}</div>
@@ -191,14 +223,14 @@
 
 <style>
   .hud {
-    position: absolute;
-    top: 18px;
-    left: 18px;
+    /* wave U2 Task 1: docked at the top of the left rail — the grid places it,
+       this is internal styling only now. */
+    width: 100%;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 16px 18px;
-    min-width: 240px;
     background: var(--panel);
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius);
@@ -281,7 +313,38 @@
         0 0 14px color-mix(in srgb, var(--crimson) 45%, transparent);
     }
   }
-  .phase {
+  /* compact phase strip (wave U2 Task 2) — six static dots + the plain-text phase
+     name, one line. The active dot is tinted by the model's spectral color; the
+     rest stay a dim hairline gray. No motion — a glance-first readout, not a gauge. */
+  .phasestrip {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: -2px;
+  }
+  .pdots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .pdot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--hairline);
+  }
+  .pdot.active {
+    width: 6px;
+    height: 6px;
+    background: var(--spectral-sonnet);
+  }
+  .pdot.active.haiku {
+    background: var(--spectral-haiku);
+  }
+  .pdot.active.opus {
+    background: var(--spectral-opus);
+  }
+  .pname {
     font-size: 11px;
     color: var(--text-dim);
     letter-spacing: 0.04em;
@@ -373,8 +436,9 @@
   }
   .gate.green { color: var(--plasma-green); }
   .gate.red { color: var(--crimson); }
-  /* trust chip (Task 2) — the claimed-vs-verified signal, promoted to text. Amber outline =
-     asserted-but-not-yet-audited; green (filled) = an independent verifier confirmed it. Never
+  /* trust chip — the claimed-vs-verified signal, promoted to text. Auditor-white,
+     gently pulsing = actively being audited (was the Observatory lighthouse's job,
+     wave U2 Task 3); green (filled) = an independent verifier confirmed it. Never
      hue-alone: the glyph (◌ / ✓) and the label text both carry the meaning too. */
   .trust {
     display: inline-flex;
@@ -386,7 +450,14 @@
     letter-spacing: 0.08em;
     border: 1px solid currentColor;
   }
-  .trust.unverified { color: var(--amber); }
+  .trust.verifying {
+    color: var(--auditor-white);
+    animation: verifyPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes verifyPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
   .trust.verified {
     color: var(--plasma-green);
     background: color-mix(in srgb, var(--plasma-green) 12%, transparent);
@@ -418,13 +489,10 @@
     flex-wrap: wrap;
   }
 
-  /* phone / tier-1: a compact HUD that fits a 360px width and doesn't crowd the
-     canvas — drop the meta row, shrink the headline, span the top edge. */
+  /* phone: a compact HUD that fits a 390px column — drop the meta row, shrink
+     the headline (the grid already makes it full-width). */
   @media (max-width: 640px) {
     .hud {
-      left: var(--space-2);
-      right: var(--space-2);
-      min-width: 0;
       padding: var(--space-3);
       gap: var(--space-2);
     }

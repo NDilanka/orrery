@@ -182,3 +182,28 @@ def test_run_acquires_and_releases_the_lock_on_a_clean_run(tmp_path):
     assert rc == 0
     # the lock is released once the run finishes (no lingering lockfile)
     assert not (state / lockfile.LOCK_NAME).exists()
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — the folded brain2-qa/loop.json single-file seed (+ the deprecated but still-working
+# qa-engine.json) both parse cleanly through QaConfig.from_loop_json.
+# ---------------------------------------------------------------------------
+
+
+def test_seed_brain2_qa_loop_json_parses_with_namespaced_block(capsys):
+    data = json.loads(Path("orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8"))
+    cfg = QaConfig.from_loop_json(data, project_root="/p")
+    assert cfg.app == "brain2"
+    assert cfg.effort == "high"
+    assert cfg.cost_ceiling_usd == 30
+    assert cfg.headless is True
+    # orrery-side top-level keys (id/name/start/stateDir/...) are outside the "qa" block -> no
+    # unknown-key noise (only the namespaced block is ever inspected).
+    assert capsys.readouterr().err == ""
+
+
+def test_seed_qa_engine_json_still_parses_deprecated_but_working():
+    data = json.loads(Path("orrery/loops/brain2-qa/qa-engine.json").read_text(encoding="utf-8"))
+    cfg = QaConfig.from_loop_json(data, project_root="/p")
+    assert cfg.app == "brain2"
+    assert cfg.effort == "high"

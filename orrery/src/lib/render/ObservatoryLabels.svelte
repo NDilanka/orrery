@@ -24,6 +24,10 @@
     status: string;
     trust: 'verified' | 'unverified' | null;
     current: boolean;
+    // wave U2 Task 3: this is runStore.auditTargetKey — the retired Observatory
+    // "lighthouse" (a tower + sweeping beam) used to be the only signal that this
+    // claimed-green body was being audited; a pulsing "verifying…" label replaces it.
+    auditing: boolean;
   };
   type Labels = {
     cumUsd: number;
@@ -90,12 +94,15 @@
       class:current={b.current}
       class:other={!b.current}
       style="left:{b.x}px; top:{b.y}px;"
-      title={b.key}
+      title={b.auditing ? `${b.key} — verifying…` : b.key}
     >
       {#if b.current && b.trust}
         <span class="trust {b.trust}" aria-hidden="true">{b.trust === 'verified' ? '✓' : '◌'}</span>
       {/if}
       <span class="bkey">{b.key}</span>
+      {#if b.auditing}
+        <span class="verifying">verifying…</span>
+      {/if}
       <span class="bglyph" aria-hidden="true">{statusGlyph(b.status)}</span>
     </div>
   {/each}
@@ -143,7 +150,9 @@
     font-size: var(--text-2xs);
   }
 
-  /* every orbit body's key, floated just above-right of its planet (Task 3) */
+  /* every orbit body's key, floated just above-right of its planet (Task 3).
+     The KEY is the child that ellipsizes (min-width:0 + hidden overflow) so the
+     trailing "verifying…" pulse / status glyph always survive a long story key. */
   .body {
     position: absolute;
     transform: translate(-50%, calc(-100% - 12px));
@@ -151,14 +160,23 @@
     align-items: baseline;
     gap: 3px;
     max-width: 168px;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
     letter-spacing: 0.08em;
     text-shadow: 0 1px 3px var(--void);
     transition: left var(--dur-mid) var(--ease-standard),
       top var(--dur-mid) var(--ease-standard),
       opacity var(--dur-mid) var(--ease-standard);
+  }
+  .body .bkey {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .body .trust,
+  .body .verifying,
+  .body .bglyph {
+    flex: none;
   }
   /* current body: full-size, undimmed — the one label that matters most right now */
   .body.current {
@@ -186,6 +204,18 @@
   }
   .body .trust.verified {
     color: var(--plasma-green);
+  }
+  /* the audit-in-flight signal (wave U2 Task 3, replaces the Observatory lighthouse) —
+     a cold auditor-white pulse, subtle so it never competes with the trust glyph. */
+  .body .verifying {
+    color: var(--auditor-white);
+    font-size: 9px;
+    opacity: 0.85;
+    animation: verifyPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes verifyPulse {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 0.35; }
   }
 
   /* horizon milestone tick — placed top-of-star, recessed */

@@ -7,7 +7,7 @@ and the consecutive-fail reset/recover/handoff transitions).
 
 from __future__ import annotations
 
-from loop.decide import decide, update_consecutive_fail
+from loop.decide import decide, floor_breach, update_consecutive_fail
 
 
 def D(**over):
@@ -165,3 +165,22 @@ def test_fail_handoff_after_recover_spent():
 def test_recover_and_handoff_mutually_exclusive():
     s = update_consecutive_fail(green=False, made_progress=False, count=2, recovered=False, limit=3)
     assert not (s.recover and s.handoff)
+
+
+# ---------------------------------------------------------------------------
+# floor_breach — the shared regression-floor decision (Task 2, loop.bmad.driver's
+# dev-gate / post-review / post-smoke boundaries all call this ONE pure function now).
+# ---------------------------------------------------------------------------
+
+
+def test_floor_breach_true_when_pass_drops_below_floor():
+    assert floor_breach(8, 10) is True
+
+
+def test_floor_breach_false_when_pass_meets_or_exceeds_floor():
+    assert floor_breach(10, 10) is False
+    assert floor_breach(11, 10) is False
+
+
+def test_floor_breach_zero_floor_never_breaches_at_zero_or_above():
+    assert floor_breach(0, 0) is False

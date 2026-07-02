@@ -290,3 +290,163 @@ def test_loop_qa_main_keyboard_interrupt_exits_130(tmp_path, monkeypatch):
         ]
     )
     assert rc == 130
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — file-config-is-the-base inversion + camelCase gateStages + unknown-key warning
+# ---------------------------------------------------------------------------
+
+
+def test_loop_bmad_camel_case_gate_stages_honored_from_loop_json(tmp_path, monkeypatch):
+    """Footgun (a): BmadConfig used to accept ONLY snake_case `gate_stages` from a loop.json,
+    despite camelCase being the documented wire convention. `gateStages` must be honored too."""
+    root = _init_bmad_project(tmp_path)
+    from loop.bmad import driver
+
+    loop_json = tmp_path / "bmad.json"
+    loop_json.write_text(
+        '{"bmad": {"gateStages": [{"name": "custom", "command": "echo hi"}]}}',
+        encoding="utf-8",
+    )
+
+    captured: dict = {}
+
+    def fake_run(config, **kw):
+        captured["gate_stages"] = config.gate_stages
+        return 0
+
+    monkeypatch.setattr(driver, "run", fake_run)
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main_bmad(
+        [
+            "--project-root", str(root), "--state-dir", str(tmp_path / "state"),
+            "--loop-json", str(loop_json),
+        ]
+    )
+    assert rc == 0
+    assert captured["gate_stages"] == [{"name": "custom", "command": "echo hi"}]
+
+
+def test_loop_bmad_file_only_max_stories_honored(tmp_path, monkeypatch):
+    """Footgun (b): previously main_bmad cherry-picked ~8 fields from the file onto a CLI-built
+    config, silently discarding everything else — including `maxStories`. File config is now the
+    base: a file-only `maxStories` (no CLI flag passed) must reach the driver."""
+    root = _init_bmad_project(tmp_path)
+    from loop.bmad import driver
+
+    loop_json = tmp_path / "bmad.json"
+    loop_json.write_text('{"bmad": {"maxStories": 3, "mergeBase": "main"}}', encoding="utf-8")
+
+    captured: dict = {}
+
+    def fake_run(config, **kw):
+        captured["max_stories"] = config.max_stories
+        captured["merge_base"] = config.merge_base
+        return 0
+
+    monkeypatch.setattr(driver, "run", fake_run)
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main_bmad(
+        [
+            "--project-root", str(root), "--state-dir", str(tmp_path / "state"),
+            "--loop-json", str(loop_json),
+        ]
+    )
+    assert rc == 0
+    assert captured["max_stories"] == 3
+    assert captured["merge_base"] == "main"
+
+
+def test_loop_bmad_cli_override_still_wins_over_file(tmp_path, monkeypatch):
+    """An explicitly-passed CLI flag overrides the file, even though the file is now the base."""
+    root = _init_bmad_project(tmp_path)
+    from loop.bmad import driver
+
+    loop_json = tmp_path / "bmad.json"
+    loop_json.write_text('{"bmad": {"maxStories": 3}}', encoding="utf-8")
+
+    captured: dict = {}
+
+    def fake_run(config, **kw):
+        captured["max_stories"] = config.max_stories
+        return 0
+
+    monkeypatch.setattr(driver, "run", fake_run)
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main_bmad(
+        [
+            "--project-root", str(root), "--state-dir", str(tmp_path / "state"),
+            "--loop-json", str(loop_json), "--max-stories", "9",
+        ]
+    )
+    assert rc == 0
+    assert captured["max_stories"] == 9
+
+
+def test_loop_bmad_unknown_loop_json_key_warns(tmp_path, monkeypatch, capsys):
+    root = _init_bmad_project(tmp_path)
+    from loop.bmad import driver
+
+    loop_json = tmp_path / "bmad.json"
+    loop_json.write_text('{"bmad": {"maxStoriess": 3}}', encoding="utf-8")
+
+    monkeypatch.setattr(driver, "run", lambda config, **kw: 0)
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main_bmad(
+        [
+            "--project-root", str(root), "--state-dir", str(tmp_path / "state"),
+            "--loop-json", str(loop_json),
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "maxStoriess" in err
+
+
+def test_loop_bmad_dev_server_argv_honored_from_loop_json(tmp_path):
+    from loop.bmad import driver
+
+    cfg = driver.BmadConfig.from_loop_json(
+        {"bmad": {"projectRoot": "/p", "devServerArgv": ["npm", "run", "dev"]}}
+    )
+    assert cfg.dev_server_argv == ("npm", "run", "dev")
+
+
+def test_loop_file_task_honored_when_no_task_flag(tmp_path, monkeypatch):
+    """`--task` used to argparse-default to "TASK.md" and clobber a file-provided engine.task
+    on every run that didn't pass the flag (the brain2-regression seed's absolute task path was
+    silently replaced). File config is the base now; --task overrides only when passed."""
+    loop_json = tmp_path / "loop.json"
+    loop_json.write_text('{"engine": {"task": "SPEC/custom-task.md"}}', encoding="utf-8")
+
+    captured: dict = {}
+
+    def fake_run_loop(config, **kw):
+        captured["task"] = config.task
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", fake_run_loop)
+    monkeypatch.setattr(cli, "get_runner", lambda name: ExplodingRunner())
+    rc = cli.main(
+        [
+            "--loop-json", str(loop_json),
+            "--cwd", str(tmp_path), "--state-dir", str(tmp_path / "state"),
+        ]
+    )
+    assert rc == 0
+    assert captured["task"] == "SPEC/custom-task.md"
+
+    # an explicit --task still wins over the file
+    rc = cli.main(
+        [
+            "--loop-json", str(loop_json), "--task", "OTHER.md",
+            "--cwd", str(tmp_path), "--state-dir", str(tmp_path / "state"),
+        ]
+    )
+    assert rc == 0
+    assert captured["task"] == "OTHER.md"
+
+    # no file, no flag -> the TASK.md default still holds
+    rc = cli.main(["--cwd", str(tmp_path), "--state-dir", str(tmp_path / "state")])
+    assert rc == 0
+    assert captured["task"] == "TASK.md"

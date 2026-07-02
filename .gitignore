@@ -34,6 +34,12 @@ orrery/loops/**/.pytest_cache/
 # QA loop browser profiles / auth state — session tokens, never commit
 orrery/loops/**/.auth/
 
+# Handoff notes may contain credentials — keep local
+orrery/loops/**/HANDOFF.md
+
+# Stray engine state dir at repo root (accidental in-repo loop runs)
+/.loop/
+
 # Local PowerShell harness drivers — NOT part of the public repo (the maintained
 # engine is the Python package in engine/; the PS reference impl lives in legacy/).
 # Kept out of tracking so the repo root stays free of *.ps1.

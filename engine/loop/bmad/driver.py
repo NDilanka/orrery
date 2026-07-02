@@ -39,8 +39,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from loop import gitutil
+from loop.configkeys import resolve, warn_unknown_keys
+from loop.decide import floor_breach
+from loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
 from loop.heartbeat import Heartbeat
-from loop.lockfile import LOCK_NAME, acquire_lock, release_lock
 from loop.bmad import phases, pr, recovery
 from loop.bmad.decider import retro_decider, review_decider
 from loop.bmad.sprint import (
@@ -51,13 +53,11 @@ from loop.bmad.sprint import (
     select_actionable,
 )
 from loop.bmad.story import story_meta
-from loop.checkpoint import get_stop_mode
 from loop.events import (
     bmad_stop_event,
     cooperative_stop_event,
     engine_start_event,
     gate_retry_event,
-    new_checkpoint,
     phase_timeout_event,
     pr_created_event,
     pr_merged_event,
@@ -72,8 +72,6 @@ from loop.events import (
 from loop.logio import (
     append_event,
     clear_stop_flag,
-    read_stop_flag,
-    write_checkpoint,
     write_run_output,
 )
 from loop.quota import survive
@@ -147,6 +145,40 @@ DEFAULT_EFFORTS: dict[str, str] = {
     "smoke": "",
     "retro": "",
     "decider": "",
+}
+
+# Keys `BmadConfig.from_loop_json` actually reads (both spellings) — anything else warns
+# (loop.configkeys.warn_unknown_keys) instead of silently vanishing.
+_BMAD_KNOWN_KEYS = {
+    "project_root", "projectRoot",
+    "merge_base", "mergeBase",
+    "max_stories", "maxStories",
+    "max_review_turns", "maxReviewTurns",
+    "max_smoke_iters", "maxSmokeIters",
+    "smoke_timeout_min", "smokeTimeoutMin",
+    "create_timeout_min", "createTimeoutMin",
+    "dev_timeout_min", "devTimeoutMin",
+    "review_timeout_min", "reviewTimeoutMin",
+    "retro_timeout_min", "retroTimeoutMin",
+    "max_retro_turns", "maxRetroTurns",
+    "default_quota_wait_min", "defaultQuotaWaitMin",
+    "max_quota_waits", "maxQuotaWaits",
+    "merge_wait_sec", "mergeWaitSec",
+    "epic_only", "epicOnly",
+    "story",
+    "no_merge", "noMerge",
+    "no_retro", "noRetro",
+    "no_smoke", "noSmoke",
+    "dry_run", "dryRun",
+    "auto_rollback", "autoRollback",
+    "review_mode", "reviewMode",
+    "smoke_mode", "smokeMode",
+    "retro_mode", "retroMode",
+    "gate_flaky_retries", "gateFlakyRetries",
+    "gate_flaky_max_fail", "gateFlakyMaxFail",
+    "gate_stages", "gateStages",
+    "dev_server_argv", "devServerArgv",
+    "models", "effort",
 }
 
 
@@ -280,7 +312,15 @@ class BmadConfig:
 
     @classmethod
     def from_loop_json(cls, path_or_dict: Any) -> BmadConfig:
-        """Build from a ``loop.json`` ``bmad`` block (or a raw dict of the same fields)."""
+        """Build from a ``loop.json`` ``bmad`` block (or a raw dict of the same fields).
+
+        Every field accepts EITHER camelCase or snake_case (:func:`loop.configkeys.resolve`);
+        an unrecognized key in the block warns on stderr instead of silently vanishing
+        (:func:`loop.configkeys.warn_unknown_keys`). ``gate_stages``/``gateStages`` (previously
+        snake_case ONLY, despite camelCase being the documented wire convention — a footgun) and
+        ``dev_server_argv``/``devServerArgv`` (previously not read at all, despite being
+        documented as configurable) are both wired here.
+        """
         import json
 
         if isinstance(path_or_dict, dict):
@@ -290,9 +330,11 @@ class BmadConfig:
         b = data.get("bmad", data) if isinstance(data, dict) else {}
         if b is None:
             b = {}
+        warn_unknown_keys(b, _BMAD_KNOWN_KEYS, "bmad")
         kwargs: dict[str, Any] = {}
-        if "project_root" in b or "projectRoot" in b:
-            kwargs["project_root"] = b.get("project_root") or b.get("projectRoot")
+        pr = resolve(b, "project_root", "projectRoot")
+        if pr is not None:
+            kwargs["project_root"] = pr
         for snake, camel in (
             ("merge_base", "mergeBase"),
             ("max_stories", "maxStories"),
@@ -320,12 +362,15 @@ class BmadConfig:
             ("gate_flaky_retries", "gateFlakyRetries"),
             ("gate_flaky_max_fail", "gateFlakyMaxFail"),
         ):
-            if snake in b:
-                kwargs[snake] = b[snake]
-            elif camel in b:
-                kwargs[snake] = b[camel]
-        if "gate_stages" in b:
-            kwargs["gate_stages"] = list(b["gate_stages"])
+            v = resolve(b, snake, camel)
+            if v is not None:
+                kwargs[snake] = v
+        gate_stages = resolve(b, "gate_stages", "gateStages")
+        if gate_stages is not None:
+            kwargs["gate_stages"] = list(gate_stages)
+        dev_server_argv = resolve(b, "dev_server_argv", "devServerArgv")
+        if dev_server_argv is not None:
+            kwargs["dev_server_argv"] = tuple(dev_server_argv)
         if "models" in b:
             kwargs["models"] = {**DEFAULT_MODELS, **dict(b["models"])}
         if "effort" in b:
@@ -706,31 +751,21 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
     project_root = Path(config.project_root)
     repo = Path(cwd) if cwd is not None else project_root
 
-    log_path = state / "log.jsonl"
-    checkpoint_path = state / "checkpoint.json"
-    stop_path = state / "STOP"
-    lock_path = state / LOCK_NAME
-
-    def emit(event: dict[str, Any]) -> None:
-        append_event(log_path, event)
-
     # --- dry-run: sprint scan + preflight plan, NO runner, NO lock (PS ~653-664) ---
     if config.dry_run:
         return _dry_run(config, project_root, repo)
 
-    # --- concurrency guard ---------------------------------------------------
-    # ONE lockfile name ("lock") shared with loop.core / loop.qa.discover (loop.lockfile) — a
-    # generic loop, a BMAD run, and a QA run racing the SAME state dir now correctly see each
-    # other. A leftover "bmad-lock" from before this unification is simply ignored (not read).
-    if not acquire_lock(lock_path):
-        print(f"[GUARD] another bmad driver is already running against '{state}'.")
-        return 2
+    def body(state: Path) -> int:
+        log_path = state / "log.jsonl"
+        checkpoint_path = state / "checkpoint.json"
+        stop_path = state / "STOP"
 
-    try:
+        def emit(event: dict[str, Any]) -> None:
+            append_event(log_path, event)
+
         # Heartbeat (first thing under the lock): emit BEFORE the slow preflight (git checkout of
         # merge-base + baseline gate) so a watching UI flips to "running" within ~1s of spawn
-        # instead of seeing an empty log for the whole cold start. Inside the try so a failure here
-        # still reaches the lock-cleanup finally.
+        # instead of seeing an empty log for the whole cold start.
         emit(engine_start_event(merge_base=config.merge_base))
         # Self-advertise the cooperative-stop control (the loop never gets killed mid-step; a
         # request is honored at the next safe boundary — between stories, after dev / review /
@@ -749,8 +784,11 @@ def run(config: BmadConfig, *, runner: AgentRunner, state_dir, cwd=None) -> int:
             stop_path=stop_path,
             emit=emit,
         )
-    finally:
-        release_lock(lock_path)
+
+    # ONE lockfile name ("lock") shared with loop.core / loop.qa.discover (loop.lockfile) — a
+    # generic loop, a BMAD run, and a QA run racing the SAME state dir now correctly see each
+    # other. A leftover "bmad-lock" from before this unification is simply ignored (not read).
+    return run_driver(state, guard_label="bmad driver", body=body)
 
 
 def _dry_run(config: BmadConfig, project_root: Path, repo: Path) -> int:
@@ -864,7 +902,8 @@ def _run_inner(
         return phases.DevServer(config.dev_server_argv, cwd=str(repo))
 
     def write_cp(stage: str, story: str | None, branch: str) -> None:
-        cp = new_checkpoint(
+        write_checkpoint_now(
+            checkpoint_path,
             stage=stage,
             story=story,
             branch=branch,
@@ -872,11 +911,10 @@ def _run_inner(
             cum_usd=cum,
             resume=_resume_command(config, state),
         )
-        write_checkpoint(checkpoint_path, cp)
 
     def honor_stop(scope: str, *, stage: str, story: str | None, branch: str) -> bool:
         """Cooperative stop at a safe boundary. Returns True when a stop was honored."""
-        req = get_stop_mode(read_stop_flag(stop_path), scope=scope)
+        req = read_stop_request(stop_path, scope)
         if not req["honor"]:
             return False
         write_cp(stage, story, branch)
@@ -1149,7 +1187,7 @@ def _process_story(
         # baseline halts — auto-rollback to baseline_commit when enabled, else report the exact
         # revert command. Fires even on an otherwise-green gate (e.g. tests were deleted).
         dev_pass = int(dev_gate.get("pass", baseline_pass))
-        if dev_pass < baseline_pass:
+        if floor_breach(dev_pass, baseline_pass):
             base_commit = story_meta(_story_text(project_root, target.key)).get("baseline")
             if config.auto_rollback and base_commit:
                 gitutil._git(["reset", "--hard", base_commit], repo)
@@ -1216,7 +1254,7 @@ def _process_story(
             return 1, cum
         # regression guard (bmad-loop.ps1 ~808): review must not drop the passing-test floor.
         review_pass = int((res.gate or {}).get("pass", floor_pass))
-        if review_pass < floor_pass:
+        if floor_breach(review_pass, floor_pass):
             emit(bmad_stop_event(
                 False,
                 f"regression on {target.key}: post-review tests {floor_pass}->{review_pass}. Work on {branch}.",
@@ -1261,7 +1299,7 @@ def _process_story(
             return 1, cum
         # regression guard (bmad-loop.ps1 ~615): post-smoke gate must not drop the floor.
         smoke_pass = int((res.gate or {}).get("pass", floor_pass))
-        if smoke_pass < floor_pass:
+        if floor_breach(smoke_pass, floor_pass):
             emit(bmad_stop_event(
                 False,
                 f"regression on {target.key}: post-smoke tests {floor_pass}->{smoke_pass}. Work on {branch}.",

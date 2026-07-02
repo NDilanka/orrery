@@ -32,7 +32,6 @@
           "lockGlobs": ["e2e/**"]
         }
       ],
-      "greenWhen": "exit==0",
       "lockGlobs": ["e2e/**"]
     },
     "cost": { "ceilingUsd": 2.0, "alertPct": [50, 80, 100] },

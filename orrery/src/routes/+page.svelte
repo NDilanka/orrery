@@ -21,7 +21,6 @@
 
   import Cosmos from '$lib/render/Cosmos.svelte';
   import Observatory from '$lib/render/Observatory.svelte';
-  import Mechanism from '$lib/render/Mechanism.svelte';
   import CostQuotaStrip from '$lib/render/CostQuotaStrip.svelte';
   import Hud from '$lib/panels/Hud.svelte';
   import MetricsPanel from '$lib/panels/MetricsPanel.svelte';
@@ -292,69 +291,88 @@
     <!-- ── SYSTEM (the existing Observatory, scoped to the active loop) ─────── -->
     {#if view === 'system' || view === 'body'}
       <div class="layer system-layer {view === 'system' ? 'in' : 'out-near'}">
-        <!-- the canvas always renders; it consults uiStore for the tier/mode -->
-        <Observatory />
-
-        <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
-             Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
-             hidden until focused (skip-link style), so it never crowds the instrument. -->
-        {#if view === 'system' && runStore.orbits.length}
-          <nav class="items-a11y" aria-label="work items">
-            <ul>
-              {#each runStore.orbits as o (o.key)}
-                <li>
-                  <button onclick={() => { runStore.selectItem(o.key); enterBody(o.key); }}
-                    >{o.key} — {o.status}</button
-                  >
-                </li>
-              {/each}
-            </ul>
-          </nav>
-        {/if}
-
-        <!-- chrome only at the System altitude — a Body dossier suppresses the whole
-             instrument (not just dims it) so panels never bleed behind the card. -->
-        {#if view === 'system'}
-        {#if uiStore.ambient}
-          <!-- PLANETARIUM: ambient Tier-1; threshold text + a loud decision affordance
-               (answer a blocking question without leaving ambient). -->
-          <PlanetariumOverlay {answer} {observeOnly} />
-        {:else}
-          <!-- OBSERVATORY / REWIND chrome (the full instrument). The gear
-               Mechanism is Tier-2 → hidden on a phone (uiStore.tierOne). -->
-          {#if !uiStore.tierOne}
-            <Mechanism />
+        <!-- wave U2 Task 1: a CSS grid dock replaces the old stack of independently
+             absolutely-positioned panels (each hand-tracking a sibling's pixel
+             height via calc()). The canvas is a real grid cell ("center") that
+             genuinely resizes as the rails collapse/expand ("breathes"); chrome is
+             placed by the grid, not by z-indexed floats — each panel keeps only
+             its own internal styling (bg/border/padding). `.bare` collapses the
+             rails/bottom-dock/cost-strip to zero size in Ambient (Planetarium)
+             mode AND whenever the Body drawer is open (view==='body'), so the
+             canvas gets the full dock either way. Observatory itself is ALWAYS
+             mounted here (never remounted on the ambient toggle) — it owns its
+             own Tier-1 rendering via uiStore.tierOne. -->
+        <div class="system-grid" class:bare={uiStore.ambient || view !== 'system'}>
+          {#if view === 'system'}
+            <!-- top bar: freshness badge (left) · mode toggle (center) · the
+                 breadcrumb/live-replay badge cluster (navbar, below) owns the right -->
+            <div class="g-topbar">
+              <div class="tb-left"><StaleBadge status={wsStatus} {transportKind} /></div>
+              <div class="tb-center"><ModeBar canRewind={!!playback} /></div>
+              <div class="tb-right" aria-hidden="true"></div>
+            </div>
           {/if}
-          <CostQuotaStrip />
-          {#if !uiStore.tierOne}
-            <LogPanel />
+
+          {#if view === 'system' && !uiStore.ambient}
+            <!-- left rail: HUD (top) + the live log (flexes to fill, internal scroll) -->
+            <div class="g-hud"><Hud /></div>
+            <div class="g-log"><LogPanel /></div>
           {/if}
-          <Hud />
-          <MetricsPanel />
-          <VerdictPanel />
-          <QAConsole {answer} {observeOnly} />
-          <!-- bottom-dock: one flex column above the cost strip — replaces the old
-               per-component magic bottom offsets so the centre stack never collides
-               on short windows (hint on top, controls, then transport nearest the strip). -->
-          <div class="bottom-dock">
-            {#if view === 'system' && liveAndEmpty}
-              <div class="empty-hint" role="status">
-                <p class="eh-title">This loop hasn't run yet</p>
-                <p class="eh-sub">
-                  Press <strong>✦ Start</strong> below to start it — events stream in here live.
-                </p>
-              </div>
-            {/if}
-            <RunControlBar {control} />
-            {#if playback}
-              <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+
+          <div class="g-center">
+            <!-- the canvas always renders; it consults uiStore for the tier/mode -->
+            <Observatory />
+
+            <!-- Accessibility: the orbital canvas is aria-hidden + click-only, so mirror the
+                 Cosmos legend pattern as a keyboard/screen-reader list of work items. Visually
+                 hidden until focused (skip-link style), so it never crowds the instrument. -->
+            {#if view === 'system' && runStore.orbits.length}
+              <nav class="items-a11y" aria-label="work items">
+                <ul>
+                  {#each runStore.orbits as o (o.key)}
+                    <li>
+                      <button onclick={() => { runStore.selectItem(o.key); enterBody(o.key); }}
+                        >{o.key} — {o.status}</button
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              </nav>
             {/if}
           </div>
-        {/if}
 
-        <!-- mode toggle + ws freshness badge (System altitude only) -->
-        <ModeBar canRewind={!!playback} />
-        <StaleBadge status={wsStatus} {transportKind} />
+          {#if view === 'system' && !uiStore.ambient}
+            <!-- right rail: report card, verdict and pending decisions, stacked +
+                 scrollable — appear/disappear on their own, the rail just flexes -->
+            <div class="g-right">
+              <MetricsPanel />
+              <VerdictPanel />
+              <QAConsole {answer} {observeOnly} />
+            </div>
+            <!-- bottom dock: run controls (+ the transport scrubber in replay) -->
+            <div class="g-bottom">
+              {#if liveAndEmpty}
+                <div class="empty-hint" role="status">
+                  <p class="eh-title">This loop hasn't run yet</p>
+                  <p class="eh-sub">
+                    Press <strong>✦ Start</strong> below to start it — events stream in here live.
+                  </p>
+                </div>
+              {/if}
+              <RunControlBar {control} />
+              {#if playback}
+                <TransportBar transport={playback} state={playbackState} rewind={uiStore.rewind} />
+              {/if}
+            </div>
+            <div class="g-strip"><CostQuotaStrip /></div>
+          {/if}
+        </div>
+
+        <!-- PLANETARIUM: ambient Tier-1; threshold text + a loud decision affordance
+             (answer a blocking question without leaving ambient). A full-viewport
+             overlay independent of the dock above (unchanged by wave U2). -->
+        {#if view === 'system' && uiStore.ambient}
+          <PlanetariumOverlay {answer} {observeOnly} />
         {/if}
       </div>
     {/if}
@@ -641,21 +659,163 @@
     outline-offset: 1px;
   }
 
-  /* the centred bottom stack — anchored once, above the cost/quota strip */
-  .bottom-dock {
+  /* ══ wave U2 Task 1: the System dock — a CSS grid host ══════════════════════
+     Replaces the old stack of independently absolutely-positioned panels (each
+     hand-tracking a sibling's pixel height via calc() — MetricsPanel hardcoding
+     the Mechanism's 190px, VerdictPanel stacking off a --metrics-block constant,
+     five files hand-tracking --strip-h). Named areas; each cell is a plain
+     unstyled box, so a panel's own CSS carries only its internal look (bg/
+     border/padding) — the grid owns placement + spacing (the token scale).
+
+     Rows: topbar (auto) / hud (auto) + log (1fr, so LogPanel fills the rail and
+     scrolls internally) / bottom-dock (auto) / cost strip (auto, --strip-h tall).
+     "center" and "right" span the hud+log row band so the canvas gets the full
+     rail height even though the left rail is itself split into two rows.
+     Columns: left rail / center (canvas, 1fr — this is what "breathes") / right
+     rail. `.bare` (Ambient mode, or the Body drawer open) collapses both rails
+     to zero width so the canvas gets the whole dock; `gap: 0` there too so an
+     empty rail leaves no dead gutter. */
+  .system-grid {
     position: absolute;
-    left: 0;
-    right: 0;
-    bottom: calc(var(--strip-h) + var(--space-3));
+    inset: 0;
+    display: grid;
+    grid-template-columns: minmax(272px, 320px) 1fr minmax(272px, 320px);
+    grid-template-rows: auto auto 1fr auto auto;
+    grid-template-areas:
+      'topbar topbar topbar'
+      'hud    center right'
+      'log    center right'
+      'bottom bottom bottom'
+      'strip  strip  strip';
+    gap: var(--space-3);
+  }
+  .system-grid.bare {
+    grid-template-columns: 0 1fr 0;
+    gap: 0;
+  }
+
+  .g-topbar {
+    grid-area: topbar;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: start;
+    padding: var(--space-3) var(--chrome-inset) 0;
+  }
+  .tb-left {
+    justify-self: start;
+  }
+  .tb-center {
+    justify-self: center;
+  }
+  .tb-right {
+    /* an empty reserved column — clears the floating breadcrumb/badge pill
+       (navbar, top-right, z-index 20) so the centered ModeBar never creeps
+       under it on medium widths. */
+    justify-self: end;
+    min-width: 168px;
+  }
+
+  .g-hud {
+    grid-area: hud;
+    min-width: 0;
+    padding: var(--space-3) 0 0 var(--chrome-inset);
+  }
+  .g-log {
+    grid-area: log;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    padding: var(--space-2) 0 var(--space-3) var(--chrome-inset);
+  }
+  .g-center {
+    grid-area: center;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+  }
+  .g-right {
+    grid-area: right;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--chrome-inset) var(--space-3) 0;
+  }
+  .g-bottom {
+    grid-area: bottom;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--space-3);
-    pointer-events: none;
-    z-index: 14;
+    padding: 0 var(--chrome-inset) var(--space-3);
   }
-  .bottom-dock > :global(*) {
-    pointer-events: auto;
+  .g-strip {
+    grid-area: strip;
+  }
+
+  /* phone (wave U2 Task 4): single column, reordered so the canvas + controls
+     lead and the log/right-rail cards follow — the dock scrolls as a page
+     instead of splitting into rails. Heights are self-contained (vh-based, not
+     tracking any sibling's pixel size) so nothing here re-creates the old
+     cross-file magic-number breakpoints. */
+  @media (max-width: 640px) {
+    .system-grid,
+    .system-grid.bare {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto minmax(220px, 42vh) auto auto auto auto;
+      grid-template-areas:
+        'topbar'
+        'hud'
+        'center'
+        'bottom'
+        'log'
+        'right'
+        'strip';
+      gap: var(--space-2);
+      overflow-y: auto;
+    }
+    .g-topbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: var(--space-2);
+      /* clears the floating navbar pill, which wraps to two rows (~80px deep
+         incl. its 18px top inset) on a 390px width */
+      padding: 88px var(--space-2) 0;
+    }
+    .tb-right {
+      display: none;
+    }
+    .g-hud,
+    .g-log,
+    .g-right {
+      padding-left: var(--space-2);
+      padding-right: var(--space-2);
+    }
+    /* content-driven rows on phone: the desktop rail cells use min-height:0 +
+       overflow so a 1fr track can bound them, but inside the phone's auto rows
+       that same combination lets the track squish to ~0 (min-content of an
+       overflow box is 0). Let content set the row height; the GRID scrolls. */
+    .g-log {
+      display: block;
+      min-height: auto;
+    }
+    .g-right {
+      min-height: auto;
+      overflow-y: visible;
+    }
+    .g-bottom {
+      padding: 0 var(--space-2) var(--space-2);
+    }
+  }
+  /* CostQuotaStrip hidden on a short phone viewport so the dock never has to
+     fight it for room — the strip is a nicety, the controls above it aren't. */
+  @media (max-width: 640px) and (max-height: 700px) {
+    .g-strip {
+      display: none;
+    }
   }
 
   /* empty-state hint for a freshly-entered live loop (sits atop the control bar) */

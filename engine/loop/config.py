@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from loop.configkeys import resolve, warn_unknown_keys
+
 # Defaults for Get-ModelForPhase (loopcore.ps1 ~223).
 _MODEL_DEFAULTS = {
     "discover": "haiku",
@@ -39,7 +41,6 @@ _DEFAULT_ALERT_PCT = [50, 80, 100]
 _DEFAULT_PERMISSION_MODE = "acceptEdits"
 _DEFAULT_ALLOWED_TOOLS = ["Read", "Edit", "Write", "Bash(bun test)", "Bash(bun test:*)"]
 _DEFAULT_GRACEFUL_AT_PHASE = True
-_DEFAULT_GREEN_WHEN = "exit==0"
 _DEFAULT_LOCK_GLOBS = ["*.test.ts"]
 _DEFAULT_JUDGE_MODEL = "haiku"
 _DEFAULT_GATE_STAGES = [
@@ -67,14 +68,6 @@ def model_for_phase(phase: str, models: dict[str, str] | None) -> str:
     if key in _MODEL_DEFAULTS:
         return _MODEL_DEFAULTS[key]
     return "sonnet"  # unknown phase -> safe middle tier
-
-
-def _first(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    """First present key's value among ``keys`` (camel/snake tolerance); else ``default``."""
-    for k in keys:
-        if k in d and d[k] is not None:
-            return d[k]
-    return default
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -106,10 +99,14 @@ class GateStage:
 
 @dataclass
 class GateConfig:
-    """The ``gate`` block: ordered stages, the green predicate, and the locked-file globs."""
+    """The ``gate`` block: ordered stages + the locked-file globs.
+
+    Green semantics are NOT configurable (there is no ``green_when`` field — it was parsed but
+    never consulted; see PROTOCOL.md §7): a stage passes when its command exits ``0``, and the
+    gate is green when EVERY stage passes (:func:`loop.gate.run_gate`).
+    """
 
     stages: list[GateStage] = field(default_factory=list)
-    green_when: str = _DEFAULT_GREEN_WHEN
     lock_globs: list[str] = field(default_factory=lambda: list(_DEFAULT_LOCK_GLOBS))
 
 
@@ -223,78 +220,99 @@ class EngineConfig:
         return model_for_phase(phase, self.models)
 
 
+# Keys `_gate_from` actually reads (both spellings) — anything else warns. `greenWhen` /
+# `green_when` are RETIRED (Task 5): the field was parsed but the gate has always hardcoded
+# "green = every stage exit 0" (loop.gate.run_gate); old configs that still carry it get a
+# gentler "retired" notice instead of "unrecognized key".
+_GATE_KNOWN_KEYS = {"stages", "lockGlobs", "lock_globs"}
+_GATE_RETIRED_KEYS = {"greenWhen", "green_when"}
+
+
 def _gate_from(d: dict[str, Any]) -> GateConfig:
-    stages_raw = _first(d, "stages", default=None)
+    warn_unknown_keys(d, _GATE_KNOWN_KEYS, "engine.gate", retired=_GATE_RETIRED_KEYS)
+    stages_raw = resolve(d, "stages", default=None)
     if stages_raw is None:
         stages = [GateStage(**s) for s in _DEFAULT_GATE_STAGES]
     else:
         stages = [
             GateStage(
-                name=_first(s, "name", default=""),
-                command=_first(s, "command", default=""),
-                pass_pattern=_first(s, "passPattern", "pass_pattern"),
-                fail_pattern=_first(s, "failPattern", "fail_pattern"),
-                held_out=bool(_first(s, "heldOut", "held_out", default=False)),
-                lock_globs=_as_str_list(_first(s, "lockGlobs", "lock_globs", default=[])),
+                name=resolve(s, "name", default=""),
+                command=resolve(s, "command", default=""),
+                pass_pattern=resolve(s, "passPattern", "pass_pattern"),
+                fail_pattern=resolve(s, "failPattern", "fail_pattern"),
+                held_out=bool(resolve(s, "heldOut", "held_out", default=False)),
+                lock_globs=_as_str_list(resolve(s, "lockGlobs", "lock_globs", default=[])),
             )
             for s in stages_raw
         ]
     return GateConfig(
         stages=stages,
-        green_when=_first(d, "greenWhen", "green_when", default=_DEFAULT_GREEN_WHEN),
-        lock_globs=list(_first(d, "lockGlobs", "lock_globs", default=list(_DEFAULT_LOCK_GLOBS))),
+        lock_globs=list(resolve(d, "lockGlobs", "lock_globs", default=list(_DEFAULT_LOCK_GLOBS))),
     )
 
 
 def _cost_from(d: dict[str, Any]) -> CostConfig:
     return CostConfig(
-        ceiling_usd=float(_first(d, "ceilingUsd", "ceiling_usd", default=_DEFAULT_CEILING_USD)),
-        alert_pct=list(_first(d, "alertPct", "alert_pct", default=list(_DEFAULT_ALERT_PCT))),
+        ceiling_usd=float(resolve(d, "ceilingUsd", "ceiling_usd", default=_DEFAULT_CEILING_USD)),
+        alert_pct=list(resolve(d, "alertPct", "alert_pct", default=list(_DEFAULT_ALERT_PCT))),
     )
 
 
 def _stop_from(d: dict[str, Any]) -> StopConfig:
     return StopConfig(
-        max_iters=int(_first(d, "maxIters", "max_iters", default=_DEFAULT_MAX_ITERS)),
+        max_iters=int(resolve(d, "maxIters", "max_iters", default=_DEFAULT_MAX_ITERS)),
         stagnation_limit=int(
-            _first(d, "stagnationLimit", "stagnation_limit", default=_DEFAULT_STAGNATION_LIMIT)
+            resolve(d, "stagnationLimit", "stagnation_limit", default=_DEFAULT_STAGNATION_LIMIT)
         ),
         plateau_limit=int(
-            _first(d, "plateauLimit", "plateau_limit", default=_DEFAULT_PLATEAU_LIMIT)
+            resolve(d, "plateauLimit", "plateau_limit", default=_DEFAULT_PLATEAU_LIMIT)
         ),
         regress_limit=int(
-            _first(d, "regressLimit", "regress_limit", default=_DEFAULT_REGRESS_LIMIT)
+            resolve(d, "regressLimit", "regress_limit", default=_DEFAULT_REGRESS_LIMIT)
         ),
         graceful_at_phase=bool(
-            _first(d, "gracefulAtPhase", "graceful_at_phase", default=_DEFAULT_GRACEFUL_AT_PHASE)
+            resolve(d, "gracefulAtPhase", "graceful_at_phase", default=_DEFAULT_GRACEFUL_AT_PHASE)
         ),
     )
 
 
 def _verify_from(d: dict[str, Any]) -> VerifyConfig:
     return VerifyConfig(
-        judge_model=_first(d, "judgeModel", "judge_model", default=_DEFAULT_JUDGE_MODEL),
-        contract=list(_first(d, "contract", default=[])),
-        enabled=bool(_first(d, "enabled", default=False)),
-        mutation_audit=bool(_first(d, "mutationAudit", "mutation_audit", default=False)),
-        mutation_every=int(_first(d, "mutationEvery", "mutation_every", default=0)),
+        judge_model=resolve(d, "judgeModel", "judge_model", default=_DEFAULT_JUDGE_MODEL),
+        contract=list(resolve(d, "contract", default=[])),
+        enabled=bool(resolve(d, "enabled", default=False)),
+        mutation_audit=bool(resolve(d, "mutationAudit", "mutation_audit", default=False)),
+        mutation_every=int(resolve(d, "mutationEvery", "mutation_every", default=0)),
     )
 
 
 def _feedback_from(d: dict[str, Any]) -> FeedbackConfig:
-    return FeedbackConfig(compact=bool(_first(d, "compact", default=False)))
+    return FeedbackConfig(compact=bool(resolve(d, "compact", default=False)))
 
 
 def _memory_from(d: dict[str, Any]) -> MemoryConfig:
     return MemoryConfig(
-        enabled=bool(_first(d, "enabled", default=False)),
-        path=_first(d, "path", default=None),
-        recall_limit=int(_first(d, "recallLimit", "recall_limit", default=5)),
+        enabled=bool(resolve(d, "enabled", default=False)),
+        path=resolve(d, "path", default=None),
+        recall_limit=int(resolve(d, "recallLimit", "recall_limit", default=5)),
     )
 
 
 def _metrics_from(d: dict[str, Any]) -> MetricsConfig:
-    return MetricsConfig(emit=bool(_first(d, "emit", default=False)))
+    return MetricsConfig(emit=bool(resolve(d, "emit", default=False)))
+
+
+# Keys the top-level `engine` block itself reads (both spellings); the per-block parsers
+# (`_gate_from`, `_cost_from`, ...) warn on their own sub-dicts separately.
+_ENGINE_KNOWN_KEYS = {
+    "task",
+    "models",
+    "maxTurns", "max_turns",
+    "iterTimeoutMin", "iter_timeout_min",
+    "allowedTools", "allowed_tools",
+    "permissionMode", "permission_mode",
+    "gate", "cost", "stop", "verify", "feedback", "memory", "metrics",
+}
 
 
 def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
@@ -302,10 +320,14 @@ def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
 
     Accepts a path to a ``loop.json`` file, an already-parsed full loop dict, or just the
     ``engine`` sub-dict. camelCase JSON keys (``maxTurns``, ``iterTimeoutMin``, ``allowedTools``,
-    ``permissionMode``, ``passPattern``, ``failPattern``, ``lockGlobs``, ``greenWhen``,
-    ``ceilingUsd``, ``alertPct``, ``maxIters``, ``stagnationLimit``, ``plateauLimit``,
-    ``regressLimit``, ``gracefulAtPhase``, ``judgeModel``) are accepted, as are snake_case
-    equivalents. Absent fields fall back to the ``loop.ps1`` defaults.
+    ``permissionMode``, ``passPattern``, ``failPattern``, ``lockGlobs``, ``ceilingUsd``,
+    ``alertPct``, ``maxIters``, ``stagnationLimit``, ``plateauLimit``, ``regressLimit``,
+    ``gracefulAtPhase``, ``judgeModel``) are accepted, as are snake_case equivalents. Absent
+    fields fall back to the ``loop.ps1`` defaults. An unrecognized key anywhere in the block
+    (or one of its ``gate``/``cost``/``stop``/``verify``/``feedback``/``memory``/``metrics``
+    sub-blocks) prints a stderr warning (:func:`loop.configkeys.warn_unknown_keys`) instead of
+    silently vanishing — a retired key (``gate.greenWhen`` — PROTOCOL.md §7) gets a gentler
+    "retired" notice.
     """
     if isinstance(path_or_dict, dict):
         data = path_or_dict
@@ -316,25 +338,26 @@ def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
     eng = data.get("engine", data) if isinstance(data, dict) else {}
     if eng is None:
         eng = {}
+    warn_unknown_keys(eng, _ENGINE_KNOWN_KEYS, "engine")
 
     return EngineConfig(
-        task=_first(eng, "task", default="TASK.md"),
-        models=dict(_first(eng, "models", default={})),
-        max_turns=int(_first(eng, "maxTurns", "max_turns", default=_DEFAULT_MAX_TURNS)),
+        task=resolve(eng, "task", default="TASK.md"),
+        models=dict(resolve(eng, "models", default={})),
+        max_turns=int(resolve(eng, "maxTurns", "max_turns", default=_DEFAULT_MAX_TURNS)),
         iter_timeout_min=int(
-            _first(eng, "iterTimeoutMin", "iter_timeout_min", default=_DEFAULT_ITER_TIMEOUT_MIN)
+            resolve(eng, "iterTimeoutMin", "iter_timeout_min", default=_DEFAULT_ITER_TIMEOUT_MIN)
         ),
         allowed_tools=list(
-            _first(eng, "allowedTools", "allowed_tools", default=list(_DEFAULT_ALLOWED_TOOLS))
+            resolve(eng, "allowedTools", "allowed_tools", default=list(_DEFAULT_ALLOWED_TOOLS))
         ),
-        permission_mode=_first(
+        permission_mode=resolve(
             eng, "permissionMode", "permission_mode", default=_DEFAULT_PERMISSION_MODE
         ),
-        gate=_gate_from(_first(eng, "gate", default={}) or {}),
-        cost=_cost_from(_first(eng, "cost", default={}) or {}),
-        stop=_stop_from(_first(eng, "stop", default={}) or {}),
-        verify=_verify_from(_first(eng, "verify", default={}) or {}),
-        feedback=_feedback_from(_first(eng, "feedback", default={}) or {}),
-        memory=_memory_from(_first(eng, "memory", default={}) or {}),
-        metrics=_metrics_from(_first(eng, "metrics", default={}) or {}),
+        gate=_gate_from(resolve(eng, "gate", default={}) or {}),
+        cost=_cost_from(resolve(eng, "cost", default={}) or {}),
+        stop=_stop_from(resolve(eng, "stop", default={}) or {}),
+        verify=_verify_from(resolve(eng, "verify", default={}) or {}),
+        feedback=_feedback_from(resolve(eng, "feedback", default={}) or {}),
+        memory=_memory_from(resolve(eng, "memory", default={}) or {}),
+        metrics=_metrics_from(resolve(eng, "metrics", default={}) or {}),
     )

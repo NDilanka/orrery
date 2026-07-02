@@ -81,10 +81,9 @@
 
 <style>
   .badge {
-    position: absolute;
-    /* clear the 120px cost/quota strip pinned to the bottom edge */
-    bottom: calc(var(--strip-h) + var(--space-3));
-    left: var(--chrome-inset);
+    /* wave U2 Task 1: moved into the System dock's top bar (left of the
+       breadcrumb/badge cluster) instead of floating above the cost strip — the
+       grid places it now; this is internal styling only. */
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -93,7 +92,6 @@
     border: 1px solid var(--panel-edge);
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
-    z-index: 16;
   }
   .dot {
     width: 7px;

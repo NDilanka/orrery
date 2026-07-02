@@ -14,8 +14,29 @@
       "--project-root", "D:/dev/brain2",
       "--state-dir", "D:/dev/loop/orrery/loops/bmad/.loop",
       "--merge-base", "develop",
-      "--loop-json", "D:/dev/loop/orrery/loops/bmad/bmad-engine.json",
+      "--loop-json", "D:/dev/loop/orrery/loops/bmad/loop.json",
       "--no-smoke"
     ]
+  },
+  "bmad": {
+    "models": {
+      "create": "claude-opus-4-8[1m]",
+      "dev": "claude-opus-4-8[1m]",
+      "review": "claude-opus-4-8[1m]",
+      "smoke": "claude-opus-4-8[1m]",
+      "retro": "claude-opus-4-8[1m]",
+      "decider": "sonnet"
+    },
+    "effort": {
+      "create": "xhigh",
+      "dev": "xhigh",
+      "review": "xhigh",
+      "smoke": "xhigh",
+      "retro": "xhigh",
+      "decider": "low"
+    },
+    "reviewMode": "single-pass",
+    "smokeMode": "single-pass",
+    "retroMode": "single-pass"
   }
 }
