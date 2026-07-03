@@ -165,11 +165,15 @@ def test_probe_quota_uses_finite_timeout(monkeypatch):
 
     def fake_run(argv, *, cwd, timeout_sec):
         seen["timeout_sec"] = timeout_sec
+        seen["argv"] = list(argv)
         return _R()
 
     monkeypatch.setattr(claude_mod.proc, "run_with_timeout", fake_run)
     claude_mod.ClaudeRunner().probe_quota()
     assert seen["timeout_sec"] == 120  # finite, not 0/unbounded
+    # LEAN probe: --strict-mcp-config with no --mcp-config loads zero MCP servers.
+    assert "--strict-mcp-config" in seen["argv"]
+    assert "--mcp-config" not in seen["argv"]
 
 
 def test_probe_quota_timeout_reports_still_limited(monkeypatch):
