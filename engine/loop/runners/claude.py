@@ -146,6 +146,11 @@ class ClaudeRunner(AgentRunner):
             "--verbose",
             "--max-turns",
             "1",
+            # LEAN probe: --strict-mcp-config with NO --mcp-config loads ZERO MCP servers, so the
+            # probe skips every configured server's tool-schema load. The probe only needs the
+            # rate_limit_info fragments, which arrive regardless — same verdict, cheaper cycle
+            # (it can run up to max_quota_waits=30 times per outage).
+            "--strict-mcp-config",
         ]
         # FINITE probe timeout (120s): a hung probe would otherwise defeat survive()'s <=6h
         # auto-resume guarantee (an unbounded probe can block the wait loop forever).
