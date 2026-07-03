@@ -4,6 +4,7 @@
   // countdown. Reads the runes store; numbers are tabular for honesty.
 
   import { runStore } from '../stores/run.svelte';
+  import { sessionStore } from '../stores/session.svelte';
   import { fmtClock, fmtDuration, fmtRelative } from '../timefmt';
   import type { SixPhase } from '../types';
 
@@ -117,6 +118,15 @@
     if (s.run.status === 'running') {
       const clock = fmtClock(s.run.startedAt);
       if (!clock) return null;
+      // Replay has no live wall-clock — nowTick (real Date.now()) against a fixture's frozen
+      // event timestamps would read as e.g. "running 336h 41m" on a 14-day-old fixture.
+      // Both startedAt and lastEventAt are event-time (reduce.ts), so use their own span
+      // instead of the real clock.
+      if (sessionStore.transportKind === 'replay') {
+        if (!s.run.lastEventAt) return `started ${clock}`;
+        const dur = fmtDuration(Date.parse(s.run.lastEventAt) - Date.parse(s.run.startedAt!));
+        return `started ${clock} · running ${dur}`;
+      }
       const dur = fmtDuration(nowTick - Date.parse(s.run.startedAt!));
       return `started ${clock} · running ${dur}`;
     }
@@ -432,8 +442,11 @@
     color: var(--em-faint);
   }
   .horizon {
+    /* below 80% of the ceiling is a plain readout, not a warning — pinned cross-wave
+       contract (tokens.css): neutral em tier here, amber only kicks in at .warn (80–99%),
+       red at .crit (≥100%). */
     font-size: var(--text-xs);
-    color: var(--amber);
+    color: var(--em-mid);
     font-family: var(--font-mono);
   }
   .horizon.warn { color: var(--horizon-rose); }
@@ -465,6 +478,13 @@
   .key {
     color: var(--em-hi);
     font-size: var(--text-md);
+    /* a long story id (e.g. a generated slug) must never blow out the HUD's fixed rail
+       width — shrink within the flex row and ellipsize rather than overflowing. */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* M4.4: "gate count --em-mid" — a plain readout now; the pass/fail count already
      spells out "green"/"red" in words (never-hue-alone), so the chip doesn't need to

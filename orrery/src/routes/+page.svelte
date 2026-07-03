@@ -77,6 +77,12 @@
     activeLoop ? LOOPS.find((l) => l.id === activeLoop)?.name ?? activeLoop : null,
   );
 
+  // Platform-aware shortcut chip: "⌘K" reads wrong on Windows/Linux — only the whole
+  // stage (this component's markup) is client-only ({#if browser} below), so `navigator`
+  // is always safe to read here without an SSR guard beyond `browser` itself.
+  const isMac = browser && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '');
+  const kbdChip = isMac ? '⌘K' : 'Ctrl K';
+
   // ── M4.3 full-bleed canvas: safeInsets for Observatory ─────────────────────
   // Observatory now renders on a stage-level layer BEHIND `.system-grid` (the scene fills
   // the viewport edge-to-edge instead of being boxed into a grid cell). `.g-center` stays
@@ -467,7 +473,7 @@
           class="kbdhint mono"
           title="Command palette"
           aria-label="Open command palette"
-          onclick={() => (showPalette = true)}>⌘K</button
+          onclick={() => (showPalette = true)}>{kbdChip}</button
         >
       </div>
     </nav>
@@ -486,7 +492,7 @@
 
     <!-- keyboard-shortcut legend (toggled with ?) -->
     {#if showHelp}
-      <HelpOverlay onClose={() => (showHelp = false)} />
+      <HelpOverlay onClose={() => (showHelp = false)} {kbdChip} />
     {/if}
 
     <!-- M3.1: the command palette (Ctrl/Cmd+K) — pure dispatch onto the same nav closures
@@ -497,6 +503,7 @@
         onClose={() => (showPalette = false)}
         {view}
         {activeLoop}
+        {kbdChip}
         onEnterSystem={(id) => void enterSystem(id)}
         onEnterBody={(key) => enterBody(key)}
         onBackToSystem={backToSystem}

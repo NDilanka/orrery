@@ -41,8 +41,15 @@
   const liveness = $derived(
     computeLiveness(activityStore.current, running, now, activityStore.receivedAt, DESKTOP_STALE_MS),
   );
+  // A run that just started has no heartbeat yet (activity.json hasn't been written for the
+  // first time) — that's a normal cold-start grace window, not the engine going quiet, so it
+  // reads as "warming up" rather than the alarming stale badge. Once a first beat HAS arrived
+  // (activityStore.current non-null), normal staleness logic (liveness.state) takes over.
+  const desktopWarming = $derived(
+    transportKind === 'tauri' && running && activityStore.current === null,
+  );
   const desktopStale = $derived(
-    transportKind === 'tauri' && running && liveness.state !== 'live',
+    transportKind === 'tauri' && running && activityStore.current !== null && liveness.state !== 'live',
   );
   function fmtAge(ms: number): string {
     if (!Number.isFinite(ms)) return '';
@@ -71,6 +78,11 @@
     {#if status.observeOnly}
       <span class="obs mono">observe-only</span>
     {/if}
+  </div>
+{:else if desktopWarming}
+  <div class="badge warming" role="status" title="Engine just started — waiting for its first heartbeat.">
+    <span class="dot"></span>
+    <span class="txt mono">warming up…</span>
   </div>
 {:else if desktopStale}
   <div class="badge stale" role="status" title="No activity.json heartbeat from the engine recently — it may be hung.">
@@ -123,6 +135,11 @@
      needs-you hue (docs/ui-modernization-plan.md §5; matches Hud.svelte's
      status-pill.frost reclassification of quota-pause). */
   .badge.connecting .dot {
+    background: var(--em-low);
+  }
+  /* warming (desktop cold-start grace, no heartbeat yet) shares connecting's calm
+     monochrome treatment — a normal transient state, never the alarming amber. */
+  .badge.warming .dot {
     background: var(--em-low);
   }
   .badge.stale .dot {

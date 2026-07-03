@@ -36,6 +36,7 @@
     onBackToSystem,
     onBackToCosmos,
     onOpenHelp,
+    kbdChip = '⌘K',
   }: {
     onClose: () => void;
     view: View;
@@ -45,6 +46,10 @@
     onBackToSystem: () => void;
     onBackToCosmos: () => void;
     onOpenHelp: () => void;
+    /** platform-aware chip text for the palette's own trigger ("⌘K" mac / "Ctrl K" else) —
+     * computed once by +page.svelte (the only place `navigator` is read) and threaded
+     * through so this component needs no platform-detection of its own. */
+    kbdChip?: string;
   } = $props();
 
   type Group = 'actions' | 'navigate' | 'loops';
@@ -82,9 +87,13 @@
     const canResume = !!s.run.resumeCmd;
     const inSystem = view !== 'cosmos'; // matches +page.svelte onKeydown's i/b/r gate
     const sel = runStore.selectedItem ?? s.currentItem;
+    // Replay has no engine to drive — RunControlBar withholds every control verb there
+    // (playback lives in TransportBar instead), so the palette mirrors that: no
+    // start/brake/stop/resume/restart rows while watching a fixture.
+    const isReplay = sessionStore.transportKind === 'replay';
 
     // ── Run control (RunControlBar's own show/disable logic, mirrored) ──
-    if (inSystem) {
+    if (inSystem && !isReplay) {
       if (!running && !banked && !failed) {
         rows.push({
           id: 'start',
@@ -112,7 +121,7 @@
           run: () => void sessionStore.control('start'),
         });
       }
-      if (running) {
+      if (running && !failed) {
         rows.push({
           id: 'brake-phase',
           label: 'Brake · phase',
@@ -319,7 +328,7 @@
     onclick={(e) => e.stopPropagation()}
   >
     <div class="inputrow">
-      <span class="prefix mono" aria-hidden="true">⌘K</span>
+      <span class="prefix mono" aria-hidden="true">{kbdChip}</span>
       <input
         bind:this={inputEl}
         bind:value={query}

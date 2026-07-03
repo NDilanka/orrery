@@ -93,6 +93,7 @@
     {#each SPEEDS as sp (sp)}
       <button
         class="seg-item sp {state.speed === sp ? 'selected' : ''}"
+        aria-pressed={state.speed === sp}
         onclick={() => transport?.setSpeed(sp)}
       >
         {sp}×

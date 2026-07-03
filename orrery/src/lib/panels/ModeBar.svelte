@@ -28,6 +28,8 @@
       class="seg-item mbtn {m.id} {uiStore.mode === m.id ? 'selected' : ''}"
       disabled={!m.on}
       title={m.on ? m.label : `${m.label} (needs a scrubbable run)`}
+      aria-label={m.label}
+      aria-pressed={uiStore.mode === m.id}
       onclick={() => pick(m.id, m.on)}
     >
       <span class="glyph">{m.glyph}</span>
