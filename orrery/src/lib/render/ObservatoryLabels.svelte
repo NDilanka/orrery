@@ -446,7 +446,11 @@
     transition: left var(--dur-mid) var(--ease-standard),
       top var(--dur-mid) var(--ease-standard);
   }
-  .horizon.note { color: var(--amber); }
+  /* cost-horizon ladder (cross-wave contract, matches Hud.svelte): below 80% of ceiling is
+     NEUTRAL — the 50% milestone ('note') is informational, not an alert, so it inherits the
+     same --text-faint the base .horizon rule already uses instead of overriding to amber.
+     80-99% ('warn') earns --horizon-rose (now itself var(--status-warn-core), i.e. amber —
+     see tokens.css) and only >=100% ('crit') earns red. */
   .horizon.warn { color: var(--horizon-rose); }
   .horizon.crit { color: var(--crimson); }
 

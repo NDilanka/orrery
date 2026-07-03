@@ -159,7 +159,8 @@ export const FALLBACK: ThemeColors = {
   auditor: 0xf4f8ff,
   ghostBrass: 0xffffff, // rgba(255,255,255,.12) — was brass-tinted rgba(201,162,75,.22)
   cacheTeal: 0x7e8085, // oklch(0.6 0.008 265) — was teal #2fd9c9
-  horizonRose: 0xf75c66, // var(--status-err-core) — was rose #ff6b7e
+  horizonRose: 0xeab532, // var(--status-warn-core) — repointed off --status-err-core (80%
+  // and 100% no longer collide on the same red); was rose #ff6b7e
   frost: 0x9ea5b2, // oklch(0.72 0.02 265) — was blue #9fb6ff
   haiku: 0x6f7276, // oklch(0.55 0.008 265) — was red dwarf #ff6a4d
   sonnet: 0x9c9ea4, // oklch(0.7 0.008 265) — was gold (var(--brass))

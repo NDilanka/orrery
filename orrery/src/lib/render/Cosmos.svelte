@@ -348,6 +348,23 @@
         ro.disconnect();
         app.canvas.removeEventListener('mousemove', onMove);
         app.canvas.removeEventListener('click', onClick);
+        // explicit texture teardown — app.destroy(true, { children: true }) below tears down
+        // display objects but not these two generated-once textures (renderer.generateTexture
+        // output, not loaded assets): the shared glow texture every pooled sprite/aurora tints,
+        // and the final live vignette sprite's texture (rebuildVignette already destroys the
+        // PREVIOUS texture on every resize — this mirrors that same call for the last one).
+        // Guarded: PIXI's own Texture.destroy() is already a safe no-op on an already-destroyed
+        // texture, but wrap anyway so a future PIXI version can't turn that into a throw here.
+        try {
+          glowTex.texture.destroy(true);
+        } catch {
+          /* ignore */
+        }
+        try {
+          vignetteSprite?.texture?.destroy(true);
+        } catch {
+          /* ignore */
+        }
       };
 
       // eased per-glyph signals (keyed by loop id)
@@ -438,6 +455,11 @@
             glowPool.delete(id);
           }
         }
+        // same prune, same activeIds set — `ease` grows one entry per loop ever seen
+        // (created/retired) if left unbounded, unlike glowPool above which was already pruned.
+        for (const id of ease.keys()) {
+          if (!activeIds.has(id)) ease.delete(id);
+        }
 
         g.clear();
         hits.clear();
@@ -485,9 +507,15 @@
           if (l.horizonFrac >= 0.5) {
             const maxHR = baseR * 2.6;
             const hr = maxHR * (1.05 - Math.min(1, l.horizonFrac) * 0.5);
-            let hcol = C.amber;
+            // cross-wave contract (Hud.svelte's ladder): <80% is NEUTRAL (no alert yet), only
+            // 80-99% earns amber and >=100% earns red — a color is still mandatory for the
+            // stroke below, so <80% uses the same idle grayscale tier as the rest of the
+            // monochrome sweep instead of amber.
+            let hcol = C.em?.low ?? 0x787a7f; // em?.low is optional only on the ThemeColors
+            // type (see theme.ts) — always populated in practice; 0x787a7f is FALLBACK.em.low
+            // itself, so this never actually diverges from the resolved token.
             if (l.horizonFrac >= 1) hcol = C.crimson;
-            else if (l.horizonFrac >= 0.8) hcol = C.horizonRose;
+            else if (l.horizonFrac >= 0.8) hcol = C.horizonRose; // now amber, see tokens.css
             g.circle(cx, cy, hr).stroke({ width: 1.2, color: hcol, alpha: 0.55 });
           }
 
@@ -550,7 +578,11 @@
             g.rect(cx - r, cy + r * 0.15, r * 2, r * 0.55).fill({ color: C.void, alpha: 0.55 });
             g.circle(cx, cy - r * 0.15, r * 0.5).fill({ color: col, alpha: 0.8 });
           } else if (l.restState === 'handoff-beacon') {
-            // distress beacon: rotating amber→crimson wedge (slow = urgency)
+            // distress beacon: rotating amber wedge (slow = urgency). Handoff is "needs you",
+            // the amber/warn bucket — NOT a crash — so both arms + the core dot stay the same
+            // amber family (previously the primary arm/core were crimson, which read as
+            // crashed); the two-armed silhouette stays motion-distinct via alpha (bright arm /
+            // dim echo arm), not a second hue. Mirrors Observatory's beacon (~1196-1214).
             g.circle(cx, cy, r).fill({ color: base, alpha: 0.92 });
             const sweep = reduced ? 0 : t * 1.0;
             const beamR = r * 2.6;
@@ -558,12 +590,12 @@
             g.moveTo(cx, cy);
             g.arc(cx, cy, beamR, sweep - wedge / 2, sweep + wedge / 2);
             g.closePath();
-            g.fill({ color: C.crimson, alpha: 0.16 });
+            g.fill({ color: C.amber, alpha: 0.16 });
             g.moveTo(cx, cy);
             g.arc(cx, cy, beamR, sweep + Math.PI - wedge / 2, sweep + Math.PI + wedge / 2);
             g.closePath();
             g.fill({ color: C.amber, alpha: 0.12 });
-            g.circle(cx, cy, r * 0.55).fill({ color: C.crimson, alpha: 0.75 });
+            g.circle(cx, cy, r * 0.55).fill({ color: C.amber, alpha: 0.75 });
           } else if (l.restState === 'certified-done') {
             // sealed: emerald disc + brass certification ring + notches. Brass stays
             // LITERAL brass (identity/certification accent, never muted — plan §1). M5: a

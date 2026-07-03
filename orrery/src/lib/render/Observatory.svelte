@@ -645,6 +645,39 @@
         app.canvas.removeEventListener('pointerdown', onPointerDown);
         app.canvas.removeEventListener('mousemove', onMove);
         app.canvas.removeEventListener('mouseleave', onLeave);
+        // explicit texture teardown — app.destroy(true, { children: true }) below tears down
+        // display objects but not these generated-once textures (renderer.generateTexture
+        // output, not loaded assets): the three glow textures every corona/pooled sprite
+        // tints, the particle-stream dot texture, and the final live vignette sprite's
+        // texture (rebuildVignette already destroys the PREVIOUS texture on every resize —
+        // this mirrors that same call for the last one). Guarded: Texture.destroy() doesn't
+        // throw on a second call, but wrap anyway so a future PIXI version can't turn that
+        // into one here.
+        try {
+          glowTex.texture.destroy(true);
+        } catch {
+          /* ignore */
+        }
+        try {
+          wideGlowTex.texture.destroy(true);
+        } catch {
+          /* ignore */
+        }
+        try {
+          burnGlowTex.texture.destroy(true);
+        } catch {
+          /* ignore */
+        }
+        try {
+          particleTex.destroy(true);
+        } catch {
+          /* ignore */
+        }
+        try {
+          vignetteSprite?.texture?.destroy(true);
+        } catch {
+          /* ignore */
+        }
       };
 
       // ── render loop ──────────────────────────────────────────────────────

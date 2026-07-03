@@ -121,7 +121,9 @@
   --auditor-white: #f4f8ff; /* lighthouse / verifier beam */
   --ghost-brass: rgba(255, 255, 255, 0.12); /* frozen AC wireframe — was brass-tinted */
   --cache-teal: oklch(0.6 0.008 265); /* recycled-fuel reservoir — was teal #2fd9c9 */
-  --horizon-rose: var(--status-err-core); /* 80% cost horizon — was rose #ff6b7e */
+  --horizon-rose: var(--status-warn-core); /* 80-99% cost horizon — amber (was aliased to
+     --status-err-core, which made 80% and 100% read as the identical red; ladder is now
+     neutral <80%, amber 80-99%, red only >=100% — was rose #ff6b7e) */
   --frost: oklch(0.72 0.02 265); /* weekly / polar-night crystal — was blue #9fb6ff */
 
   /* ── model spectral class (heat) — three grayscale steps, identity by brightness ── */
