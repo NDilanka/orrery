@@ -117,7 +117,15 @@ class ClaudeRunner(AgentRunner):
             "--max-turns",
             "1",
         ]
-        res = proc.run_with_timeout(argv, cwd=None, timeout_sec=0)
+        # FINITE probe timeout (120s): a hung probe would otherwise defeat survive()'s <=6h
+        # auto-resume guarantee (an unbounded probe can block the wait loop forever).
+        res = proc.run_with_timeout(argv, cwd=None, timeout_sec=120)
+        if res.timed_out:
+            # A hung/killed probe is INCONCLUSIVE — treat it as "still limited" so survive() sleeps
+            # a cycle and re-probes next iteration (bounded by max_waits) instead of hanging or
+            # falsely reporting "available". No reset moment is known, so the wait falls back to
+            # the default interval.
+            return QuotaStatus(limited=True, reset_at=None, reset_type=None)
         combined = (res.stdout or "") + "\n" + (res.stderr or "")
         status = quota.resolve_quota_status(combined)
         return QuotaStatus(

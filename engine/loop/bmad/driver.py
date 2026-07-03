@@ -35,6 +35,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -160,6 +161,7 @@ _BMAD_KNOWN_KEYS = {
     "dev_timeout_min", "devTimeoutMin",
     "review_timeout_min", "reviewTimeoutMin",
     "retro_timeout_min", "retroTimeoutMin",
+    "decider_timeout_min", "deciderTimeoutMin",
     "max_retro_turns", "maxRetroTurns",
     "default_quota_wait_min", "defaultQuotaWaitMin",
     "max_quota_waits", "maxQuotaWaits",
@@ -205,6 +207,12 @@ class BmadConfig:
     dev_timeout_min: int = 120
     review_timeout_min: int = 60
     retro_timeout_min: int = 30
+    # The cheap-model review/retro DECIDER's own per-call cap (minutes). FINITE by default (10) —
+    # hang-protection is the point: the default `qa` review/retro path calls the decider with a
+    # bounded wall clock so one wedged decider call can't hang an unattended overnight run forever.
+    # 0 = disabled/unbounded (opt-out). A hung decider yields no text, so the phase falls back to
+    # the decider's safe default answer and proceeds.
+    decider_timeout_min: int = 10
     max_retro_turns: int = 10
     default_quota_wait_min: int = 30
     max_quota_waits: int = 30
@@ -291,6 +299,11 @@ class BmadConfig:
                 if getattr(args, "retro_timeout_min", None) is not None
                 else 30
             ),
+            decider_timeout_min=(
+                args.decider_timeout_min
+                if getattr(args, "decider_timeout_min", None) is not None
+                else 10
+            ),
             max_retro_turns=getattr(args, "max_retro_turns", None) or 10,
             default_quota_wait_min=getattr(args, "default_quota_wait_min", None) or 30,
             max_quota_waits=getattr(args, "max_quota_waits", None) or 30,
@@ -345,6 +358,7 @@ class BmadConfig:
             ("dev_timeout_min", "devTimeoutMin"),
             ("review_timeout_min", "reviewTimeoutMin"),
             ("retro_timeout_min", "retroTimeoutMin"),
+            ("decider_timeout_min", "deciderTimeoutMin"),
             ("max_retro_turns", "maxRetroTurns"),
             ("default_quota_wait_min", "defaultQuotaWaitMin"),
             ("max_quota_waits", "maxQuotaWaits"),
@@ -542,27 +556,63 @@ class ResilientRunner(AgentRunner):
         name = f"run-{self._phase}-{self._story}.out" if self._story else f"run-{self._phase}.out"
         write_run_output(Path(self._activity_path).parent / name, raw)
 
+    def _invoke(self, call_kwargs: dict[str, Any]) -> AgentResult:
+        """One base-runner call, wrapped in the liveness Heartbeat for the call's lifetime.
+
+        `cwd` is the repo whose dirty-file count is the "actually producing work" signal. The
+        heartbeat is scoped to the call (not the quota wait — that surfaces via quota events).
+        """
+        if self._activity_path is not None:
+            with Heartbeat(
+                self._activity_path,
+                phase=self._phase,
+                story=self._story,
+                repo=call_kwargs.get("cwd"),
+            ):
+                return self._base.run(**call_kwargs)
+        return self._base.run(**call_kwargs)
+
     def run(self, **kwargs) -> AgentResult:  # type: ignore[override]
         label = "bmad-phase"
+        # FIX 4: after surviving a quota hit that carried a session id, RESUME that session on the
+        # retry instead of re-running the whole (possibly 40-min Opus) phase from scratch. `resume`
+        # holds the session id to add to the NEXT attempt; `fresh_fallback_used` caps the recovery
+        # at exactly ONE non-resume fallback if a resumed attempt errors non-quota (never loops).
+        resume: str | None = None
+        fresh_fallback_used = False
         while True:
-            # Beat activity.json for the lifetime of this (blocking) agent call. The phase/story
-            # context is whatever set_context tagged; `cwd` is the repo whose dirty-file count is
-            # the "actually producing work" signal. The heartbeat is scoped to the call (not the
-            # quota-wait below — that surfaces via quota events instead).
-            if self._activity_path is not None:
-                with Heartbeat(
-                    self._activity_path,
-                    phase=self._phase,
-                    story=self._story,
-                    repo=kwargs.get("cwd"),
-                ):
-                    res = self._base.run(**kwargs)
-            else:
-                res = self._base.run(**kwargs)
+            call_kwargs = dict(kwargs)
+            if resume:
+                call_kwargs["resume_session"] = resume
+            was_resume = resume is not None
+            resume = None
+
+            res = self._invoke(call_kwargs)
             self._write_raw_capture(res)
-            if not getattr(res, "quota_limited", False):
+
+            quota_limited = bool(getattr(res, "quota_limited", False))
+            # FIX 3: the battle-tested PS loop ran an independent quota probe on ANY failed phase,
+            # not just result-TEXT-flagged ones. When a result ERRORED but wasn't text-flagged as
+            # quota-limited, probe ONCE; a limited probe enters the same survive-and-retry path. A
+            # clean probe leaves the error handling unchanged. Guarded to at most one probe per
+            # failed attempt, and only for backends that actually probe (no probe on success).
+            if (
+                not quota_limited
+                and getattr(res, "is_error", False)
+                and getattr(self._base, "supports_quota_probe", False)
+                and getattr(self._base.probe_quota(), "limited", False)
+            ):
+                quota_limited = True
+
+            if not quota_limited:
+                # FIX 4 fallback: a RESUMED attempt that failed with a NON-quota error gets exactly
+                # ONE fresh (non-resume) attempt, then gives up as today (no infinite retry).
+                if was_resume and getattr(res, "is_error", False) and not fresh_fallback_used:
+                    fresh_fallback_used = True
+                    continue
                 self._record_usage(res, kwargs.get("model", ""))
                 return res
+
             recovered = survive(
                 self._base,
                 label=label,
@@ -575,7 +625,11 @@ class ResilientRunner(AgentRunner):
             if not recovered:
                 # Give up — surface the quota-limited result so the phase stops.
                 return res
-            # recovered -> retry the SAME call.
+            # recovered -> retry. If this quota-limited attempt carried a session id (and the
+            # backend supports --resume), continue the SAME session; else re-run the call.
+            sid = getattr(res, "session_id", None)
+            if sid and getattr(self._base, "supports_sessions", False):
+                resume = sid
 
     def probe_quota(self):
         return self._base.probe_quota()
@@ -725,6 +779,7 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         ("--dev-timeout-min", config.dev_timeout_min, 120),
         ("--review-timeout-min", config.review_timeout_min, 60),
         ("--retro-timeout-min", config.retro_timeout_min, 30),
+        ("--decider-timeout-min", config.decider_timeout_min, 10),
         ("--max-retro-turns", config.max_retro_turns, 10),
         ("--default-quota-wait-min", config.default_quota_wait_min, 30),
         ("--max-quota-waits", config.max_quota_waits, 30),
@@ -1122,6 +1177,9 @@ def _process_story(
     review_effort = config.effort_for("review")
     smoke_effort = config.effort_for("smoke")
     decider_effort = config.effort_for("decider")
+    # FINITE decider cap (hang-protection): the review/retro decider is a cheap one-shot call, so
+    # a wedged one must not hang the phase. 0 = disabled/unbounded.
+    decider_timeout = config.decider_timeout_min * 60 if config.decider_timeout_min > 0 else 0
 
     # --- PHASE: create-story (only a fresh 'backlog' story) ---------------------
     if st == "backlog" and not resume_tail:
@@ -1210,11 +1268,33 @@ def _process_story(
             emit(bmad_stop_event(False, res.reason or f"dev-story not green for {target.key}", cum))
             return 1, cum
         floor_pass = int(dev_gate.get("pass", floor_pass))
+        # FIX 5 — restore the dev-story completion check (bmad-loop.ps1:789-791). A green gate is
+        # NECESSARY but NOT SUFFICIENT: the agent may hit a BMAD HALT partway (unfinished tasks)
+        # yet leave a passing gate. The PS original additionally required the story FILE's Status
+        # to have reached review|done, halting otherwise so half-done work can't slip into
+        # code-review. Re-read the story file and honor its ACTUAL status instead of force-writing.
+        dev_status = (
+            story_meta(_story_text(project_root, target.key)).get("status") or ""
+        ).strip().lower()
+        if dev_status not in ("review", "done"):
+            reason = (
+                f"dev-story did not complete {target.key}: story status is "
+                f"{dev_status or '(none)'!r} (expected 'review' or 'done') despite a green gate "
+                f"— likely a BMAD HALT / unfinished tasks. Work preserved on {branch}."
+            )
+            emit(bmad_stop_event(False, reason, cum))
+            print(f"\n[HALT] dev-story for {target.key} left status {dev_status or '(none)'!r} "
+                  f"(expected 'review'|'done') — likely a BMAD HALT. Inspect {branch}.")
+            if resume_cmd:
+                print(f"       resume: {resume_cmd}")
+            return 1, cum
         _commit_if_dirty(repo, f"feat({target.key}): dev-story complete — {floor_pass} tests green")
         write_cp(f"dev-story done ({target.key})", target.key, branch)
         if honor_stop("phase", stage=f"dev-story done ({target.key})", story=target.key, branch=branch):
             return 0, cum
-        st = "review"
+        # Honor the story file's ACTUAL status (review|done) — no unconditional force-write. A
+        # 'done' story correctly skips re-review, matching PS `$st = $meta.Status` (line 797).
+        st = dev_status
 
     # --- PHASE: code-review (Q&A loop, or single-pass) --------------------------
     if st == "review":
@@ -1235,7 +1315,9 @@ def _process_story(
         else:
             res = phases.code_review(
                 resilient,
-                review_decider,
+                # Bind the FINITE decider timeout so phases.code_review's decider(...) call (which
+                # doesn't forward a timeout) can't spawn an unbounded decider process.
+                partial(review_decider, timeout_sec=decider_timeout),
                 target.key,
                 emit=emit,
                 cwd=str(repo),
@@ -1537,6 +1619,8 @@ def _run_retro(
     retro_effort = config.effort_for("retro")
     decider_effort = config.effort_for("decider")
     timeout_sec = config.retro_timeout_min * 60 if config.retro_timeout_min > 0 else 0
+    # FINITE decider cap (hang-protection) — independent of the retro phase's own per-call cap.
+    decider_timeout = config.decider_timeout_min * 60 if config.decider_timeout_min > 0 else 0
     use_sessions = getattr(runner, "supports_sessions", False)
     if hasattr(runner, "set_context"):
         runner.set_context(f"retro-epic-{epic}", None)
@@ -1584,7 +1668,12 @@ def _run_retro(
         if q is not None:
             emit(retro_question_event(epic=epic, turn=turn, q=q))
             answer = retro_decider(
-                runner, question=q, epic_scope=epic, model=decider_model, effort=decider_effort
+                runner,
+                question=q,
+                epic_scope=epic,
+                model=decider_model,
+                effort=decider_effort,
+                timeout_sec=decider_timeout,
             )
             emit(retro_answer_event(epic=epic, turn=turn, a=answer))
             continue

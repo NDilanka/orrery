@@ -306,7 +306,7 @@ def _run_loop_body(
 
     # Baseline gate (no event under dry_run, mirroring loop.ps1 ~566). The gate's string-command
     # stages run in the loop's working dir so `--cwd` targets the right repo.
-    base = run_gate(stages, str(work))
+    base = run_gate(stages, str(work), fail_fast=config.gate.fail_fast)
     base_total = base["total"]
     best_pass = base["pass"]
     best_commit = gitutil.head(work) if use_git else None
@@ -464,7 +464,7 @@ def _run_loop_body(
             emit(cache_event(cu.hit_ratio, cu.warm))
 
         # 5. GATE + integrity signals (string stages run in the loop's working dir).
-        g = run_gate(stages, str(work))
+        g = run_gate(stages, str(work), fail_fast=config.gate.fail_fast)
         emit(
             gate_event(
                 cum=cum,
@@ -932,7 +932,7 @@ def _run_mutation_audit(
         """Write the mutant, run the gate, ALWAYS restore from the durable on-disk backup."""
         try:
             target.write_text(mutated_source, encoding="utf-8")
-            g = run_gate(stages, str(work))
+            g = run_gate(stages, str(work), fail_fast=config.gate.fail_fast)
             return bool(g["green"])
         finally:
             # Restore from the ON-DISK backup (not the in-memory `original` string) — the file on

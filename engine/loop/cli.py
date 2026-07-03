@@ -243,6 +243,10 @@ def main_bmad(argv: list[str] | None = None) -> int:
         "--retro-timeout-min", type=int, default=None,
         help="epic-retro phase per-call wall-clock cap in minutes (0=disabled; default 30)",
     )
+    parser.add_argument(
+        "--decider-timeout-min", type=int, default=None,
+        help="cheap review/retro decider per-call wall-clock cap in minutes (0=disabled; default 10)",
+    )
     parser.add_argument("--default-quota-wait-min", type=int, default=None, help="fallback quota wait")
     parser.add_argument("--max-quota-waits", type=int, default=None, help="quota wait give-up backstop")
     parser.add_argument(
@@ -323,6 +327,8 @@ def main_bmad(argv: list[str] | None = None) -> int:
         config.review_timeout_min = args.review_timeout_min
     if args.retro_timeout_min is not None:
         config.retro_timeout_min = args.retro_timeout_min
+    if args.decider_timeout_min is not None:
+        config.decider_timeout_min = args.decider_timeout_min
     if args.default_quota_wait_min is not None:
         config.default_quota_wait_min = args.default_quota_wait_min
     if args.max_quota_waits is not None:
