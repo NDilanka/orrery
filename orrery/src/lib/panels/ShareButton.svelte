@@ -96,6 +96,7 @@
     <div
       class="popover floating-card"
       role="dialog"
+      aria-modal="true"
       aria-label="Share to phone"
       tabindex="-1"
       use:focusTrap={{ onClose: () => shareStore.closePopover() }}
@@ -223,8 +224,11 @@
       color var(--dur-feedback) var(--ease-standard);
   }
   .pclose:hover {
-    border-color: var(--crimson);
-    color: var(--crimson);
+    /* standard ghost-hover brighten (matches .btn-ghost, primitives.css) — closing this
+       popover is not a destructive action (that's the separate "stop sharing" danger
+       button below), so it never borrows the alert-red hue. */
+    border-color: var(--em-hi);
+    color: var(--em-hi);
   }
   .pstate {
     margin: 0;

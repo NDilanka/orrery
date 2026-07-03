@@ -22,6 +22,10 @@
   const failed = $derived(rest === 'failed-dark' || s.run.status === 'error');
   // does the last checkpoint offer a real resume path?
   const canResume = $derived(!!s.run.resumeCmd);
+  // Replay has no engine to drive — control verbs (Start/Brake/Stop/Resume/Restart/Cancel)
+  // would just no-op there, so the whole button set is withheld; playback controls live in
+  // TransportBar instead. Status narration (below) stays — it reflects real reduced state.
+  const showControls = $derived(sessionStore.transportKind !== 'replay');
 
   // Optimistic brake feedback. stop_loop writes a STOP file, but the watcher only re-reduces on
   // new LOG lines — so during a long silent phase the reduced `stopPending` (read from that file)
@@ -129,7 +133,7 @@
 </script>
 
 <div class="control" role="group" aria-label="Run control">
-  {#if !running && !banked && !failed}
+  {#if showControls && !running && !banked && !failed}
     <button
       class="btn btn-primary btn-md"
       class:working={pending === 'start'}
@@ -142,7 +146,7 @@
   <!-- a crashed loop NEVER shows a bare "Start" — it's honest about what happened
        and offers the real recovery paths: resume the banked checkpoint (if one
        exists) and/or start over. -->
-  {#if failed}
+  {#if showControls && failed}
     {#if canResume}
       <button
         class="btn btn-primary btn-md"
@@ -166,10 +170,10 @@
     >
   {/if}
 
-  {#if running}
+  {#if showControls && running && !failed}
     <button
       class="btn btn-ghost btn-md"
-      aria-label="Brake at next phase boundary"
+      aria-label="Brake · phase — stop at the next phase boundary"
       disabled={effectiveStop != null}
       onclick={() => fire('stop:phase')}
     >
@@ -177,7 +181,7 @@
     </button>
     <button
       class="btn btn-ghost btn-md"
-      aria-label="Brake at next story boundary"
+      aria-label="Brake · story — stop at the next story boundary"
       disabled={effectiveStop != null}
       onclick={() => fire('stop:story')}
     >
@@ -199,13 +203,13 @@
     >
   {/if}
 
-  {#if effectiveStop}
-    <button class="btn btn-ghost btn-md" aria-label="Cancel the pending brake" onclick={() => fire('cancel-stop')}
+  {#if showControls && effectiveStop}
+    <button class="btn btn-ghost btn-md" aria-label="Cancel brake — cancel the pending brake" onclick={() => fire('cancel-stop')}
       >Cancel brake</button
     >
   {/if}
 
-  {#if !failed && (banked || s.run.resumeCmd)}
+  {#if showControls && !failed && (banked || s.run.resumeCmd)}
     <button
       class="btn btn-primary btn-md"
       class:working={pending === 'resume'}

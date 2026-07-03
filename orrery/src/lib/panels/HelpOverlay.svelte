@@ -13,7 +13,15 @@
 
   import { focusTrap } from '../actions/focusTrap';
 
-  let { onClose }: { onClose: () => void } = $props();
+  let {
+    onClose,
+    kbdChip = '⌘K',
+  }: {
+    onClose: () => void;
+    /** platform-aware chip text ("⌘K" mac / "Ctrl K" else) — see +page.svelte, the only
+     * place `navigator` is read; threaded through so this stays a pure reference card. */
+    kbdChip?: string;
+  } = $props();
 
   // ── 1. VIEWS — the three zoom levels ─────────────────────────────────────
   const VIEWS: { term: string; desc: string }[] = [
@@ -65,15 +73,16 @@
   //    reader) without colour. Exactly 7 entries, by design — verified against
   //    +page.svelte's onKeydown (M4 sweep: added ⌘K, which M3.1 introduced after
   //    this list was last checked). ──
-  const SHORTCUTS: { keys: string[]; verb: string }[] = [
+  // $derived (not a plain const) so the platform-aware kbdChip prop is read reactively.
+  const SHORTCUTS = $derived<{ keys: string[]; verb: string }[]>([
     { keys: ['?'], verb: 'toggle this help' },
     { keys: ['Esc'], verb: 'close help · leave a Body' },
-    { keys: ['⌘K'], verb: 'open the command palette' },
+    { keys: [kbdChip], verb: 'open the command palette' },
     { keys: ['i'], verb: 'Start the loop' },
     { keys: ['b'], verb: 'Brake at the next phase' },
     { keys: ['r'], verb: 'Resume from checkpoint' },
     { keys: ['click'], verb: 'inspect a body / planet' },
-  ];
+  ]);
 
   // ── 5. READING THE CANVAS — the Observatory's visual grammar, terse ──────
   const CANVAS: string[] = [
@@ -236,8 +245,10 @@
       color var(--dur-feedback) var(--ease-standard);
   }
   .x:hover {
-    border-color: var(--crimson);
-    color: var(--crimson);
+    /* standard ghost-hover brighten (matches .btn-ghost, primitives.css) — closing this
+       panel is not a destructive action, so it never borrows the alert-red hue. */
+    border-color: var(--em-hi);
+    color: var(--em-hi);
   }
 
   /* ── section scaffold: a small mono uppercase heading + its body, reusing
