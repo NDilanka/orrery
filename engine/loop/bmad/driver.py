@@ -31,6 +31,7 @@ follow-up) are noted in the module docstring of the final report rather than cha
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import time
@@ -53,13 +54,15 @@ from loop.bmad.sprint import (
     parse_sprint_status,
     select_actionable,
 )
-from loop.bmad.story import story_meta
+from loop.bmad.story import story_acs, story_meta
 from loop.events import (
+    bmad_metrics_event,
     bmad_stop_event,
     cooperative_stop_event,
     engine_start_event,
     gate_retry_event,
     phase_timeout_event,
+    plan_check_event,
     pr_created_event,
     pr_merged_event,
     retro_answer_event,
@@ -68,7 +71,9 @@ from loop.events import (
     retro_start_event,
     start_event,
     story_start_event,
+    test_integrity_event,
     token_usage_event,
+    verify_event,
 )
 from loop.logio import (
     append_event,
@@ -181,6 +186,12 @@ _BMAD_KNOWN_KEYS = {
     "gate_stages", "gateStages",
     "dev_server_argv", "devServerArgv",
     "models", "effort",
+    # Wave-2 quality feature blocks / flags (both spellings for the flat keys).
+    "verify",
+    "test_integrity", "testIntegrity",
+    "plan_gate", "planGate",
+    "metrics_emit", "metricsEmit",
+    "gate_fail_fast", "gateFailFast",
 }
 
 
@@ -255,6 +266,33 @@ class BmadConfig:
     review_mode: str = "qa"
     smoke_mode: str = "iterative"
     retro_mode: str = "qa"
+    # --- Wave-2 quality features (all default-ON except gate_fail_fast) ------------------------
+    # FEATURE 1 — adversarial verify-before-merge: an INDEPENDENT cheap-model checker tries to
+    # REFUTE that the story diff satisfies EVERY frozen acceptance criterion, right before the PR.
+    # Breaks the generator<->reviewer correlated false-green (both were the same warm process).
+    verify_enabled: bool = True
+    verify_model: str = "haiku"
+    verify_effort: str = "low"
+    verify_timeout_min: int = 10
+    # FEATURE 2 — test-integrity check via git: catch in-place edits / deletions of PRE-EXISTING
+    # test files (the pass-count floor can't see a deleted test). Uses `git diff` vs the story
+    # baseline (survives crash/resume; no state file). A DELETION halts; a MODIFICATION is fed to
+    # the verifier (BMAD legitimately touches tests, so it is not itself a halt).
+    test_integrity_enabled: bool = True
+    test_integrity_globs: list[str] = field(
+        default_factory=lambda: ["**/*.test.*", "**/*.spec.*"]
+    )
+    test_integrity_halt_on_deletion: bool = True
+    # FEATURE 3 — plan-gate before dev-story: a bounded one-shot check that the story's ACs + Tasks
+    # are unambiguous, testable, and implementable as ONE story — insurance against grinding hours
+    # on an ambiguous spec. Reuses the decider model/effort tiers + decider_timeout_min.
+    plan_gate_enabled: bool = True
+    # FEATURE 4 — BMAD run-quality metrics: emit ONE additive `metrics` event at stop (zero model
+    # tokens — folded purely from the event stream + wall clock).
+    metrics_emit: bool = True
+    # FEATURE 5 — gate fail-fast (OPT-IN, unlike the above): once a gate stage exits non-zero, skip
+    # the later (build-heavy) stages instead of always running the whole pipeline.
+    gate_fail_fast: bool = False
     # The --loop-json config path, if one was used. Per-phase models/effort have NO CLI flag — they
     # live ONLY in this file — so a Reignite from the checkpoint `resume` string must re-point at it
     # to restore the full tuning (else it silently reverts models/effort to defaults). "" = none.
@@ -320,6 +358,9 @@ class BmadConfig:
             review_mode=getattr(args, "review_mode", None) or "qa",
             smoke_mode=getattr(args, "smoke_mode", None) or "iterative",
             retro_mode=getattr(args, "retro_mode", None) or "qa",
+            # Wave-2: the only new knobs with a CLI flag are the two default-ON disablers.
+            verify_enabled=not bool(getattr(args, "no_verify", False)),
+            plan_gate_enabled=not bool(getattr(args, "no_plan_gate", False)),
             loop_json=getattr(args, "loop_json", None) or "",
         )
 
@@ -389,6 +430,47 @@ class BmadConfig:
             kwargs["models"] = {**DEFAULT_MODELS, **dict(b["models"])}
         if "effort" in b:
             kwargs["effort"] = {**DEFAULT_EFFORTS, **dict(b["effort"])}
+        # --- Wave-2 quality feature blocks (nested) + flat flags (both spellings) --------------
+        # FEATURE 1: `bmad.verify` = { enabled, model, effort, timeoutMin }
+        verify = resolve(b, "verify")
+        if isinstance(verify, dict):
+            ve = resolve(verify, "enabled")
+            if ve is not None:
+                kwargs["verify_enabled"] = bool(ve)
+            vm = resolve(verify, "model")
+            if vm is not None:
+                kwargs["verify_model"] = vm
+            vf = resolve(verify, "effort")
+            if vf is not None:
+                kwargs["verify_effort"] = vf
+            vt = resolve(verify, "timeout_min", "timeoutMin")
+            if vt is not None:
+                kwargs["verify_timeout_min"] = int(vt)
+        # FEATURE 2: `bmad.testIntegrity` = { enabled, globs, haltOnDeletion }
+        ti = resolve(b, "test_integrity", "testIntegrity")
+        if isinstance(ti, dict):
+            te = resolve(ti, "enabled")
+            if te is not None:
+                kwargs["test_integrity_enabled"] = bool(te)
+            tg = resolve(ti, "globs")
+            if tg is not None:
+                kwargs["test_integrity_globs"] = list(tg)
+            th = resolve(ti, "halt_on_deletion", "haltOnDeletion")
+            if th is not None:
+                kwargs["test_integrity_halt_on_deletion"] = bool(th)
+        # FEATURE 3: `bmad.planGate` = { enabled }
+        pg = resolve(b, "plan_gate", "planGate")
+        if isinstance(pg, dict):
+            pe = resolve(pg, "enabled")
+            if pe is not None:
+                kwargs["plan_gate_enabled"] = bool(pe)
+        # FEATURE 4/5: flat booleans.
+        me = resolve(b, "metrics_emit", "metricsEmit")
+        if me is not None:
+            kwargs["metrics_emit"] = bool(me)
+        ff = resolve(b, "gate_fail_fast", "gateFailFast")
+        if ff is not None:
+            kwargs["gate_fail_fast"] = bool(ff)
         return cls(**kwargs)
 
 
@@ -762,6 +844,13 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         parts.append("--no-smoke")
     if config.auto_rollback:
         parts.append("--auto-rollback")
+    # Wave-2: the two default-ON quality gates each have a disabler flag; round-trip it only when
+    # the user turned the gate OFF (the flagless knobs — verify model/effort/timeout, testIntegrity,
+    # metricsEmit, gateFailFast — ride the --loop-json re-point above, like models/effort).
+    if not config.verify_enabled:
+        parts.append("--no-verify")
+    if not config.plan_gate_enabled:
+        parts.append("--no-plan-gate")
     if config.review_mode and config.review_mode != "qa":
         parts += ["--review-mode", config.review_mode]
     if config.smoke_mode and config.smoke_mode != "iterative":
@@ -910,7 +999,7 @@ def _run_gate(
     """
     from loop.gate import run_gate
 
-    g = run_gate(config.gate_stages, str(repo))
+    g = run_gate(config.gate_stages, str(repo), fail_fast=config.gate_fail_fast)
     for attempt in range(1, max(0, config.gate_flaky_retries) + 1):
         if g.get("green") or not _is_flaky_shape(g, config.gate_flaky_max_fail):
             return g
@@ -923,7 +1012,7 @@ def _run_gate(
                     max_fail=config.gate_flaky_max_fail,
                 )
             )
-        g = run_gate(config.gate_stages, str(repo))
+        g = run_gate(config.gate_stages, str(repo), fail_fast=config.gate_fail_fast)
     return g
 
 
@@ -939,6 +1028,33 @@ def _run_inner(
     emit: Callable[[dict[str, Any]], None],
 ) -> int:
     cum = 0.0
+    # FEATURE 4 — run-quality metrics. Wrap `emit` so we (a) keep an in-memory copy of every event
+    # for the summary and (b) inject ONE additive `metrics` event immediately BEFORE the terminal
+    # bmad `stop` event, on EVERY exit path (ok or halt), computed purely from the stream + the
+    # wall clock (zero model tokens). The BMAD driver injects no clock, so wall-clock duration uses
+    # time.monotonic() (consistent with the merge-wait polling above), never time.time().
+    _run_start = time.monotonic()
+    _collected: list[dict[str, Any]] = []
+    _orig_emit = emit
+    _metrics_emitted = {"v": False}
+
+    def emit(event: dict[str, Any]) -> None:  # noqa: F811 — intentionally shadows the param
+        if (
+            config.metrics_emit
+            and not _metrics_emitted["v"]
+            and isinstance(event, dict)
+            and event.get("event") == "stop"
+            and "ok" in event
+        ):
+            _metrics_emitted["v"] = True
+            m = _compute_bmad_metrics(
+                _collected, stop_event=event, duration_sec=time.monotonic() - _run_start
+            )
+            _orig_emit(m)
+            _collected.append(m)
+        _orig_emit(event)
+        _collected.append(event)
+
     resilient = ResilientRunner(
         base_runner,
         emit=emit,
@@ -1122,6 +1238,372 @@ def _run_inner(
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Wave-2 quality gates: plan-gate (before dev), test-integrity (before smoke),
+# adversarial verify (before PR), + the run-quality metrics summary.
+# ---------------------------------------------------------------------------
+
+# '## Tasks' / '## Tasks / Subtasks' section, up to the next '## ' heading or EOF.
+_TASKS_RX = re.compile(
+    r"^##\s*Tasks?(?:\s*/\s*Subtasks?)?\s*\r?\n(.+?)(?=^\#\#\s|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def _story_tasks(text: str | None, *, max_chars: int = 2500) -> str:
+    """The story's ``## Tasks`` section as raw text, truncated (mirrors ``story_acs``)."""
+    if not text:
+        return ""
+    m = _TASKS_RX.search(text)
+    if not m:
+        return ""
+    t = m.group(1).strip()
+    return (t[:max_chars] + " …(truncated)") if len(t) > max_chars else t
+
+
+# FEATURE 3 — plan-gate: a bounded, single-turn readiness check on the story's ACs + Tasks.
+_PLAN_GATE_PROMPT_TEMPLATE = (
+    "You are an INDEPENDENT planning reviewer. You have NOT seen any implementation — judge ONLY "
+    "the story's Acceptance Criteria and Tasks below.\n"
+    "Question: are they unambiguous, testable, and implementable as ONE story (not secretly "
+    "several stories, not missing information a developer would have to invent)?\n\n"
+    "=== STORY {story} ===\n"
+    "--- Acceptance Criteria ---\n{acs}\n\n"
+    "--- Tasks ---\n{tasks}\n\n"
+    "Reply with EXACTLY one line and nothing else:\n"
+    "  PLAN_OK\n"
+    "or\n"
+    "  BLOCKED: <one-line reason>\n"
+    "Default to PLAN_OK unless there is a concrete, blocking ambiguity/untestability/oversize "
+    "problem."
+)
+
+
+def _run_plan_gate(
+    config: BmadConfig,
+    resilient: ResilientRunner,
+    target: Story,
+    story_text: str,
+    *,
+    emit: Callable[[dict[str, Any]], None],
+    cwd,
+    cum: float,
+    resume_cmd: str,
+) -> tuple[int | None, float]:
+    """FEATURE 3 — plan-gate before dev-story. Returns ``(exit_or_None, cost)``.
+
+    An explicit ``BLOCKED:`` halts (return 1); ``PLAN_OK``, an unparseable reply, or an
+    errored/timed-out call all FAIL-OPEN and proceed (return ``None``). Reuses the decider
+    model/effort tiers + ``decider_timeout_min``, single-turn.
+    """
+    acs = story_acs(story_text) or "(no Acceptance Criteria section found)"
+    tasks = _story_tasks(story_text) or "(no Tasks section found)"
+    timeout = config.decider_timeout_min * 60 if config.decider_timeout_min > 0 else 0
+    resilient.set_context("plan-gate", target.key)
+    res = resilient.run(
+        prompt=_PLAN_GATE_PROMPT_TEMPLATE.format(story=target.key, acs=acs, tasks=tasks),
+        model=config.model_for("decider"),
+        effort=config.effort_for("decider"),
+        allowed_tools=[],
+        permission_mode="plan",
+        max_turns=1,
+        cwd=cwd,
+        timeout_sec=timeout,
+    )
+    cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if (
+        getattr(res, "timed_out", False)
+        or getattr(res, "is_error", False)
+        or getattr(res, "parse_failed", False)
+    ):
+        emit(plan_check_event(
+            story=target.key, ok=True, verdict="inconclusive",
+            reason="plan-gate call errored/timed out; proceeding", cum=cum + cost,
+        ))
+        return None, cost
+    text = getattr(res, "text", "") or ""
+    bm = re.search(r"BLOCKED:\s*(.*)", text, re.IGNORECASE)
+    if bm:
+        reason = bm.group(1).strip() or "story judged not ready to implement as one story"
+        emit(plan_check_event(
+            story=target.key, ok=False, verdict="blocked", reason=reason, cum=cum + cost,
+        ))
+        emit(bmad_stop_event(
+            False,
+            f"plan-gate BLOCKED {target.key}: {reason}. Its ACs/Tasks are ambiguous, untestable, "
+            f"or too large for one story — split/clarify it, then resume: {resume_cmd}",
+            cum + cost,
+        ))
+        print(f"\n[HALT] plan-gate BLOCKED {target.key}: {reason}")
+        if resume_cmd:
+            print(f"       resume: {resume_cmd}")
+        return 1, cost
+    if "PLAN_OK" in text:
+        emit(plan_check_event(story=target.key, ok=True, verdict="ok", reason=None, cum=cum + cost))
+    else:
+        emit(plan_check_event(
+            story=target.key, ok=True, verdict="inconclusive",
+            reason="no PLAN_OK/BLOCKED verdict parsed; proceeding", cum=cum + cost,
+        ))
+    return None, cost
+
+
+# FEATURE 2 — test-integrity: git-based tamper check on PRE-EXISTING test files.
+def _test_globs_match(path: Any, globs: list[str]) -> bool:
+    """True when ``path`` (repo-relative) is a test file per ``globs``, excluding node_modules.
+
+    Each glob's basename tail (e.g. ``**/*.test.*`` -> ``*.test.*``) is matched against the file's
+    basename so a test file at ANY depth matches; the full glob is also tried against the whole
+    path for anchored patterns.
+    """
+    p = str(path).replace("\\", "/")
+    if "node_modules/" in p or p.startswith("node_modules"):
+        return False
+    base = p.rsplit("/", 1)[-1]
+    for g in globs:
+        tail = str(g).rsplit("/", 1)[-1]
+        if fnmatch.fnmatch(base, tail) or fnmatch.fnmatch(p, str(g)):
+            return True
+    return False
+
+
+def _run_test_integrity(
+    config: BmadConfig,
+    target: Story,
+    *,
+    repo: Path,
+    project_root: Path,
+    emit: Callable[[dict[str, Any]], None],
+    cum: float,
+    resume_cmd: str,
+) -> tuple[int | None, list[str]]:
+    """FEATURE 2 — test-integrity check via git. Returns ``(exit_or_None, modified_test_files)``.
+
+    Diffs the story baseline_commit -> HEAD, filtered to the test globs. A DELETED pre-existing
+    test file is a tamper (halt, unless ``halt_on_deletion`` is off -> warn+proceed); a MODIFIED
+    one is NOT a halt (BMAD legitimately edits tests) but is returned so the verifier scrutinizes
+    it. No baseline -> skip silently (emit nothing, return ``(None, [])``).
+    """
+    base_commit = story_meta(_story_text(project_root, target.key)).get("baseline")
+    if not base_commit:
+        return None, []
+    deleted: list[str] = []
+    modified: list[str] = []
+    for code, path in gitutil.diff_name_status(repo, base_commit):
+        if not _test_globs_match(path, config.test_integrity_globs):
+            continue
+        if code == "D":
+            deleted.append(path)
+        elif code in ("M", "R", "C"):  # rename/copy = OK, treat as modified; A (added) ignored
+            modified.append(path)
+    if not deleted and not modified:
+        return None, []
+    ok = not deleted
+    emit(test_integrity_event(
+        story=target.key, deleted=deleted, modified=modified, ok=ok, cum=cum,
+    ))
+    if deleted and config.test_integrity_halt_on_deletion:
+        files = ", ".join(deleted)
+        emit(bmad_stop_event(
+            False,
+            f"test-integrity: {target.key} DELETED pre-existing test file(s): {files}. A story "
+            f"must not remove existing tests to reach green. Restore them (or justify + re-run), "
+            f"then resume: {resume_cmd}",
+            cum,
+        ))
+        print(f"\n[HALT] test-integrity: {target.key} deleted pre-existing test(s): {files}")
+        if resume_cmd:
+            print(f"       resume: {resume_cmd}")
+        return 1, modified
+    if deleted:
+        print(
+            f"  [warn] {target.key} deleted pre-existing test(s): {', '.join(deleted)} "
+            f"(test_integrity_halt_on_deletion off — proceeding)"
+        )
+    return None, modified
+
+
+# FEATURE 1 — adversarial verify-before-merge.
+_VERIFY_MAX_DIFF = 60000
+_VERIFY_PROMPT_TEMPLATE = (
+    "You are an INDEPENDENT adversarial verifier. You have NOT seen the implementation "
+    "conversation, the developer's reasoning, or the code reviewer's notes — you see ONLY the "
+    "story's FROZEN Acceptance Criteria and the diff below.\n"
+    "Your job is to REFUTE, not to rubber-stamp: actively try to prove the diff does NOT satisfy "
+    "EVERY acceptance criterion. Over-weight NEGATIVE / 'DO NOT' criteria — a diff that does a "
+    "forbidden thing FAILS even if everything else passes. Assume nothing the diff does not show; "
+    "you MAY read files in the repo to confirm a claim.\n\n"
+    "=== STORY {story} — FROZEN ACCEPTANCE CRITERIA ===\n{acs}\n\n"
+    "{tests_note}"
+    "=== DIFF (git diff --stat + patch, baseline_commit -> HEAD) ===\n{diff}\n\n"
+    "Check EACH acceptance criterion against the diff. Then reply with EXACTLY one FINAL line, "
+    "and nothing after it:\n"
+    "  VERDICT: PASS\n"
+    "or\n"
+    "  VERDICT: REFUTE — <one-line concrete reason citing the AC number>\n"
+    "Only answer PASS if you could NOT refute any criterion."
+)
+
+
+def _story_diff(repo: Path, base: str) -> str:
+    """``git diff --stat`` + patch, baseline -> HEAD, truncated to ~60k chars with a marker."""
+    stat = gitutil._git(["diff", "--stat", base, "HEAD"], repo)
+    patch = gitutil._git(["diff", base, "HEAD"], repo)
+    stat_txt = (stat.stdout or "") if stat.returncode == 0 else ""
+    patch_txt = (patch.stdout or "") if patch.returncode == 0 else ""
+    combined = (stat_txt + "\n" + patch_txt).strip()
+    if len(combined) > _VERIFY_MAX_DIFF:
+        combined = combined[:_VERIFY_MAX_DIFF] + "\n[diff truncated]"
+    return combined
+
+
+def _run_verify(
+    config: BmadConfig,
+    resilient: ResilientRunner,
+    target: Story,
+    story_text: str,
+    *,
+    repo: Path,
+    project_root: Path,
+    modified_tests: list[str],
+    emit: Callable[[dict[str, Any]], None],
+    cwd,
+    cum: float,
+    branch: str,
+    resume_cmd: str,
+) -> tuple[int | None, float]:
+    """FEATURE 1 — adversarial verify-before-merge. Returns ``(exit_or_None, cost)``.
+
+    An independent refute-biased checker (its own cheap model, single-turn) tries to break the
+    claim that the diff satisfies EVERY frozen acceptance criterion. ``VERDICT: REFUTE`` blocks
+    the PR (halt, return 1). ``VERDICT: PASS`` proceeds. No baseline diff -> ``skipped``; no
+    parseable verdict / errored / timed-out call -> ``inconclusive``; both FAIL-OPEN (proceed),
+    because the external gate + browser smoke have already passed and a wedged verifier must not
+    strand a good story.
+    """
+    base_commit = story_meta(_story_text(project_root, target.key)).get("baseline")
+    if not base_commit:
+        emit(verify_event(
+            story=target.key, verdict="skipped",
+            reason="no baseline_commit recorded; cannot diff to verify", cum=cum,
+        ))
+        return None, 0.0
+    acs = story_acs(story_text) or "(no Acceptance Criteria section found)"
+    diff = _story_diff(repo, base_commit) or "(empty diff)"
+    tests_note = ""
+    if modified_tests:
+        tests_note = (
+            "NOTE: this story MODIFIED these PRE-EXISTING test files — scrutinize them for "
+            "WEAKENED, skipped, or deleted assertions that could mask a real failure:\n- "
+            + "\n- ".join(modified_tests)
+            + "\n\n"
+        )
+    prompt = _VERIFY_PROMPT_TEMPLATE.format(
+        story=target.key, acs=acs, tests_note=tests_note, diff=diff,
+    )
+    timeout = config.verify_timeout_min * 60 if config.verify_timeout_min > 0 else 0
+    resilient.set_context("adversarial-verify", target.key)
+    res = resilient.run(
+        prompt=prompt,
+        model=config.verify_model,
+        effort=config.verify_effort,
+        allowed_tools=["Read", "Grep", "Glob"],
+        permission_mode="plan",
+        max_turns=1,
+        cwd=cwd,
+        timeout_sec=timeout,
+    )
+    cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
+    if (
+        getattr(res, "timed_out", False)
+        or getattr(res, "is_error", False)
+        or getattr(res, "parse_failed", False)
+    ):
+        emit(verify_event(
+            story=target.key, verdict="inconclusive",
+            reason="verifier call errored/timed out; fail-open (gate + smoke already passed)",
+            cum=cum + cost,
+        ))
+        return None, cost
+    text = getattr(res, "text", "") or ""
+    matches = list(re.finditer(r"VERDICT:\s*(PASS|REFUTE)[^\n]*", text, re.IGNORECASE))
+    if not matches:
+        emit(verify_event(
+            story=target.key, verdict="inconclusive",
+            reason="no parseable VERDICT line; fail-open", cum=cum + cost,
+        ))
+        return None, cost
+    last = matches[-1]
+    if last.group(1).upper() == "REFUTE":
+        reason = re.sub(
+            r"^VERDICT:\s*REFUTE\s*[—:\-]*\s*", "", last.group(0), flags=re.IGNORECASE
+        ).strip() or "diff does not satisfy the frozen acceptance criteria"
+        emit(verify_event(story=target.key, verdict="refute", reason=reason, cum=cum + cost))
+        emit(bmad_stop_event(
+            False,
+            f"adversarial verify REFUTED {target.key} on {branch}: {reason}. The diff does not "
+            f"satisfy its frozen acceptance criteria — fix it (or, if the verifier is wrong, "
+            f"re-run), then resume: {resume_cmd}",
+            cum + cost,
+        ))
+        print(f"\n[HALT] verify REFUTED {target.key}: {reason}")
+        print(f"       branch: {branch}")
+        if resume_cmd:
+            print(f"       resume: {resume_cmd}")
+        return 1, cost
+    emit(verify_event(story=target.key, verdict="pass", reason=None, cum=cum + cost))
+    return None, cost
+
+
+def _compute_bmad_metrics(
+    events: list[dict[str, Any]],
+    *,
+    stop_event: dict[str, Any],
+    duration_sec: float,
+) -> dict[str, Any]:
+    """Fold the emitted event stream into the additive BMAD ``metrics`` event (zero tokens)."""
+    counts: dict[Any, int] = {}
+    inp = out = cr = cc = 0
+    gate_reds = 0
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        k = ev.get("event")
+        counts[k] = counts.get(k, 0) + 1
+        if k == "token-usage":
+            inp += int(ev.get("input", 0) or 0)
+            out += int(ev.get("output", 0) or 0)
+            cr += int(ev.get("cacheRead", 0) or 0)
+            cc += int(ev.get("cacheCreation", 0) or 0)
+        elif k == "dev-gate" and not ev.get("green"):
+            gate_reds += 1
+    denom = cr + inp
+    hit = (cr / float(denom)) if denom else 0.0
+    stop_ok = bool(stop_event.get("ok"))
+    return bmad_metrics_event(
+        stories_completed=counts.get("pr-merged", 0),
+        stories_halted=0 if stop_ok else 1,
+        dev_gates=counts.get("dev-gate", 0),
+        reviews=counts.get("review-complete", 0),
+        smoke_iters=counts.get("smoke-iter", 0),
+        prs_created=counts.get("pr-created", 0),
+        prs_merged=counts.get("pr-merged", 0),
+        retros=counts.get("retro-complete", 0),
+        plan_checks=counts.get("plan-check", 0),
+        verifies=counts.get("verify", 0),
+        gate_reds=gate_reds,
+        flaky_retries=counts.get("gate-retry", 0),
+        quota_waits=counts.get("quota-wait", 0),
+        input_tokens=inp,
+        output_tokens=out,
+        cache_read_tokens=cr,
+        cache_creation_tokens=cc,
+        hit_ratio=hit,
+        cum_usd=float(stop_event.get("cum", 0.0) or 0.0),
+        duration_sec=duration_sec,
+    )
+
+
 def _process_story(
     config: BmadConfig,
     target: Story,
@@ -1148,6 +1630,9 @@ def _process_story(
     resume_tail = target.status == "done"  # only First-UnmergedDone yields a 'done' target
     epic = target.epic or (target.key.split("-")[0])
     branch = f"feat/story-{target.key}"
+    # FEATURE 2 -> FEATURE 1: pre-existing test files this story edited in place (computed by the
+    # test-integrity check before smoke), fed to the adversarial verifier before the PR.
+    modified_tests: list[str] = []
 
     emit(story_start_event(story=target.key, status=target.raw_status, epic=epic, index=si))
     print(f"\n######## EPIC {epic} — STORY {target.key} ({target.raw_status}) — #{si} ########")
@@ -1219,6 +1704,18 @@ def _process_story(
 
     # --- PHASE: dev-story (ready / in-progress) ---------------------------------
     if st in ("ready", "ready-for-dev", "in-progress"):
+        # FEATURE 3 — plan-gate: bounded readiness check BEFORE spending hours in dev-story. Runs
+        # on the ready-for-dev / resumed-in-progress entry (NOT the resume-tail path, which is
+        # 'done' and skips this whole block). A BLOCKED verdict halts; everything else fails open.
+        if config.plan_gate_enabled:
+            pg_exit, pg_cost = _run_plan_gate(
+                config, resilient, target, text,
+                emit=emit, cwd=str(repo), cum=cum, resume_cmd=resume_cmd,
+            )
+            cum += pg_cost
+            resilient.set_cum(cum)
+            if pg_exit is not None:
+                return pg_exit, cum
         resilient.set_context("dev-story", target.key)
         res = phases.dev_story(
             resilient,
@@ -1349,6 +1846,16 @@ def _process_story(
         if honor_stop("phase", stage=f"code-review done ({target.key})", story=target.key, branch=branch):
             return 0, cum
 
+    # --- test-integrity (git vs baseline) — before smoke, so tampering is caught before paying
+    #     for the smoke phase. A DELETED pre-existing test halts; MODIFIED ones flow to verify.
+    if config.test_integrity_enabled:
+        ti_exit, modified_tests = _run_test_integrity(
+            config, target,
+            repo=repo, project_root=project_root, emit=emit, cum=cum, resume_cmd=resume_cmd,
+        )
+        if ti_exit is not None:
+            return ti_exit, cum
+
     # --- PHASE: browser-smoke (unless no_smoke) ---------------------------------
     if not config.no_smoke:
         resilient.set_context("browser-smoke", target.key)
@@ -1394,6 +1901,20 @@ def _process_story(
         write_cp(f"browser-smoke done ({target.key})", target.key, branch)
         if honor_stop("phase", stage=f"browser-smoke done ({target.key})", story=target.key, branch=branch):
             return 0, cum
+
+    # --- FEATURE 1: adversarial verify-before-merge — an INDEPENDENT refute-biased checker tries
+    #     to break the claim that the diff satisfies every frozen AC, right before push/PR. REFUTE
+    #     blocks the PR (halt); skipped/inconclusive fail open. Runs on the resume-tail too.
+    if config.verify_enabled:
+        vf_exit, vf_cost = _run_verify(
+            config, resilient, target, text,
+            repo=repo, project_root=project_root, modified_tests=modified_tests,
+            emit=emit, cwd=str(repo), cum=cum, branch=branch, resume_cmd=resume_cmd,
+        )
+        cum += vf_cost
+        resilient.set_cum(cum)
+        if vf_exit is not None:
+            return vf_exit, cum
 
     # --- PHASE: PR (always) -----------------------------------------------------
     gitutil._git(["push", "-u", "origin", branch], repo)

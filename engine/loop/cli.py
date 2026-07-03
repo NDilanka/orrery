@@ -217,6 +217,16 @@ def main_bmad(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-retro", action="store_true", help="skip epic retrospectives")
     parser.add_argument("--no-smoke", action="store_true", help="skip the browser-smoke phase")
     parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="disable the adversarial verify-before-merge check (default ON)",
+    )
+    parser.add_argument(
+        "--no-plan-gate",
+        action="store_true",
+        help="disable the plan-gate readiness check before dev-story (default ON)",
+    )
+    parser.add_argument(
         "--auto-rollback",
         action="store_true",
         help="on a test regression, git reset --hard the story's baseline_commit (else report only)",
@@ -305,6 +315,10 @@ def main_bmad(argv: list[str] | None = None) -> int:
         config.no_retro = True
     if args.no_smoke:
         config.no_smoke = True
+    if args.no_verify:
+        config.verify_enabled = False
+    if args.no_plan_gate:
+        config.plan_gate_enabled = False
     if args.auto_rollback:
         config.auto_rollback = True
     if args.dry_run:
