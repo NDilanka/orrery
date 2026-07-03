@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from conftest import REPO_ROOT
 
@@ -281,6 +281,11 @@ def test_seed_webapp_qa_loop_json_intra_loop_paths_are_relative():
     assert args[args.index("--state-dir") + 1] == ".loop"
     assert args[args.index("--manifest") + 1] == "ac-manifest.json"
     assert args[args.index("--loop-json") + 1] == "loop.json"
-    assert Path(args[args.index("--project-root") + 1]).is_absolute()
-    assert Path(data["qa"]["storageState"]).is_absolute()
+    # The seed ships Windows-style placeholder paths (C:/path/to/...), which POSIX
+    # Path.is_absolute() rejects — accept either flavor of absolute.
+    def _abs(p: str) -> bool:
+        return PureWindowsPath(p).is_absolute() or PurePosixPath(p).is_absolute()
+
+    assert _abs(args[args.index("--project-root") + 1])
+    assert _abs(data["qa"]["storageState"])
     assert data["qa"]["storageState"].endswith("/.auth/storage-state.json")

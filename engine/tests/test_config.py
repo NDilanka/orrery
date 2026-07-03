@@ -252,7 +252,7 @@ def _external_regression_loop_json(loop_dir: Path) -> Path:
                 "start": {
                     "program": "loop",
                     "args": [
-                        "--cwd", "C:/path/to/your-webapp",
+                        "--cwd", str(loop_dir / "your-webapp").replace("\\", "/"),
                         "--state-dir", ".loop",
                         "--loop-json", "loop.json",
                     ],
