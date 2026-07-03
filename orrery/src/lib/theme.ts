@@ -107,16 +107,24 @@ const EM_TOKEN_MAP: Record<keyof EmTiers, string> = {
 // oklch() grayscale primitives (brass/cyan/amber/crimson/ember/green/frost/cacheTeal/
 // horizonRose/haiku/sonnet/opus/ghostBrass) — the values below are the sRGB hex computed
 // offline from each token's new oklch() (or, for --ghost-brass, the color channel of its new
-// rgba(255,255,255,.12)), by the same OKLab matrices contrast.test.ts uses. void/starlight/
-// auditor/hairline are untouched (kept literal in tokens.css, not part of the M4 repoint).
+// rgba(255,255,255,.12)), by the same OKLab matrices contrast.test.ts uses. void/auditor/
+// hairline are untouched (kept literal in tokens.css, not part of the M4 repoint).
+//
+// White-point raise (2026-07-03, docs/ui-modernization-plan.md §5, owner: "too grayish — use
+// pure white when needed"): --em-hi lifted from oklch(0.92 0.005 265)/#e3e4e8 to
+// oklch(0.985 0.002 265)/#f9fafb, and --starlight (kept literal in tokens.css) lifted in
+// lockstep from #eaf0ff to #f4faff (same oklch chroma/hue, L 0.955 -> 0.985) so the canvas
+// light source matches the new DOM white point. Every FALLBACK entry that mirrors one of
+// those two tokens (starlight, green, status.run/ok core, em.hi) was recomputed below.
 export const FALLBACK: ThemeColors = {
   void: 0x070912,
   brass: 0xc1bdb7, // oklch(0.8 0.01 85) — was gold #c9a24b
-  starlight: 0xeaf0ff,
+  starlight: 0xf4faff, // white-point raise (2026-07-03) — was #eaf0ff (oklch L≈0.955)
   ember: 0x997c3c, // var(--status-warn-base) = oklch(0.6 0.09 85) — was orange #ff7a3c
   cyan: 0xd4d7de, // oklch(0.88 0.01 265) — was cyan #46e0ff
   amber: 0xeab532, // var(--status-warn-core) = oklch(0.8 0.15 85) — unchanged resolved color
-  green: 0xe3e4e8, // var(--em-hi) = oklch(0.92 0.005 265) — was green #5bf09b
+  green: 0xf9fafb, // var(--em-hi) = oklch(0.985 0.002 265) — white-point raise (2026-07-03),
+  // was #e3e4e8 (oklch(0.92 0.005 265)); originally green #5bf09b pre-M4.1
   crimson: 0xf75c66, // var(--status-err-core) = oklch(0.68 0.19 20) — unchanged resolved color
   indigo: 0x0b0d12, // oklch(0.16 0.01 265) — was #1a1740
   auditor: 0xf4f8ff,
@@ -131,14 +139,15 @@ export const FALLBACK: ThemeColors = {
   status: {
     // run/ok now resolve identically (both var(--em-hi) / oklch(0.55 0.008 265) base) —
     // grayscale, distinguished by glyph/shape, never hue alone.
-    run: { core: 0xe3e4e8, base: 0x6f7276 },
-    ok: { core: 0xe3e4e8, base: 0x6f7276 },
+    // core: white-point raise (2026-07-03) — was 0xe3e4e8, var(--em-hi)'s old resolved color
+    run: { core: 0xf9fafb, base: 0x6f7276 },
+    ok: { core: 0xf9fafb, base: 0x6f7276 },
     warn: { core: 0xeab532, base: 0x997c3c }, // unchanged — still the one amber alert hue
     err: { core: 0xf75c66, base: 0x984649 }, // unchanged — still the one red alert hue
     idle: { core: 0x787a7f, base: 0x383b3f }, // var(--em-low) / oklch(0.35 0.008 265)
   },
   em: {
-    hi: 0xe3e4e8, // oklch(0.92 0.005 265)
+    hi: 0xf9fafb, // oklch(0.985 0.002 265) — white-point raise (2026-07-03), was oklch(0.92 0.005 265)/#e3e4e8
     mid: 0x9c9ea4, // oklch(0.70 0.008 265)
     low: 0x787a7f, // oklch(0.58 0.008 265) — lifted from the plan's literal .50 (4.5:1 floor)
     faint: 0x616368, // oklch(0.50 0.008 265) — lifted from the plan's literal .38 (3:1 floor)
