@@ -70,12 +70,14 @@ is supported and exercised by the demo fixture `static/fixtures/bmad-log.jsonl`.
 
 ## Verification
 
-- **41** Rust `cargo test` — including a **cross-language reducer-parity** suite
+- **81** Rust `#[test]`s (`cargo test`) — including a **cross-language reducer-parity** suite
   (`src-tauri/tests/golden_parity.rs`) that asserts the Rust reducer matches committed
   `RunState` goldens.
-- **7** Vitest tests (`src/lib/reduce.golden.test.ts`) — the TS reducer asserts the **same**
-  goldens, so any drift between the Rust and TS reducers fails a test.
-- **3** Playwright E2E (`e2e/`) over browser replay; `npm run check` (svelte-check) is clean.
+- **100+** Vitest tests across 10 files under `src/lib` — including `reduce.golden.test.ts`,
+  where the TS reducer asserts the **same** goldens, so any drift between the Rust and TS
+  reducers fails a test.
+- **5** Playwright E2E smoke tests (`e2e/smoke.spec.ts`) over browser replay; `npm run check`
+  (svelte-check) is clean.
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml

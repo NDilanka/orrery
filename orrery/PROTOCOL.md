@@ -407,4 +407,4 @@ gate is green when every stage passes. That is the whole rule — it is not conf
 exit-code rule above), so it has been REMOVED; a `loop.json` still carrying it parses fine and
 gets a gentle "retired, no effect" stderr notice instead of an unknown-key warning.
 
-Seeded loop dirs (`loops/<id>/`): `hello` (generic, self-contained Python engine), `bmad` (runs the live `loop-bmad` engine against an external project; its tuning is the `bmad` block of its `loop.json`), `brain2-qa` (runs `loop-qa`; tuning in its `qa` block) and `brain2-regression` (generic, Playwright e2e gate). `roman` & `calc` ship as replay-only fixtures; `static/fixtures/bmad-log.jsonl` is a recorded BMAD run for dev/replay.
+Seeded loop dirs (`loops/<id>/`): `hello` (generic, self-contained Python engine), `bmad` (template: runs the live `loop-bmad` engine against an external project; its tuning is the `bmad` block of its `loop.json`) and `webapp-qa` (template: runs `loop-qa`; tuning in its `qa` block). `roman` & `calc` ship as replay-only fixtures; `static/fixtures/bmad-log.jsonl` is a recorded BMAD run for dev/replay.

@@ -5,6 +5,10 @@
 // copy-pasted separately in transport/tauri.ts and stores/cosmos.svelte.ts (and baked implicitly
 // into transport/index.ts's bmad seed stateDir) — one source of truth now.
 //
-// LOCAL override for dev; a packaged build should resolve this via a Tauri path API instead
-// (out of scope here — the constant stays, runtime resolution doesn't).
-export const DEFAULT_LOOPS_DIR = 'D:/dev/loop/orrery/loops';
+// Resolved at build time by vite.config.js: VITE_LOOPS_DIR (env / orrery/.env) when set,
+// otherwise `<repo>/orrery/loops` of the checkout being built — portable across machines.
+// A packaged build should resolve this via a Tauri path API instead (out of scope here —
+// the constant stays, runtime resolution doesn't).
+declare const __ORRERY_LOOPS_DIR__: string;
+
+export const DEFAULT_LOOPS_DIR: string = __ORRERY_LOOPS_DIR__;

@@ -40,11 +40,11 @@ orrery/loops/**/HANDOFF.md
 # Stray engine state dir at repo root (accidental in-repo loop runs)
 /.loop/
 
-# Local PowerShell harness drivers — NOT part of the public repo (the maintained
-# engine is the Python package in engine/; the PS reference impl lives in legacy/).
-# Kept out of tracking so the repo root stays free of *.ps1.
-/bmad-loop.ps1
-/stop-loop.ps1
+# Environment files — secrets never get committed
+.env*
+
+# Local screenshot dumps from the orrery UI harness
+orrery/shots-*/
 
 # Playwright (orrery e2e) artifacts
 test-results/

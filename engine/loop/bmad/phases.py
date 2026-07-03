@@ -632,14 +632,32 @@ def _smoke_ac_names(report: Any, key: str) -> list[str] | None:
     return names
 
 
-def _build_smoke_prompt(url: str, story: str, cwd, acs: str, changed=None) -> str:
+def _build_smoke_prompt(
+    url: str,
+    story: str,
+    cwd,
+    acs: str,
+    changed=None,
+    dev_command: str = "",
+    gate_commands=None,
+) -> str:
     """Build the AC-aware smoke prompt (``bmad-loop.ps1`` ~549-579).
 
     When ``changed`` (this story's files changed vs its ``baseline_commit``) is given, a block is
     injected naming those files + their likely routes so the agent drives THIS story's ACTUAL code
     instead of a generic health check. ``changed=None`` -> the prompt is identical to before plus
     the always-on ``SMOKE_ACS:`` evidence ask (which records per-AC verification for observability).
+
+    ``dev_command`` / ``gate_commands`` name the loop's CONFIGURED dev-server + gate commands so
+    the instructions match the project (loop.json may configure anything, not just ``bun run *``);
+    when absent the prompt falls back to generic wording, never a hardcoded tool.
     """
+    dev_phrase = f"'{dev_command}'" if dev_command else "the dev-server command"
+    gate_cmds = [str(c) for c in (gate_commands or []) if c]
+    if gate_cmds:
+        gate_phrase = " and ".join(f"'{c}'" for c in gate_cmds)
+    else:
+        gate_phrase = "the project's test and lint commands"
     if acs:
         ac_block = (
             "This story's ACCEPTANCE CRITERIA (verify each in the browser where it has a UI "
@@ -664,7 +682,7 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str, changed=None) -> st
         f"THIS app (Next.js + Convex, repo at {cwd}) is ALREADY RUNNING at exactly {url}.\n"
         f"Use ONLY {url}. Do NOT start, restart, or hunt for the dev server on any other port, "
         "and do NOT run\n"
-        "'bun run dev' yourself (it is already running and would block).\n\n"
+        f"{dev_phrase} yourself (it is already running and would block).\n\n"
         f"You are doing STORY-AC-AWARE browser verification of story {story}, not just a health "
         "check.\n\n"
         f"{ac_block}{changed_block}\n\n"
@@ -685,8 +703,8 @@ def _build_smoke_prompt(url: str, story: str, cwd, acs: str, changed=None) -> st
         "   and skip browser checks for them.\n"
         "3) If a UI-verifiable AC fails OR there is a real crash/5xx/broken page, FIX it with "
         "the smallest code\n"
-        f"   change, then RELOAD {url} and RE-TEST. After any code change run 'bun run test' and "
-        "'bun run lint'\n"
+        f"   change, then RELOAD {url} and RE-TEST. After any code change run "
+        f"{gate_phrase}\n"
         "   (no regression). Benign warnings / favicon 404 / auth redirects are NOT failures.\n\n"
         "DO NOT BLOCK: if a page never becomes idle / the tab is unresponsive / content keeps "
         "re-rendering\n"
@@ -722,6 +740,8 @@ def browser_smoke(
     model: str,
     effort: str = "",
     changed_files=None,
+    dev_command: str = "",
+    gate_commands=None,
     progress_sig: Callable[[], str] | None = None,
     allowed_tools=SMOKE_TOOLS,
     permission_mode: str = "acceptEdits",
@@ -764,7 +784,10 @@ def browser_smoke(
         emit(smoke_server_event(url=url, root_code=root_code))
 
         acs = story_acs(story_text)
-        prompt = _build_smoke_prompt(url, story, cwd, acs, changed=changed_files)
+        prompt = _build_smoke_prompt(
+            url, story, cwd, acs,
+            changed=changed_files, dev_command=dev_command, gate_commands=gate_commands,
+        )
 
         for s in range(1, max_iters + 1):
             iters_done = s

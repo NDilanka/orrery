@@ -123,7 +123,7 @@ export const LOOPS: LoopChoice[] = [
   },
   {
     id: 'bmad',
-    name: 'BMAD — brain2 (xynapsis) sprint',
+    name: 'BMAD — sample sprint (replay)',
     theme: 'plasma',
     adapter: 'bmad',
     // Live (Tauri/LAN): watch the real loop's state dir + log written by `loop-bmad`

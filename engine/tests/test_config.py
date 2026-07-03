@@ -230,38 +230,79 @@ def test_known_engine_keys_produce_no_warning(capsys):
 
 
 # =====================================================================
-# Task 4 — the brain2-regression seed (single-file, no adapter block) still parses
+# Task 4 — an external regression-style loop.json (single-file, no adapter block) still parses
 # =====================================================================
 
 
-def test_load_brain2_regression_seed():
-    cfg = from_loop_json(REPO_ROOT / "orrery/loops/brain2-regression/loop.json")
+def _external_regression_loop_json(loop_dir: Path) -> Path:
+    """Replicates the shape of an external-repo regression seed: intra-loop paths RELATIVE,
+    `--cwd` (the external repo the gate/git run against) and `engine.task` ABSOLUTE."""
+    task = loop_dir / "TASK.md"
+    task.write_text("fix until green", encoding="utf-8")
+    path = loop_dir / "loop.json"
+    path.write_text(
+        json.dumps(
+            {
+                "id": "webapp-regression",
+                "kind": "external",
+                "adapter": "generic",
+                "stateDir": ".loop",
+                "stopFlag": ".loop/STOP",
+                "checkpoint": ".loop/checkpoint.json",
+                "start": {
+                    "program": "loop",
+                    "args": [
+                        "--cwd", "C:/path/to/your-webapp",
+                        "--state-dir", ".loop",
+                        "--loop-json", "loop.json",
+                    ],
+                },
+                "engine": {
+                    "task": str(task).replace("\\", "/"),
+                    "gate": {
+                        "stages": [
+                            {
+                                "name": "e2e",
+                                "command": "npx playwright test",
+                                "passPattern": "(\\d+) passed",
+                                "failPattern": "(\\d+) failed",
+                            }
+                        ]
+                    },
+                    "cost": {"ceilingUsd": 2.0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_load_external_regression_seed(tmp_path):
+    cfg = from_loop_json(_external_regression_loop_json(tmp_path))
     assert cfg.task.endswith("TASK.md")
     assert cfg.gate.stages[0].name == "e2e"
     assert cfg.cost.ceiling_usd == 2.0
     assert not hasattr(cfg.gate, "green_when")
 
 
-def test_seed_brain2_regression_intra_loop_paths_are_relative():
+def test_seed_external_regression_intra_loop_paths_are_relative(tmp_path):
     """A4 Task 3: stateDir/stopFlag/checkpoint + the --state-dir/--loop-json args are RELATIVE.
-    `--cwd` (the external brain2 repo the gate/git run against) and `engine.task` both stay
+    `--cwd` (the external repo the gate/git run against) and `engine.task` both stay
     ABSOLUTE on purpose: core.py resolves `config.task` as `work / config.task` first (`work` =
-    `--cwd` = the brain2 repo, NOT this loop's dir), so a relative task path would be looked up
+    `--cwd` = the external repo, NOT this loop's dir), so a relative task path would be looked up
     in the WRONG repo first (and only fall through to the loop dir if no same-named file exists
-    there) -- a silent footgun if brain2 ever grows its own TASK.md. Absolute keeps it unambiguous."""
-    data = json.loads(
-        (REPO_ROOT / "orrery/loops/brain2-regression/loop.json").read_text(encoding="utf-8")
-    )
+    there) -- a silent footgun if the external repo ever grows its own TASK.md. Absolute keeps
+    it unambiguous."""
+    data = json.loads(_external_regression_loop_json(tmp_path).read_text(encoding="utf-8"))
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
     assert data["checkpoint"] == ".loop/checkpoint.json"
     args = data["start"]["args"]
     assert args[args.index("--state-dir") + 1] == ".loop"
     assert args[args.index("--loop-json") + 1] == "loop.json"
-    assert args[args.index("--cwd") + 1] == "D:/dev/brain2"
-    # `engine.task` stays ABSOLUTE on purpose (see docstring). Assert that portably: an absolute
-    # path ending in the seed's TASK.md — NOT the exact machine-specific "D:/dev/loop/..." string,
-    # which pinned the suite to one checkout location.
+    assert Path(args[args.index("--cwd") + 1]).is_absolute()
+    # `engine.task` stays ABSOLUTE on purpose (see docstring).
     task = data["engine"]["task"]
     assert Path(task).is_absolute()
-    assert task.endswith("orrery/loops/brain2-regression/TASK.md")
+    assert task.endswith("TASK.md")

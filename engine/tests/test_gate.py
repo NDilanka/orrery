@@ -41,7 +41,7 @@ Test Files  1 failed (1)
 # test failed vitest reordered "Tests" to "<f> failed | <p> passed". The count we want (860)
 # is neither adjacent to "Tests" (the old strict anchor read 0) nor the first "passed" in the
 # output (a bare `(\d+) passed` would steal the Test-Files line's 70). Captured 2026-06-25
-# from brain2 story 6-2, which a single load-induced timeout flake false-halted as "812->0".
+# from a real project's story 6-2, which a single load-induced timeout flake false-halted as "812->0".
 VITEST_MULTIFILE_RED = """ ❯ components/onboarding/CategoryWizard.test.tsx (6 tests | 1 failed) 7582ms
  FAIL  components/onboarding/CategoryWizard.test.tsx > custom flow
 Error: Test timed out in 5000ms.
@@ -123,11 +123,11 @@ def test_vitest_anchored_patterns():
     assert r["fail"] == 2
 
 
-def test_brain2_gate_pattern_reads_passed_count_when_a_test_fails():
-    """Regression: the SHIPPED brain2 gate pattern must read the passed count even when
+def test_default_gate_pattern_reads_passed_count_when_a_test_fails():
+    """Regression: the SHIPPED default gate pattern must read the passed count even when
     vitest reorders its summary to "<f> failed | <p> passed". The old strict
     ``Tests\\s+(\\d+)\\s+passed`` read 0 here and turned one flaky test into a false
-    "812->0 regression" halt (brain2 story 6-2, 2026-06-25)."""
+    "812->0 regression" halt (real-project story 6-2, 2026-06-25)."""
     from loop.bmad.driver import DEFAULT_GATE_STAGES
 
     test_stage = next(s for s in DEFAULT_GATE_STAGES if s["name"] == "test")

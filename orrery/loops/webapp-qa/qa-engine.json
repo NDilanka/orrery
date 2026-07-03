@@ -1,0 +1,16 @@
+{
+  "qa": {
+    "app": "your-webapp",
+    "baseUrl": "http://localhost:3000",
+    "specDir": "e2e/functional",
+    "storageState": "C:/path/to/loop-repo/orrery/loops/webapp-qa/.auth/storage-state.json",
+    "seedSummary": "2 lists (Work, Home). 3 todos: 'Buy milk' (open, Home), 'File expense report' (open, Work, due tomorrow), 'Water the plants' (completed, Home). User settings: darkMode=false, reminders enabled.",
+    "model": "",
+    "effort": "high",
+    "maxTurns": 120,
+    "timeoutSec": 1800,
+    "costCeilingUsd": 30,
+    "headless": true,
+    "caps": "devtools"
+  }
+}

@@ -80,8 +80,8 @@ def test_build_manifest_groups_and_sorts(tmp_path):
     _write(tmp_path, "1-1-scaffold.md", STORY_21.replace("2.1", "1.1").replace("Story 2.1", "Story 1.1"))
     _write(tmp_path, "deferred-work.md", "# noise")
 
-    m = build_manifest(tmp_path, app="brain2", base_url="http://localhost:3000")
-    assert m["app"] == "brain2"
+    m = build_manifest(tmp_path, app="webapp", base_url="http://localhost:3000")
+    assert m["app"] == "webapp"
     assert m["baseUrl"] == "http://localhost:3000"
     assert m["storyCount"] == 3  # the non-story md is ignored
     assert m["epicCount"] == 2
