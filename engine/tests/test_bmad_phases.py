@@ -631,6 +631,70 @@ def test_browser_smoke_fail_then_no_progress_stops():
     assert all(e["passed"] is False for e in smoke_iters)
 
 
+def test_browser_smoke_progress_sig_unchanged_stops_even_on_different_text():
+    # With a git-signature probe injected, an UNCHANGED signature stops after the 2nd failed
+    # iteration — even though the FAIL verdicts differ (so the text-fallback would NOT have
+    # stopped). This is the git-parity fix: same tree, different words -> no real progress.
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="SMOKE_FAIL: AC2 broken on /search", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_FAIL: AC2 STILL broken, tried a new fix", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: fixed", cost_usd=0.2),
+        ]
+    )
+    server = FakeServer()
+    log, emit = _events("smoke")
+    res = browser_smoke(
+        runner,
+        "3-4",
+        STORY_TEXT,
+        emit=emit,
+        cwd="/repo",
+        server_ctl=server,
+        gate_fn=lambda: gate(green=True),
+        max_iters=3,
+        timeout_sec=720,
+        model="sonnet",
+        progress_sig=lambda: "HEAD|constant-tree",  # never changes -> no code moved
+    )
+    assert res.ok is False
+    # sig unchanged after the 2nd failed iter -> stop; never reached the 3rd PASS
+    assert len(runner.calls) == 2
+
+
+def test_browser_smoke_progress_sig_changed_continues_even_on_same_text():
+    # A CHANGING signature means the agent DID move code, so smoke keeps going — even with an
+    # identical repeated FAIL verdict that the text-fallback WOULD have stopped on. Proves the
+    # injected git signature takes precedence over verdict-text equality.
+    runner = MockRunner(
+        [
+            AgentResult(raw="", text="SMOKE_FAIL: AC2 broken on /search", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_FAIL: AC2 broken on /search", cost_usd=0.2),
+            AgentResult(raw="", text="SMOKE_PASS: fixed on the third try", cost_usd=0.2),
+        ]
+    )
+    server = FakeServer()
+    log, emit = _events("smoke")
+    sigs = iter(["HEAD|tree-a", "HEAD|tree-b", "HEAD|tree-c"])
+    res = browser_smoke(
+        runner,
+        "3-4",
+        STORY_TEXT,
+        emit=emit,
+        cwd="/repo",
+        server_ctl=server,
+        gate_fn=lambda: gate(green=True, pass_=7),
+        max_iters=3,
+        timeout_sec=720,
+        model="sonnet",
+        progress_sig=lambda: next(sigs),
+    )
+    # kept going through all 3 iters (sig moved each time) and passed on the 3rd
+    assert res.ok is True
+    assert len(runner.calls) == 3
+    assert res.gate["pass"] == 7
+
+
 def test_browser_smoke_red_gate_reason_names_failing_stage():
     # Smoke PASSES but the post-smoke gate is RED. The stop reason must surface the gate
     # SUMMARY (per-stage exit codes), matching the committed bmad-log fixtures — not a

@@ -722,6 +722,7 @@ def browser_smoke(
     model: str,
     effort: str = "",
     changed_files=None,
+    progress_sig: Callable[[], str] | None = None,
     allowed_tools=SMOKE_TOOLS,
     permission_mode: str = "acceptEdits",
     root_code: int = 200,
@@ -748,6 +749,7 @@ def browser_smoke(
     smoke_ok = False
     smoke_timeouts = 0
     last_verdict: str | None = None
+    last_sig: str | None = None
     iters_done = 0
     url: str | None = None
 
@@ -814,11 +816,21 @@ def browser_smoke(
                 smoke_ok = True
                 break
 
-            # no-progress guard: the driver re-checks the git signature; here, a repeated
-            # identical FAIL verdict means the agent made no headway -> stop to avoid spin.
-            if verdict == last_verdict:
+            # no-progress guard (bmad-loop.ps1 ~599-603): the agent claimed a fix but moved
+            # nothing this iteration -> stop to avoid spin. With a git-signature probe injected
+            # (the driver's HEAD hash + `git status --porcelain`), compare the WORK-TREE signature
+            # after this failed iteration to the previous failed iteration's; an unchanged signature
+            # means no code moved. Without one (pure unit callers / parity), fall back to the
+            # verdict-TEXT equality that stops on an identical repeated FAIL.
+            if progress_sig is not None:
+                sig = progress_sig()
+                if sig == last_sig:
+                    break
+                last_sig = sig
+            elif verdict == last_verdict:
                 break
-            last_verdict = verdict
+            else:
+                last_verdict = verdict
     finally:
         server_ctl.stop()
 

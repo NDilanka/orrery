@@ -17,17 +17,17 @@ and ``log.jsonl`` writer.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from loop import gitutil, proc
+from loop import gitutil
 from loop.configkeys import resolve, warn_unknown_keys
 from loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
 from loop.events import cooperative_stop_event
-from loop.heartbeat import Heartbeat
 from loop.logio import append_event
+from loop.resilient import ResilientRunner
+from loop.runners.claude import ClaudeRunner
 
 # Verdict statuses the agent assigns each AC. Only the first four are "observable" and
 # therefore counted in a story's pass-rate gate; NOT_OBSERVABLE drops out of the denominator.
@@ -317,48 +317,52 @@ def write_mcp_config(path, *, storage_state: str, headless: bool, caps: str) -> 
     Path(path).write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
-def default_invoke(config: QaConfig, mcp_config_path: str):
-    """Build the real ``claude -p`` invoker bound to ``config`` + a per-run mcp config."""
+def default_invoke(
+    config: QaConfig,
+    mcp_config_path: str,
+    *,
+    emit: Callable[[dict], None],
+    activity_path=None,
+    cum: float = 0.0,
+    phase: str = "qa",
+    story: str | None = None,
+):
+    """Build the real ``claude -p`` invoker bound to ``config`` + a per-run mcp config.
+
+    Goes through the shared :class:`~loop.runners.claude.ClaudeRunner` (the ONE place a real
+    ``claude`` process spawns) wrapped in :class:`~loop.resilient.ResilientRunner`, so an overnight
+    QA pass inherits the same resilience the BMAD driver has for free: quota survival
+    (survive-and-wait on a rate limit + probe-on-any-error), a finite per-call ``timeout_sec``,
+    raw-output capture, a liveness heartbeat, and per-call token telemetry. The agent's model /
+    effort routing (empty / ``default`` / ``inherit`` inherits the user's Claude Code default) is
+    handled by ``ClaudeRunner``; ``--mcp-config``/``--strict-mcp-config`` load ONLY the
+    pre-authenticated Playwright server for this run.
+    """
+    base = ClaudeRunner()
+    resilient = ResilientRunner(
+        base, emit=emit, quota_cfg={"cum": cum}, activity_path=activity_path
+    )
+    resilient.set_context(phase, story)
 
     def _invoke(prompt: str, *, timeout_sec: int) -> InvokeResult:
-        argv = [
-            "claude",
-            "-p",
-            prompt,
-            "--output-format",
-            "json",
-            "--max-turns",
-            str(config.max_turns),
-        ]
-        m = str(config.model).strip()
-        if m and m.lower() not in {"default", "inherit"}:
-            argv += ["--model", m]
-        e = str(config.effort).strip()
-        if e and e.lower() not in {"default", "inherit"}:
-            argv += ["--effort", e]
-        argv += [
-            "--permission-mode",
-            config.permission_mode,
-            "--mcp-config",
-            mcp_config_path,
-            "--strict-mcp-config",
-            "--allowedTools",
-            *config.allowed_tools,
-        ]
-        res = proc.run_with_timeout(argv, cwd=config.project_root, timeout_sec=timeout_sec)
-        if res.timed_out:
-            return InvokeResult(raw=res.stdout or "", is_error=True, timed_out=True)
-        try:
-            parsed = json.loads(res.stdout or "")
-        except (json.JSONDecodeError, ValueError, TypeError):
-            return InvokeResult(raw=res.stdout or "", is_error=True)
-        if not isinstance(parsed, dict):
-            return InvokeResult(raw=res.stdout or "", is_error=True)
+        res = resilient.run(
+            prompt=prompt,
+            model=config.model,
+            effort=config.effort,
+            allowed_tools=list(config.allowed_tools),
+            permission_mode=config.permission_mode,
+            max_turns=config.max_turns,
+            cwd=config.project_root,
+            timeout_sec=timeout_sec,
+            mcp_config=mcp_config_path,
+            strict_mcp_config=True,
+        )
         return InvokeResult(
-            raw=res.stdout or "",
-            text=parsed.get("result", "") or "",
-            cost_usd=float(parsed.get("total_cost_usd", 0.0) or 0.0),
-            is_error=bool(parsed.get("is_error", False)),
+            raw=getattr(res, "raw", "") or "",
+            text=getattr(res, "text", "") or "",
+            cost_usd=float(getattr(res, "cost_usd", 0.0) or 0.0),
+            is_error=bool(getattr(res, "is_error", False)),
+            timed_out=bool(getattr(res, "timed_out", False)),
         )
 
     return _invoke
@@ -428,7 +432,7 @@ def run(
     def body(state: Path) -> int:
         return _run_inner(config, state=state, invoke=invoke, emit=emit)
 
-    return run_driver(state_dir, guard_label="loop", body=body)
+    return run_driver(state_dir, guard_label="loop-qa", body=body)
 
 
 def _run_inner(
@@ -511,10 +515,19 @@ def _run_inner(
             seed_summary=config.seed_summary,
         )
 
-        _invoke = invoke or default_invoke(config, str(mcp_cfg))
-        with Heartbeat(activity_path, phase=f"qa-epic-{n}", story=f"epic-{n}",
-                       repo=config.project_root, pid=os.getpid()):
-            result = _invoke(prompt, timeout_sec=config.timeout_sec)
+        # The DEFAULT path goes through the shared ClaudeRunner+ResilientRunner (quota survival,
+        # finite timeout, raw capture, token telemetry, liveness heartbeat all come free); tests
+        # still inject a fake `invoke(prompt, *, timeout_sec) -> InvokeResult` via the seam.
+        _invoke = invoke or default_invoke(
+            config,
+            str(mcp_cfg),
+            emit=emit,
+            activity_path=activity_path,
+            cum=cum,
+            phase=f"qa-epic-{n}",
+            story=f"epic-{n}",
+        )
+        result = _invoke(prompt, timeout_sec=config.timeout_sec)
         cum += result.cost_usd
 
         findings = _read_findings(findings_path)

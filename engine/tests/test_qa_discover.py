@@ -16,7 +16,15 @@ from pathlib import Path
 from conftest import REPO_ROOT
 
 from loop import lockfile
-from loop.qa.discover import InvokeResult, QaConfig, findings_to_events, run, story_gate
+from loop.qa.discover import (
+    InvokeResult,
+    QaConfig,
+    default_invoke,
+    findings_to_events,
+    run,
+    story_gate,
+)
+from loop.runners.base import AgentResult
 
 
 def test_story_gate_counts_only_observable():
@@ -147,6 +155,48 @@ def test_run_blocks_epic_when_agent_writes_nothing(tmp_path):
     assert acs and all(e["status"] == "blocked" for e in acs)
     verdict = next(e for e in events if e["event"] == "verdict")
     assert verdict["pass"] is False
+
+
+def test_default_invoke_routes_through_claude_and_resilient_runner(monkeypatch):
+    """Task 1: the DEFAULT QA invoke path now goes through ClaudeRunner (real argv) wrapped in
+    ResilientRunner (quota survival / raw capture / token telemetry), NOT a hand-rolled
+    subprocess block. It forwards QA's model/effort/mcp routing and maps AgentResult ->
+    InvokeResult, and the shared runner emits per-call token telemetry for free."""
+    calls: dict = {}
+
+    class FakeBase:
+        name = "fake"
+        supports_quota_probe = False
+        supports_sessions = False
+        supports_cache_telemetry = False
+
+        def run(self, **kwargs):
+            calls.update(kwargs)
+            return AgentResult(
+                raw="RAW", text="hi", cost_usd=0.4, usage={"input_tokens": 5, "output_tokens": 2}
+            )
+
+    monkeypatch.setattr("loop.qa.discover.ClaudeRunner", lambda: FakeBase())
+    cfg = QaConfig(
+        project_root="/p", manifest_path="m", model="opus", effort="high", max_turns=99
+    )
+    events: list[dict] = []
+    inv = default_invoke(
+        cfg, "/tmp/mcp.json", emit=events.append, phase="qa-epic-2", story="epic-2"
+    )
+    res = inv("PROMPT", timeout_sec=123)
+
+    assert isinstance(res, InvokeResult)
+    assert res.raw == "RAW" and res.text == "hi" and res.cost_usd == 0.4
+    assert res.is_error is False and res.timed_out is False
+    # QA's config routing (model/effort/max_turns) + the per-run mcp config are forwarded.
+    assert calls["model"] == "opus" and calls["effort"] == "high" and calls["max_turns"] == 99
+    assert calls["prompt"] == "PROMPT" and calls["timeout_sec"] == 123
+    assert calls["mcp_config"] == "/tmp/mcp.json" and calls["strict_mcp_config"] is True
+    assert list(calls["allowed_tools"]) == list(cfg.allowed_tools)
+    # token telemetry rode along, tagged with the epic phase/story.
+    tu = [e for e in events if e.get("event") == "token-usage"]
+    assert tu and tu[0]["phase"] == "qa-epic-2" and tu[0]["story"] == "epic-2"
 
 
 def test_run_takes_the_shared_lock_and_refuses_when_live(tmp_path, monkeypatch):
