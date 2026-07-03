@@ -24,10 +24,12 @@
         <span class="glyph" aria-hidden="true">{GLYPH[a.kind]}</span>
         <span class="msg">{a.message}</span>
         {#if a.source === 'cosmos'}
-          <button class="jump" onclick={() => onJump(a.loopId)}>enter loop →</button>
+          <button class="jump btn btn-ghost btn-sm" onclick={() => onJump(a.loopId)}>enter loop →</button>
         {/if}
-        <button class="dismiss" aria-label="dismiss alert" onclick={() => alertStore.dismiss(a.id)}
-          >✕</button
+        <button
+          class="dismiss btn btn-ghost btn-icon"
+          aria-label="dismiss alert"
+          onclick={() => alertStore.dismiss(a.id)}>✕</button
         >
       </div>
     {/each}
@@ -65,17 +67,22 @@
       transform: translateY(0);
     }
   }
-  .bar.quota {
-    background: color-mix(in srgb, var(--frost) 14%, var(--surface-1));
-    border-bottom-color: color-mix(in srgb, var(--frost) 35%, transparent);
+  /* M4.5: handoff and quota are both "needs-you" alerts (docs/ui-modernization-plan.md §5;
+     matches Hud.svelte's status-pill.frost/.beacon reclassification) — only a genuine
+     failure stays on the base crimson tint above; these two share the amber family. */
+  .bar.quota,
+  .bar.handoff {
+    background: color-mix(in srgb, var(--amber) 14%, var(--void-2));
+    border-bottom-color: color-mix(in srgb, var(--amber) 35%, transparent);
   }
   .glyph {
     flex: none;
     font-size: var(--text-lg);
     color: var(--crimson);
   }
-  .bar.quota .glyph {
-    color: var(--frost);
+  .bar.quota .glyph,
+  .bar.handoff .glyph {
+    color: var(--amber);
   }
   .msg {
     flex: 1;
@@ -84,43 +91,19 @@
     font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.01em;
-    color: var(--starlight);
+    color: var(--em-hi);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* .btn/.btn-ghost/.btn-sm (primitives.css) supply the shape/border/hover — matches
+     LogPanel's "jump to newest" chip, the app's one ghost-button convention. */
   .jump {
     flex: none;
-    font-family: var(--font-grotesk);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--void-3);
-    color: var(--starlight);
-    cursor: pointer;
-    transition: border-color var(--dur-feedback) var(--ease-standard);
   }
-  .jump:hover {
-    border-color: var(--brass);
-  }
+  /* .btn-icon squares the padding for the ✕ glyph (matches TransportBar's icon buttons). */
   .dismiss {
     flex: none;
-    background: transparent;
-    border: 1px solid var(--hairline);
-    color: var(--text-dim);
-    border-radius: var(--radius-pill);
-    width: 22px;
-    height: 22px;
-    font-size: var(--text-2xs);
-    cursor: pointer;
-    transition: color var(--dur-feedback) var(--ease-standard),
-      border-color var(--dur-feedback) var(--ease-standard);
-  }
-  .dismiss:hover {
-    color: var(--starlight);
-    border-color: var(--starlight);
   }
 
   @media (max-width: 640px) {
@@ -131,10 +114,6 @@
     .msg {
       font-size: var(--text-xs);
       white-space: normal;
-    }
-    .jump {
-      padding: 4px 9px;
-      font-size: var(--text-2xs);
     }
   }
 </style>

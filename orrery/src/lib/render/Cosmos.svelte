@@ -93,21 +93,11 @@
   }
 
   // star color by status / rest-state (shared with the Observatory's star — src/lib/palette.ts).
-  // Cosmos's status set includes 'quota-wait' as a bare status (no restState yet); restColor's
-  // status branch doesn't cover it, so that one case stays local. The fallback (0x6c779e, a dim
-  // idle ember) is Cosmos-specific — the Observatory's star instead falls back to a bright
-  // starlight, so it's passed explicitly rather than baked into the shared function.
-  //
-  // M4.5 monochrome sweep (owner: "the only chromatic pixels in the app are alerts") — restColor
-  // is shared with Observatory.svelte and out of scope for this file's edit, but it still
-  // returns its pre-M4 amber/ember hues for the two calm, non-alert states ('running' and
-  // 'stopped-ember' == idle/paused). Override just those two here rather than touch the shared
-  // function; failed-dark/handoff-beacon (alerts) and certified-done/quota-frost (already
-  // grayscale-or-neutral via tokens.css) pass through restColor untouched.
+  // The fallback (0x6c779e, a dim idle ember) is Cosmos-specific — the Observatory's star instead
+  // falls back to a bright starlight, so it's passed explicitly rather than baked into the shared
+  // function. restColor() now encodes the full M4 alert taxonomy itself (including bare
+  // 'quota-wait' and 'running'), so no local overrides are needed here.
   function glyphColor(l: LoopSummary): number {
-    if (l.status === 'quota-wait' && !l.restState) return C.frost;
-    if (!l.restState && l.status === 'running') return C.em?.hi ?? C.starlight;
-    if (l.restState === 'stopped-ember') return C.em?.low ?? C.frost;
     return restColor(l.status, l.restState, 0x6c779e);
   }
 
