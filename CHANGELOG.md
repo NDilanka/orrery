@@ -23,6 +23,16 @@ changes between minor versions.
 - **Gate fail-fast** (opt-in, engine + BMAD): stop launching gate stages after the first
   failure; skipped stages carry a `skipped` marker safe for floor/flaky consumers.
 
+### Added — opt-in CLI capability adoption (all default-off; verified vs claude 2.1.199)
+- **`fallbackModel`** (engine / bmad / qa blocks): threads `--fallback-model` (comma chain)
+  through every runner path for overload resilience.
+- **`bmad.structuredVerdicts`**: the verify / plan-gate calls request a `--json-schema`
+  verdict; a valid `structured_output` wins, the text-line parse remains the fallback.
+- **Experimental `engine.sessionGate`** (`stop-hook` | `goal`): one invocation loops
+  internally until the gate is green — stop-hook mode installs a Stop hook that re-runs the
+  gate and blocks turn-end on red (`|| exit 2`); the external gate remains the arbiter.
+  `goal` mode is best-effort (`/goal` absent from the installed CLI).
+
 ### Changed — shared resilience & one gate-verdict path (architecture)
 - **The QA discovery pass now survives quota limits**: `default_invoke` routes through the
   shared `ClaudeRunner` + `ResilientRunner` (new `loop/resilient.py`, re-exported from
