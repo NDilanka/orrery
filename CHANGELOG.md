@@ -23,6 +23,18 @@ changes between minor versions.
 - **Gate fail-fast** (opt-in, engine + BMAD): stop launching gate stages after the first
   failure; skipped stages carry a `skipped` marker safe for floor/flaky consumers.
 
+### Changed — shared resilience & one gate-verdict path (architecture)
+- **The QA discovery pass now survives quota limits**: `default_invoke` routes through the
+  shared `ClaudeRunner` + `ResilientRunner` (new `loop/resilient.py`, re-exported from
+  `bmad.driver`), inheriting quota survive-and-wait, probe-on-any-error, finite timeouts,
+  raw-output capture, liveness heartbeat, and token telemetry. Previously an overnight QA run
+  died on the first rate limit.
+- The review/smoke gate-halt logic exists once (`_gate_checkpoint` → `decide.floor_breach`);
+  halt reasons byte-identical.
+- The **smoke no-progress guard is back to PS semantics**: progress = the git signature
+  (HEAD + porcelain) changed, not verdict-text equality — a smoke agent that claims a fix but
+  touches nothing stops immediately; different failure text with no code change no longer spins.
+
 ### Fixed — overnight hang/burn holes (engine reliability)
 - The review/retro **decider calls are now time-bounded** (default 10 min; `0` = unbounded) —
   one wedged cheap-model call could previously hang an unattended run forever.
