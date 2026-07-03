@@ -534,9 +534,88 @@ export interface ValidationResult {
   errors: string[];
 }
 
-/** Validate a console draft mirrors the Rust-side guards (id safety + AC/gate). */
+// ─── Numeric bounds (engine-consumed fields the console lets you type a raw
+// number into via drawer overrides — engine/loop/config.py just casts to
+// int/float and trusts it, no clamping on that side). Split into two groups
+// by inspecting how core.py actually consumes each field:
+//   POSITIVE  — a zero/negative/NaN value degenerates the run rather than
+//               disabling anything: max_iters=0 → `range(1, 1)` runs zero
+//               iterations, max_turns=0 permits no turns, ceiling_usd<=0
+//               trips the cost gate before iteration 1's spend is even
+//               counted. These have no documented "0 = off" meaning.
+//   NONNEGATIVE — 0 is a real, engine-honored value: iter_timeout_min=0 is
+//               the DOCUMENTED disable (engine/loop/core.py: "0 = unbounded" —
+//               also the console's own "(0 = unbounded)" field hint); the
+//               stop.*Limit / memory.recallLimit counters are thresholds
+//               that are simply strictest at 0 (stop on the very first
+//               stagnant/plateaued/regressed iteration, or recall nothing).
+const POSITIVE_FIELDS = ['ceilingUsd', 'maxIters', 'maxTurns'] as const;
+const NONNEGATIVE_FIELDS = [
+  'iterTimeoutMin',
+  'stagnationLimit',
+  'plateauLimit',
+  'regressLimit',
+  'recallLimit',
+] as const;
+
+export interface NumericBoundsInput {
+  ceilingUsd: number;
+  maxIters: number;
+  maxTurns: number;
+  iterTimeoutMin: number;
+  stagnationLimit: number;
+  plateauLimit: number;
+  regressLimit: number;
+  recallLimit: number;
+}
+
+const NUMERIC_FIELD_LABEL: Record<keyof NumericBoundsInput, string> = {
+  ceilingUsd: 'cost ceiling',
+  maxIters: 'max iterations',
+  maxTurns: 'max turns/phase',
+  iterTimeoutMin: 'iteration timeout',
+  stagnationLimit: 'stagnation limit',
+  plateauLimit: 'plateau limit',
+  regressLimit: 'regress limit',
+  recallLimit: 'recall limit',
+};
+
+/**
+ * Reject non-finite (NaN from an emptied number input, Infinity) and
+ * out-of-bounds values for the engine-numeric fields present in `input`.
+ * Partial — only the keys supplied are checked, so callers that don't yet
+ * have an engine draft (e.g. the id/name/destination-only validateDraft
+ * callers) aren't forced to fabricate numbers.
+ */
+export function validateNumericBounds(input: Partial<NumericBoundsInput>): string[] {
+  const errors: string[] = [];
+  for (const f of POSITIVE_FIELDS) {
+    if (!(f in input)) continue;
+    const v = input[f] as number;
+    if (!Number.isFinite(v) || v <= 0) {
+      errors.push(`${NUMERIC_FIELD_LABEL[f]} must be a number greater than 0.`);
+    }
+  }
+  for (const f of NONNEGATIVE_FIELDS) {
+    if (!(f in input)) continue;
+    const v = input[f] as number;
+    if (!Number.isFinite(v) || v < 0) {
+      errors.push(`${NUMERIC_FIELD_LABEL[f]} must be a number 0 or greater.`);
+    }
+  }
+  return errors;
+}
+
+/** Validate a console draft mirrors the Rust-side guards (id safety + AC/gate)
+ *  plus the engine-numeric bounds above when a draft engine is supplied. */
 export function validateDraft(
-  input: { id: string; name: string; acceptanceCriteria: string[]; gateStages: GateStageDef[] },
+  input: {
+    id: string;
+    name: string;
+    acceptanceCriteria: string[];
+    gateStages: GateStageDef[];
+    numeric?: Partial<NumericBoundsInput>;
+  },
   existingIds: string[],
 ): ValidationResult {
   const errors: string[] = [];
@@ -549,5 +628,6 @@ export function validateDraft(
     errors.push('Add at least one gate stage (the test gate).');
   if (input.acceptanceCriteria.filter((a) => a.trim()).length === 0)
     errors.push('Describe at least one acceptance criterion.');
+  if (input.numeric) errors.push(...validateNumericBounds(input.numeric));
   return { ok: errors.length === 0, errors };
 }

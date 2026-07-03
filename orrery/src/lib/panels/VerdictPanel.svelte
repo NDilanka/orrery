@@ -48,7 +48,7 @@
     {#if verdict}
       <div class="vbadge">
         {#if verdict.pass}
-          <span class="seal">✦ VERIFIED · brass seal</span>
+          <span class="seal">✦ VERIFIED · sealed</span>
         {:else}
           <span class="refuted">✖ REFUTED · false green</span>
         {/if}
@@ -174,8 +174,9 @@
     flex-wrap: wrap;
   }
   .seal {
-    /* brass = identity/certification accent (plan §1), not a status hue — kept as-is */
-    color: var(--brass);
+    /* M4.5: verified = pure white + the seal glyph (plan §5), not brass — brass is
+       retired for success/verified (BodyView's .seal is the reference implementation). */
+    color: var(--em-hi);
     font-weight: 600;
     letter-spacing: 0.04em;
   }

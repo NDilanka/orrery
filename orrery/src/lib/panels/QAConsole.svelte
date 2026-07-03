@@ -204,13 +204,13 @@
     border: 1px solid var(--hairline);
     color: var(--text-dim);
   }
-  .kind.review {
+  .kind.review,
+  .kind.retro {
+    /* M4.5: both review and retro are pending-question metadata, same amber
+       "needs-you" family — matches DecisionSheet's `.meta .kind` treatment
+       exactly (no separate cyan taxonomy for retro). */
     color: var(--amber);
     border-color: color-mix(in srgb, var(--amber) 35%, transparent);
-  }
-  .kind.retro {
-    color: var(--plasma-cyan);
-    border-color: color-mix(in srgb, var(--plasma-cyan) 35%, transparent);
   }
   .qbody {
     /* body sentence, not a headline value → content tier */
@@ -259,8 +259,11 @@
   /* Send is a "go forward" action → .btn-primary (primitives.css), same family
      as Start/Resume on RunControlBar. Replaces the bespoke cyan pill button. */
   .observe {
+    /* load-bearing copy (tells the user why they can't answer), not decorative —
+       matches DecisionSheet's `.observe` tier: --text-meta, not the faint/decorative
+       --text-faint this used to sit at. */
     font-size: var(--text-2xs);
-    color: var(--text-faint);
+    color: var(--text-meta);
     font-style: italic;
     padding: 6px 0;
   }
