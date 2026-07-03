@@ -206,9 +206,12 @@ def test_one_ready_story_end_to_end_no_merge(tmp_path, monkeypatch):
 
     runner = MockRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (before dev)
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),  # dev-story
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
             AgentResult(raw="", text="SMOKE_PASS: verified AC1, AC2.", cost_usd=0.5),  # smoke
+            # (verify makes NO runner call here — the story has no baseline_commit, so it is
+            # 'skipped'; adversarial verify only runs a call when a baseline diff exists.)
         ]
     )
     cfg = _config(root, no_merge=True)
@@ -217,9 +220,12 @@ def test_one_ready_story_end_to_end_no_merge(tmp_path, monkeypatch):
 
     evts = _events(state)
     kinds = [e["event"] for e in evts]
-    # the required integration sequence
-    for needed in ("start", "story-start", "dev-gate", "review-complete", "smoke-server", "smoke-iter", "pr-created", "stop"):
+    # the required integration sequence — now includes the Wave-2 plan-check + (skipped) verify
+    for needed in ("start", "story-start", "plan-check", "dev-gate", "review-complete", "smoke-server", "smoke-iter", "verify", "pr-created", "metrics", "stop"):
         assert needed in kinds, f"missing {needed} in {kinds}"
+    # plan-gate passed (PLAN_OK); verify was skipped (no baseline_commit to diff)
+    assert [e for e in evts if e["event"] == "plan-check"][0]["verdict"] == "ok"
+    assert [e for e in evts if e["event"] == "verify"][0]["verdict"] == "skipped"
     # terminal bmad stop carries ok + the --no-merge reason
     stop = [e for e in evts if e["event"] == "stop"][-1]
     assert stop["ok"] is True
@@ -257,6 +263,7 @@ def test_driver_writes_activity_heartbeat_during_a_phase(tmp_path, monkeypatch):
 
     runner = CapturingRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (now the first call)
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
             AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),
@@ -267,8 +274,9 @@ def test_driver_writes_activity_heartbeat_during_a_phase(tmp_path, monkeypatch):
 
     beat = seen.get("beat")
     assert beat is not None, "no activity.json beat was written before/during the first agent call"
-    # the first agent call is dev-story (ONE_READY skips create-story); the beat is tagged with it
-    assert beat.get("phase") == "dev-story", beat
+    # the first agent call is now the plan-gate (ONE_READY skips create-story); the beat is tagged
+    # with it (the plan-gate runs before dev-story, both wrapped in the liveness Heartbeat).
+    assert beat.get("phase") == "plan-gate", beat
     # camelCase liveness fields are all present
     for k in ("ts", "elapsedSec", "dirty", "pid"):
         assert k in beat, f"missing {k} in beat {beat}"
@@ -290,6 +298,8 @@ def test_driver_persists_raw_output_per_phase_story(tmp_path, monkeypatch):
 
     runner = MockRunner(
         [
+            # plan-gate first (raw empty -> writes no run-plan-gate.out, which is fine)
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),
             AgentResult(raw='{"phase":"dev"}', text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw='{"phase":"review"}', text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
             AgentResult(raw='{"phase":"smoke"}', text="SMOKE_PASS: verified AC1, AC2.", cost_usd=0.5),
@@ -826,6 +836,7 @@ def test_merge_wait_sec_polls_queued_merge_then_continues(tmp_path, monkeypatch)
     seq = iter(["QUEUED", "QUEUED", "MERGED"])  # lands on the 3rd poll
     monkeypatch.setattr(pr, "pr_state", lambda *, branch, cwd: next(seq, "MERGED"))
     runner = MockRunner([
+        AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate
         AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
         AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
         AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
@@ -851,6 +862,7 @@ def test_after_story_stop_honored_right_after_merge(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pr, "merge_pr", merge_then_request_stop)
     runner = MockRunner([
+        AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate
         AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
         AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
         AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
@@ -870,6 +882,7 @@ def test_spin_guard_halts_on_no_progress_reselection(tmp_path, monkeypatch):
     pr_calls: dict = {}
     _patch_externals(monkeypatch, pr_calls=pr_calls)
     runner = MockRunner([
+        AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate
         AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
         AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
         AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
@@ -903,6 +916,7 @@ def test_review_and_smoke_single_pass_end_to_end(tmp_path, monkeypatch):
     _patch_externals(monkeypatch, pr_calls=pr_calls)
     runner = MockRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw="", text="REVIEW_COMPLETE: decided + applied; green.", cost_usd=0.4),
             AgentResult(raw="", text="SMOKE_PASS: verified ACs.", cost_usd=0.3),
@@ -917,9 +931,10 @@ def test_review_and_smoke_single_pass_end_to_end(tmp_path, monkeypatch):
     assert "review-question" not in kinds
     assert "review-answer" not in kinds
     assert "pr-created" in kinds
-    # exactly THREE agent processes for the whole story: dev + review(1) + smoke(1).
-    # The default Q&A + iterative path would spawn extra decider/re-spawn processes.
-    assert len(runner.calls) == 3
+    # FOUR agent processes for the whole story: plan-gate + dev + review(1) + smoke(1). Verify
+    # makes no call (no baseline_commit -> 'skipped'). The default Q&A + iterative path would
+    # spawn extra decider/re-spawn processes.
+    assert len(runner.calls) == 4
 
 
 def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
@@ -938,6 +953,7 @@ def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
         def __init__(self):
             self.calls = 0
             self._queue = [
+                AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (before dev)
                 AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
                 AgentResult(raw="", text="REVIEW_COMPLETE: ok.", cost_usd=0.2),
                 AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.3),
@@ -1219,6 +1235,7 @@ def test_process_story_threads_phase_timeouts_into_dev_and_review_calls(tmp_path
 
     runner = MockRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (calls[0])
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
             AgentResult(raw="", text="SMOKE_PASS: verified AC1, AC2.", cost_usd=0.5),
@@ -1229,8 +1246,9 @@ def test_process_story_threads_phase_timeouts_into_dev_and_review_calls(tmp_path
     )
     rc = driver.run(cfg, runner=runner, state_dir=str(state))
     assert rc == 0
-    assert runner.calls[0]["timeout_sec"] == 45 * 60  # dev-story
-    assert runner.calls[1]["timeout_sec"] == 20 * 60  # code-review
+    # calls[0] is now the plan-gate; dev-story + code-review shift to calls[1] / calls[2]
+    assert runner.calls[1]["timeout_sec"] == 45 * 60  # dev-story
+    assert runner.calls[2]["timeout_sec"] == 20 * 60  # code-review
 
 
 # ---------------------------------------------------------------------------
@@ -1248,6 +1266,7 @@ def test_auto_merge_not_completed_halts(tmp_path, monkeypatch):
 
     runner = MockRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
             AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),
@@ -1334,6 +1353,7 @@ def test_in_progress_story_reenters_dev_not_create(tmp_path, monkeypatch):
 
     runner = MockRunner(
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (before dev)
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),  # dev-story
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),  # code-review
             AgentResult(raw="", text="SMOKE_PASS: ok.", cost_usd=0.5),  # smoke
@@ -1343,10 +1363,12 @@ def test_in_progress_story_reenters_dev_not_create(tmp_path, monkeypatch):
     assert rc == 0
     kinds = [e["event"] for e in _events(state)]
     assert "dev-gate" in kinds  # dev-story ran -> re-entered at dev
-    # the FIRST agent call is dev-story, not create-story (no create on resume)
-    first_prompt = runner.calls[0].get("prompt", "")
-    assert "bmad-dev-story" in first_prompt
-    assert "bmad-create-story" not in first_prompt
+    # calls[0] is the plan-gate; the dev-story call (calls[1]) invokes bmad-dev-story, NOT
+    # create-story (no create-story on a resume of an in-progress story).
+    assert "bmad-create-story" not in runner.calls[0].get("prompt", "")
+    dev_prompt = runner.calls[1].get("prompt", "")
+    assert "bmad-dev-story" in dev_prompt
+    assert "bmad-create-story" not in dev_prompt
 
 
 def test_review_story_reenters_review_skips_dev(tmp_path, monkeypatch):
@@ -1418,7 +1440,7 @@ def _patch_run_gate(monkeypatch, results):
     """Stub loop.gate.run_gate to yield `results` in order (repeating the last)."""
     calls = {"n": 0}
 
-    def fake(stages, cwd):
+    def fake(stages, cwd, fail_fast=False):
         idx = min(calls["n"], len(results) - 1)
         calls["n"] += 1
         return results[idx]

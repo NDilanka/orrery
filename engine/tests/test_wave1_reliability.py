@@ -445,7 +445,10 @@ def test_dev_story_green_gate_but_status_not_advanced_halts(tmp_path, monkeypatc
     root = _init_project(tmp_path, status="ready-for-dev")
     state = tmp_path / "state"
     _patch_externals(monkeypatch)
-    runner = _StaticRunner([AgentResult(raw="", text="dev complete", cost_usd=1.0)])
+    runner = _StaticRunner([
+        AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (before dev)
+        AgentResult(raw="", text="dev complete", cost_usd=1.0),  # dev-story (leaves status stale)
+    ])
     cfg = driver.BmadConfig(project_root=str(root), gate_stages=_gate_stages(), no_merge=True)
     rc = driver.run(cfg, runner=runner, state_dir=str(state))
     assert rc == 1
@@ -492,6 +495,7 @@ def test_dev_story_status_advanced_proceeds_through_pipeline(tmp_path, monkeypat
     runner = _AdvancingRunner(
         story_md,
         [
+            AgentResult(raw="", text="PLAN_OK", cost_usd=0.0),  # plan-gate (before dev)
             AgentResult(raw="", text="dev complete; status: review", cost_usd=1.0),
             AgentResult(raw="", text="REVIEW_COMPLETE: clean.", cost_usd=0.2),
             AgentResult(raw="", text="SMOKE_PASS: verified.", cost_usd=0.3),

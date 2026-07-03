@@ -642,6 +642,137 @@ def token_usage_event(
     return o
 
 
+def verify_event(
+    story: str,
+    verdict: str,
+    reason: str | None = None,
+    cum: float = 0.0,
+) -> dict[str, Any]:
+    """Additive ``verify`` event — the adversarial verify-before-merge verdict for one story.
+
+    NEW (no PowerShell equivalent): NOT part of the golden corpus and NOT added to
+    ``gen_golden.ps1``; the reducer logs-but-ignores unknown events, so this is
+    backward-compatible (same contract as :func:`metrics_event` / :func:`token_usage_event`).
+
+    ``verdict`` is one of ``"pass"`` | ``"refute"`` | ``"skipped"`` | ``"inconclusive"``. On a
+    ``refute`` the PR is blocked and the driver halts; ``skipped`` (no baseline diff available)
+    and ``inconclusive`` (no parseable verdict / errored / timed-out call) both FAIL-OPEN and let
+    the story proceed.
+    """
+    return {
+        "event": "verify",
+        "story": story,
+        "verdict": verdict,
+        "reason": reason,
+        "cum": cum,
+    }
+
+
+def test_integrity_event(
+    story: str,
+    deleted: list[str],
+    modified: list[str],
+    ok: bool,
+    cum: float = 0.0,
+) -> dict[str, Any]:
+    """Additive ``test-integrity`` event — git-based tamper check on PRE-EXISTING test files.
+
+    NEW (no PowerShell equivalent); additive/ignored by the reducer like :func:`metrics_event`.
+    ``deleted`` are PRE-EXISTING test files removed on the branch (a tamper — halts unless
+    ``test_integrity_halt_on_deletion`` is off); ``modified`` are pre-existing test files edited
+    in place (NOT a halt — BMAD legitimately touches tests — but fed to the adversarial verifier
+    to scrutinize). ``ok`` is False when a deletion was found.
+    """
+    return {
+        "event": "test-integrity",
+        "story": story,
+        "deleted": list(deleted),
+        "modified": list(modified),
+        "ok": bool(ok),
+        "cum": cum,
+    }
+
+
+def plan_check_event(
+    story: str,
+    ok: bool,
+    verdict: str,
+    reason: str | None = None,
+    cum: float = 0.0,
+) -> dict[str, Any]:
+    """Additive ``plan-check`` event — the plan-gate verdict before dev-story.
+
+    NEW (no PowerShell equivalent); additive/ignored by the reducer like :func:`metrics_event`.
+    ``verdict`` is one of ``"ok"`` | ``"blocked"`` | ``"inconclusive"``. ``blocked`` halts the
+    story; ``ok`` and ``inconclusive`` (unparseable / errored / timed-out call) both proceed.
+    """
+    return {
+        "event": "plan-check",
+        "story": story,
+        "ok": bool(ok),
+        "verdict": verdict,
+        "reason": reason,
+        "cum": cum,
+    }
+
+
+def bmad_metrics_event(
+    stories_completed: int,
+    stories_halted: int,
+    dev_gates: int,
+    reviews: int,
+    smoke_iters: int,
+    prs_created: int,
+    prs_merged: int,
+    retros: int,
+    plan_checks: int,
+    verifies: int,
+    gate_reds: int,
+    flaky_retries: int,
+    quota_waits: int,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    hit_ratio: float,
+    cum_usd: float,
+    duration_sec: float,
+) -> dict[str, Any]:
+    """Additive BMAD-flavored ``metrics`` event — a zero-token run-quality summary at stop.
+
+    Distinct FLAVOR from the generic-loop :func:`metrics_event` (which is iteration-shaped:
+    firstTryGreen / itersToGreen). A BMAD run has no ``iter`` events, so the generic
+    :func:`loop.metrics.compute_metrics` shapes don't apply; this carries the BMAD pipeline's own
+    clearly-named counters instead. Same additive contract: ``event`` is ``"metrics"`` (camelCase
+    fields, consistent with the core metrics event's naming), NOT part of the golden corpus, and
+    logged-but-ignored by the reducer. Computed purely from the emitted event stream + the wall
+    clock, so it costs ZERO model tokens.
+    """
+    return {
+        "event": "metrics",
+        "storiesCompleted": int(stories_completed),
+        "storiesHalted": int(stories_halted),
+        "devGates": int(dev_gates),
+        "reviews": int(reviews),
+        "smokeIters": int(smoke_iters),
+        "prsCreated": int(prs_created),
+        "prsMerged": int(prs_merged),
+        "retros": int(retros),
+        "planChecks": int(plan_checks),
+        "verifies": int(verifies),
+        "gateReds": int(gate_reds),
+        "flakyRetries": int(flaky_retries),
+        "quotaWaits": int(quota_waits),
+        "inputTokens": int(input_tokens),
+        "outputTokens": int(output_tokens),
+        "cacheReadTokens": int(cache_read_tokens),
+        "cacheCreationTokens": int(cache_creation_tokens),
+        "hitRatio": round(float(hit_ratio), 4),
+        "cumUsd": round(float(cum_usd), 4),
+        "durationSec": round(float(duration_sec), 3),
+    }
+
+
 def supervisor_restart_event(
     attempt: int,
     exit_code: int,

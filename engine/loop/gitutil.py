@@ -100,3 +100,33 @@ def diff_name_only(cwd, base: str, *, max_files: int = 40) -> list[str]:
         return []
     files = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
     return files[:max_files]
+
+
+def diff_name_status(cwd, base: str) -> list[tuple[str, str]]:
+    """``git diff --name-status -M <base> HEAD`` -> list of ``(status, path)`` pairs.
+
+    ``status`` is git's single-letter code: ``A`` added, ``M`` modified, ``D`` deleted,
+    ``R`` renamed (a rename line is ``R<score>\\told\\tnew`` — reported here as ``("R", new)``,
+    since a renamed test file is NOT a deletion). ``-M`` enables rename detection so an in-place
+    move isn't miscounted as a delete+add. Returns ``[]`` on any git failure or a falsy ``base``;
+    never raises (like :func:`_git`). Used by the driver's test-integrity check to spot deleted /
+    in-place-edited PRE-EXISTING test files (survives crash/resume — no state file, git is truth).
+    """
+    if not base:
+        return []
+    r = _git(["diff", "--name-status", "-M", base, "HEAD"], cwd)
+    if r.returncode != 0:
+        return []
+    out: list[tuple[str, str]] = []
+    for ln in (r.stdout or "").splitlines():
+        parts = ln.rstrip("\n").split("\t")
+        if len(parts) < 2:
+            continue
+        code = parts[0].strip()
+        letter = code[:1].upper() if code else ""
+        # For a rename (R<score>) / copy (C<score>), the DESTINATION path is the last column.
+        path = parts[-1].strip()
+        if not path:
+            continue
+        out.append((letter, path))
+    return out
