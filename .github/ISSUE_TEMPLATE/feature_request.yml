@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose an improvement to the engine or the Orrery app.
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For protocol or visualization changes, reference the relevant section of
+        `orrery/PROTOCOL.md` — the wire protocol is canonical.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, or what is painful?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. Concrete beats abstract.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you've tried or rejected.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - Orrery app (Tauri/Svelte visualizer)
+        - Engine (Python loop / runners / gate)
+        - Docs / build / CI
+    validations:
+      required: true
