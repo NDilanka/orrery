@@ -53,6 +53,8 @@ loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examp
 # for real: add --runner claude
 ```
 
+If you install into a virtualenv, activate it first so `loop` lands on your PATH (`source .venv/bin/activate`, or `.venv\Scripts\activate` on Windows). The dry-run prints a red-looking baseline (`0/2 pass green=False`) before `DryRun OK` — that's the example's deliberate bug, not a problem.
+
 Live runs need the [`claude` CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated. **Be clear-eyed: a real loop spends your Claude quota or API money on every iteration.** Cost ceilings are on by default, but you set them.
 
 ## How it works

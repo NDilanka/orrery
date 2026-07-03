@@ -6,6 +6,19 @@ changes between minor versions.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-03
+
+### Changed — open-source restructure
+- Repo reshaped for public use: legacy PS demo moved under `legacy/demo/`, internal
+  working docs dropped, design essay now at `docs/loop-engineering.md`.
+- Private seeded loops replaced by a generic `webapp-qa` template; the `bmad` seed and
+  all tests/comments scrubbed of project-specific paths.
+- Portability: orrery's loops-dir default is now resolved at build time (override with
+  `VITE_LOOPS_DIR`); the BMAD smoke-phase prompt derives dev/test/lint commands from the
+  configured gate stages instead of hardcoding bun.
+- New README (hero GIF + screenshots in `docs/assets/`, zero-cost replay quickstart,
+  architecture diagram) and GitHub issue/PR templates.
+
 ### Added — quality machinery wired into the BMAD loop (default-on)
 - **Adversarial verify-before-merge**: an independent, refute-biased checker (Haiku,
   single-turn) sees only the story's frozen acceptance criteria + the baseline→HEAD diff,
