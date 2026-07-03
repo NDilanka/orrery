@@ -14,6 +14,10 @@
   import { runStore } from '../stores/run.svelte';
 
   const m = $derived(runStore.state.metrics);
+  // BMAD flavor of the `metrics` event — a DIFFERENT field set (pipeline counters) than the
+  // generic-loop `metrics` above. When it arrived we render its shape; a run only ever emits one
+  // flavor, so both are never present at once (BMAD wins the {#if} if it somehow is).
+  const bm = $derived(runStore.state.bmadMetrics);
 
   function fmtUsd(n: number | null): string {
     return n == null ? '—' : '$' + n.toFixed(2);
@@ -24,12 +28,54 @@
   function fmtInt(n: number | null): string {
     return n == null ? '—' : String(n);
   }
+  function fmtDur(sec: number): string {
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return `${s}s`;
+    const min = Math.floor(s / 60);
+    if (min < 60) return `${min}m`;
+    return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m`;
+  }
 </script>
 
 <section class="metrics panel" aria-labelledby="metrics-heading">
   <h2 id="metrics-heading" class="panel-hd">RUN QUALITY</h2>
 
-  {#if m}
+  {#if bm}
+    <!-- BMAD-flavored run summary (pipeline counters). Only the fields the event carries are
+         shown; nothing is fabricated for a flavor that didn't arrive. -->
+    <div class="grid">
+      <div class="cell good">
+        <span class="mlabel">stories done</span>
+        <span class="mval num">{bm.storiesCompleted}</span>
+      </div>
+      <div class="cell {bm.storiesHalted > 0 ? 'miss' : ''}">
+        <span class="mlabel">halted</span>
+        <span class="mval num">{bm.storiesHalted}</span>
+      </div>
+      <div class="cell">
+        <span class="mlabel">PRs merged</span>
+        <span class="mval num">{bm.prsMerged}/{bm.prsCreated}</span>
+      </div>
+      <div class="cell">
+        <span class="mlabel">verifies</span>
+        <span class="mval num">{bm.verifies}</span>
+      </div>
+      <div class="cell">
+        <span class="mlabel">plan checks</span>
+        <span class="mval num">{bm.planChecks}</span>
+      </div>
+      <div class="cell">
+        <span class="mlabel">gate reds</span>
+        <span class="mval num {bm.gateReds > 0 ? 'warn' : ''}">{bm.gateReds}</span>
+      </div>
+    </div>
+    <div class="foot mono">
+      {bm.devGates} dev gates · {fmtUsd(bm.cumUsd)} · {fmtDur(bm.durationSec)} · cache {fmtPct(
+        bm.hitRatio,
+      )}{#if bm.flakyRetries > 0} · {bm.flakyRetries} flaky{/if}{#if bm.quotaWaits > 0} · {bm.quotaWaits}
+        quota wait{bm.quotaWaits === 1 ? '' : 's'}{/if}
+    </div>
+  {:else if m}
     <div class="grid">
       <div class="cell first {m.firstTryGreen ? 'good' : 'miss'}">
         <span class="mlabel">first-try green</span>

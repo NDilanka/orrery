@@ -1,0 +1,18 @@
+{"event":"engine-start","mergeBase":"main"}
+{"event":"start","target":"1-1-alpha","branch":"develop","baselinePass":10}
+{"event":"story-start","story":"1-1-alpha","status":"in-progress","epic":"1","index":1}
+{"event":"plan-check","story":"1-1-alpha","ok":true,"verdict":"ok","reason":null,"cum":0.5}
+{"event":"dev-gate","story":"1-1-alpha","cum":3.0,"green":true,"pass":12,"fail":0,"total":12,"baselinePass":10,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"test-integrity","story":"1-1-alpha","deleted":[],"modified":["tests/test_alpha.py"],"ok":true,"cum":3.0}
+{"event":"verify","story":"1-1-alpha","verdict":"pass","reason":null,"cum":4.0}
+{"event":"pr-created","story":"1-1-alpha","branch":"develop","base":"develop","url":"https://example/pr/1"}
+{"event":"pr-merged","story":"1-1-alpha","base":"develop","pr":"https://example/pr/1"}
+{"event":"story-start","story":"1-2-beta","status":"in-progress","epic":"1","index":2}
+{"event":"plan-check","story":"1-2-beta","ok":true,"verdict":"ok","reason":null,"cum":4.5}
+{"event":"dev-gate","story":"1-2-beta","cum":7.0,"green":true,"pass":14,"fail":0,"total":14,"baselinePass":12,"status":"review","codegenOk":true,"lintOk":true,"testOk":true}
+{"event":"test-integrity","story":"1-2-beta","deleted":["tests/test_core.py"],"modified":[],"ok":false,"cum":7.0}
+{"event":"verify","story":"1-2-beta","verdict":"refute","reason":"output contradicts AC-3: pagination is not implemented","cum":8.0}
+{"event":"story-start","story":"1-3-gamma","status":"in-progress","epic":"1","index":3}
+{"event":"plan-check","story":"1-3-gamma","ok":false,"verdict":"blocked","reason":"plan omits the migration step required by AC-2","cum":8.2}
+{"event":"metrics","storiesCompleted":1,"storiesHalted":1,"devGates":2,"reviews":0,"smokeIters":0,"prsCreated":1,"prsMerged":1,"retros":0,"planChecks":3,"verifies":2,"gateReds":0,"flakyRetries":0,"quotaWaits":0,"inputTokens":120000,"outputTokens":24000,"cacheReadTokens":900000,"cacheCreationTokens":60000,"hitRatio":0.88,"cumUsd":8.2,"durationSec":1830.5}
+{"event":"stop","ok":false,"reason":"plan gate blocked 1-3-gamma","cum":8.2}

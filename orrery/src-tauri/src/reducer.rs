@@ -86,6 +86,9 @@ impl Reducer {
             // ---- Core engine v3 additions -------------------------------------------
             "metrics" => self.on_metrics(obj),
             "token-usage" => self.on_token_usage(obj),
+            "verify" => self.on_verify(obj, ts),
+            "test-integrity" => self.on_test_integrity(obj, ts),
+            "plan-check" => self.on_plan_check(obj, ts),
 
             // ---- Quota --------------------------------------------------------------
             "quota-hit" => self.on_quota_hit(obj, ts),
@@ -480,8 +483,39 @@ impl Reducer {
 
     /// A run-quality fold of the event stream, emitted once at stop. Idempotent
     /// (last one wins); itersToGreen/costToGreen are null when never green.
-    /// Mirrors reduce.ts `case 'metrics'` — same field-by-field defaults so goldens agree.
+    ///
+    /// Two FLAVORS share `event:"metrics"`: the generic-loop shape (iteration-shaped:
+    /// firstTryGreen / itersToGreen) and the BMAD shape (pipeline counters: storiesCompleted /
+    /// devGates / …). Discriminate on `storiesCompleted` being present (a BMAD-only field) and
+    /// route to the matching field — never crash on either, and a run only ever emits one flavor.
+    /// Mirrors reduce.ts `case 'metrics'` — same discrimination + field-by-field defaults so
+    /// goldens agree.
     fn on_metrics(&mut self, obj: &Value) {
+        if obj.get("storiesCompleted").is_some() {
+            self.state.bmad_metrics = Some(BmadMetrics {
+                stories_completed: obj.get("storiesCompleted").and_then(Value::as_i64).unwrap_or(0),
+                stories_halted: obj.get("storiesHalted").and_then(Value::as_i64).unwrap_or(0),
+                dev_gates: obj.get("devGates").and_then(Value::as_i64).unwrap_or(0),
+                reviews: obj.get("reviews").and_then(Value::as_i64).unwrap_or(0),
+                smoke_iters: obj.get("smokeIters").and_then(Value::as_i64).unwrap_or(0),
+                prs_created: obj.get("prsCreated").and_then(Value::as_i64).unwrap_or(0),
+                prs_merged: obj.get("prsMerged").and_then(Value::as_i64).unwrap_or(0),
+                retros: obj.get("retros").and_then(Value::as_i64).unwrap_or(0),
+                plan_checks: obj.get("planChecks").and_then(Value::as_i64).unwrap_or(0),
+                verifies: obj.get("verifies").and_then(Value::as_i64).unwrap_or(0),
+                gate_reds: obj.get("gateReds").and_then(Value::as_i64).unwrap_or(0),
+                flaky_retries: obj.get("flakyRetries").and_then(Value::as_i64).unwrap_or(0),
+                quota_waits: obj.get("quotaWaits").and_then(Value::as_i64).unwrap_or(0),
+                input_tokens: obj.get("inputTokens").and_then(Value::as_i64).unwrap_or(0),
+                output_tokens: obj.get("outputTokens").and_then(Value::as_i64).unwrap_or(0),
+                cache_read_tokens: obj.get("cacheReadTokens").and_then(Value::as_i64).unwrap_or(0),
+                cache_creation_tokens: obj.get("cacheCreationTokens").and_then(Value::as_i64).unwrap_or(0),
+                hit_ratio: obj.get("hitRatio").and_then(Value::as_f64).unwrap_or(0.0),
+                cum_usd: obj.get("cumUsd").and_then(Value::as_f64).unwrap_or(0.0),
+                duration_sec: obj.get("durationSec").and_then(Value::as_f64).unwrap_or(0.0),
+            });
+            return;
+        }
         self.state.metrics = Some(Metrics {
             first_try_green: obj.get("firstTryGreen").and_then(Value::as_bool).unwrap_or(false),
             iters_to_green: obj.get("itersToGreen").and_then(Value::as_i64),
@@ -492,6 +526,69 @@ impl Reducer {
             total_cost: obj.get("totalCost").and_then(Value::as_f64).unwrap_or(0.0),
             final_green: obj.get("finalGreen").and_then(Value::as_bool).unwrap_or(false),
         });
+    }
+
+    /// `verify` — the adversarial verify-before-merge verdict per story. Keyed by `story`, last
+    /// write wins (idempotent, like `verdicts`). `cum` folds into the running-max like every other
+    /// cost-bearing agent call (gate/dev-gate). Mirrors reduce.ts `case 'verify'`.
+    fn on_verify(&mut self, obj: &Value, ts: f64) {
+        self.bump_cum(obj, ts);
+        let story = match obj.get("story").and_then(Value::as_str) {
+            Some(s) => s.to_string(),
+            None => return,
+        };
+        self.state.verifies.insert(
+            story,
+            Verify {
+                verdict: obj.get("verdict").and_then(Value::as_str).unwrap_or("inconclusive").to_string(),
+                reason: obj.get("reason").and_then(Value::as_str).map(String::from),
+                cum: obj.get("cum").and_then(Value::as_f64).unwrap_or(0.0),
+            },
+        );
+    }
+
+    /// `test-integrity` — git tamper check on pre-existing test files per story. Keyed by `story`,
+    /// last write wins. `cum` folds into the running-max. Mirrors reduce.ts `case 'test-integrity'`.
+    fn on_test_integrity(&mut self, obj: &Value, ts: f64) {
+        self.bump_cum(obj, ts);
+        let story = match obj.get("story").and_then(Value::as_str) {
+            Some(s) => s.to_string(),
+            None => return,
+        };
+        let strs = |key: &str| -> Vec<String> {
+            obj.get(key)
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default()
+        };
+        self.state.test_integrity.insert(
+            story,
+            TestIntegrity {
+                deleted: strs("deleted"),
+                modified: strs("modified"),
+                ok: obj.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                cum: obj.get("cum").and_then(Value::as_f64).unwrap_or(0.0),
+            },
+        );
+    }
+
+    /// `plan-check` — the plan-gate verdict before dev-story per story. Keyed by `story`, last write
+    /// wins. `cum` folds into the running-max. Mirrors reduce.ts `case 'plan-check'`.
+    fn on_plan_check(&mut self, obj: &Value, ts: f64) {
+        self.bump_cum(obj, ts);
+        let story = match obj.get("story").and_then(Value::as_str) {
+            Some(s) => s.to_string(),
+            None => return,
+        };
+        self.state.plan_checks.insert(
+            story,
+            PlanCheck {
+                ok: obj.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                verdict: obj.get("verdict").and_then(Value::as_str).unwrap_or("inconclusive").to_string(),
+                reason: obj.get("reason").and_then(Value::as_str).map(String::from),
+                cum: obj.get("cum").and_then(Value::as_f64).unwrap_or(0.0),
+            },
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1191,5 +1288,52 @@ mod tests {
         assert_eq!(m.total_iters, 2);
         assert_eq!(m.iters_to_green, Some(2));
         assert!(m.final_green);
+    }
+
+    #[test]
+    fn metrics_flavor_is_discriminated_by_stories_completed() {
+        // The BMAD flavor (has `storiesCompleted`) routes to `bmadMetrics`, leaving generic
+        // `metrics` null; the generic flavor does the reverse. Both must reduce without crashing.
+        let bmad = vec![serde_json::json!({
+            "event":"metrics","storiesCompleted":3,"storiesHalted":1,"devGates":4,"reviews":2,
+            "smokeIters":1,"prsCreated":3,"prsMerged":2,"retros":1,"planChecks":4,"verifies":3,
+            "gateReds":1,"flakyRetries":0,"quotaWaits":2,"inputTokens":100,"outputTokens":20,
+            "cacheReadTokens":900,"cacheCreationTokens":50,"hitRatio":0.9,"cumUsd":12.5,"durationSec":600.0
+        })];
+        let state = reduce_events("x", "bmad", &bmad);
+        assert!(state.metrics.is_none(), "generic metrics must stay null for the BMAD flavor");
+        let bm = state.bmad_metrics.expect("bmadMetrics set");
+        assert_eq!(bm.stories_completed, 3);
+        assert_eq!(bm.prs_merged, 2);
+        assert_eq!(bm.quota_waits, 2);
+
+        let generic = vec![serde_json::json!({
+            "event":"metrics","firstTryGreen":true,"itersToGreen":1,"costToGreen":0.5,
+            "rollbacks":0,"regressionRate":0.0,"totalIters":1,"totalCost":0.5,"finalGreen":true
+        })];
+        let state = reduce_events("x", "generic", &generic);
+        assert!(state.bmad_metrics.is_none(), "bmadMetrics must stay null for the generic flavor");
+        assert!(state.metrics.expect("generic metrics set").first_try_green);
+    }
+
+    #[test]
+    fn verify_test_integrity_plan_check_upsert_by_story() {
+        // The three per-story trust maps upsert by story (last write wins) and their `cum` folds
+        // into the running-max like any cost-bearing arm.
+        let events = vec![
+            serde_json::json!({"event":"plan-check","story":"1-1","ok":true,"verdict":"ok","reason":null,"cum":0.5}),
+            serde_json::json!({"event":"test-integrity","story":"1-1","deleted":[],"modified":["t.py"],"ok":true,"cum":1.0}),
+            serde_json::json!({"event":"verify","story":"1-1","verdict":"pass","reason":null,"cum":2.0}),
+            serde_json::json!({"event":"verify","story":"1-1","verdict":"refute","reason":"bad","cum":3.0}),
+        ];
+        let state = reduce_events("x", "bmad", &events);
+        assert_eq!(state.run.cum_usd, 3.0, "cum folds into running-max");
+        assert_eq!(state.plan_checks.get("1-1").unwrap().verdict, "ok");
+        assert!(state.test_integrity.get("1-1").unwrap().ok);
+        assert_eq!(state.test_integrity.get("1-1").unwrap().modified, vec!["t.py".to_string()]);
+        // last verify wins
+        let v = state.verifies.get("1-1").unwrap();
+        assert_eq!(v.verdict, "refute");
+        assert_eq!(v.reason.as_deref(), Some("bad"));
     }
 }

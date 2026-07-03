@@ -186,6 +186,57 @@ export interface Metrics {
   finalGreen: boolean;
 }
 
+// §2 engine-v3 `verify` event — adversarial verify-before-merge verdict per story.
+// verdict ∈ pass|refute|skipped|inconclusive; a `refute` blocks the merge. reason null when absent.
+export interface Verify {
+  verdict: string;
+  reason: string | null;
+  cum: number;
+}
+
+// §2 engine-v3 `test-integrity` event — git tamper check on pre-existing test files per story.
+// `deleted` (a tamper → ok:false) and `modified` (edited in place, scrutinized) are file lists.
+export interface TestIntegrity {
+  deleted: string[];
+  modified: string[];
+  ok: boolean;
+  cum: number;
+}
+
+// §2 engine-v3 `plan-check` event — plan-gate verdict before dev-story per story.
+// verdict ∈ ok|blocked|inconclusive; `blocked` halts the story. reason null when absent.
+export interface PlanCheck {
+  ok: boolean;
+  verdict: string;
+  reason: string | null;
+  cum: number;
+}
+
+// §2 engine-v3 BMAD flavor of the `metrics` event — a zero-token run-quality summary at stop.
+// Distinct field set from generic `Metrics`; the reducer discriminates on `storiesCompleted`.
+export interface BmadMetrics {
+  storiesCompleted: number;
+  storiesHalted: number;
+  devGates: number;
+  reviews: number;
+  smokeIters: number;
+  prsCreated: number;
+  prsMerged: number;
+  retros: number;
+  planChecks: number;
+  verifies: number;
+  gateReds: number;
+  flakyRetries: number;
+  quotaWaits: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  hitRatio: number;
+  cumUsd: number;
+  durationSec: number;
+}
+
 export interface RunState {
   loopId: string;
   run: RunMeta;
@@ -199,6 +250,12 @@ export interface RunState {
   metrics: Metrics | null; // run-quality summary (§2 engine-v3 `metrics` event); null until seen
   questions: Qa[];
   verdicts: Record<string, Verdict>; // by item key, latest
+  // §2 engine-v3 additive maps/summary — OMITTED (not present) until their event fires, so a state
+  // with no such events serializes byte-identically to an older reducer's (keeps goldens stable).
+  verifies?: Record<string, Verify>; // adversarial verify verdict, by story
+  testIntegrity?: Record<string, TestIntegrity>; // pre-existing-test tamper check, by story
+  planChecks?: Record<string, PlanCheck>; // plan-gate verdict, by story
+  bmadMetrics?: BmadMetrics; // BMAD-flavored run-quality summary
   events: number; // count
 }
 
@@ -302,7 +359,7 @@ export interface RawEvent {
   cumOutput?: number;
   cumCacheRead?: number;
   cumCacheCreation?: number;
-  // metrics (engine v3)
+  // metrics (engine v3 — generic flavor)
   firstTryGreen?: boolean;
   itersToGreen?: number | null;
   costToGreen?: number | null;
@@ -311,6 +368,29 @@ export interface RawEvent {
   totalIters?: number;
   totalCost?: number;
   finalGreen?: boolean;
+  // metrics (engine v3 — BMAD flavor; discriminated by `storiesCompleted` being present)
+  storiesCompleted?: number;
+  storiesHalted?: number;
+  devGates?: number;
+  reviews?: number;
+  smokeIters?: number;
+  prsCreated?: number;
+  prsMerged?: number;
+  retros?: number;
+  planChecks?: number;
+  verifies?: number;
+  gateReds?: number;
+  flakyRetries?: number;
+  quotaWaits?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  durationSec?: number;
+  // verify / test-integrity / plan-check (engine v3) — all carry `story` + `cum` (above/below).
+  // `verdict`, `ok`, `reason` are already declared above (shared with gate/smoke/verdict/stop).
+  deleted?: string[];
+  modified?: string[];
   // plateau / rollback / handoff
   k?: number;
   toIter?: number;

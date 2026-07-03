@@ -86,6 +86,33 @@ fully backward-compatible.
 // `iter.cost`, not `iter.cum`), and `cum*` are token counts, not USD, so neither fits `cumUsd`'s
 // running-max contract or the `cost.series` (built from cumulative USD samples for ratePerMin) —
 // both are intentionally left unwired to avoid corrupting that logic.
+
+{ "event": "verify", "story": string, "verdict": "pass"|"refute"|"skipped"|"inconclusive",
+  "reason": string|null, "cum": float }
+// adversarial verify-before-merge verdict per story. A `refute` blocks the PR and halts the driver;
+// `skipped` (no baseline diff) / `inconclusive` (unparseable/errored/timed-out call) both fail-open.
+// Reducer: upsert into `verifies[story]` (last write wins); `cum` folds into the running-max.
+
+{ "event": "test-integrity", "story": string, "deleted": [string], "modified": [string],
+  "ok": bool, "cum": float }
+// git tamper check on PRE-EXISTING test files. `deleted` = pre-existing tests removed on the branch
+// (a tamper → `ok:false`, halts unless disabled); `modified` = edited in place (not a halt, but fed
+// to the verifier to scrutinize). Reducer: upsert into `testIntegrity[story]`; `cum` → running-max.
+
+{ "event": "plan-check", "story": string, "ok": bool, "verdict": "ok"|"blocked"|"inconclusive",
+  "reason": string|null, "cum": float }
+// plan-gate verdict BEFORE dev-story. `blocked` halts the story; `ok`/`inconclusive` proceed.
+// Reducer: upsert into `planChecks[story]` (last write wins); `cum` folds into the running-max.
+
+{ "event": "metrics", "storiesCompleted": int, "storiesHalted": int, "devGates": int, "reviews": int,
+  "smokeIters": int, "prsCreated": int, "prsMerged": int, "retros": int, "planChecks": int,
+  "verifies": int, "gateReds": int, "flakyRetries": int, "quotaWaits": int, "inputTokens": int,
+  "outputTokens": int, "cacheReadTokens": int, "cacheCreationTokens": int, "hitRatio": float,
+  "cumUsd": float, "durationSec": float }
+// the BMAD FLAVOR of `metrics` — a zero-token pipeline summary injected once right before the
+// terminal stop. Distinct field set from the generic `metrics` above (a BMAD run has no `iter`
+// events). Reducers discriminate the two flavors on `storiesCompleted` being present, routing the
+// BMAD flavor to `bmadMetrics` and the generic flavor to `metrics` (never crashing on either).
 ```
 
 ### Quota (engine v2 — see BMAD)
@@ -184,6 +211,16 @@ interface RunState {
   cache: { hitRatio: number; warm: boolean };
   questions: Qa[];
   verdicts: Record<string, Verdict>; // by item key, latest
+  // engine-v3 additive fields (§2). OMITTED from the wire until their event fires, so a state with
+  // none of these events serializes byte-identically to an older reducer's (keeps goldens stable).
+  verifies?: Record<string, { verdict: 'pass'|'refute'|'skipped'|'inconclusive'; reason: string|null; cum: number }>;      // `verify` event, by story
+  testIntegrity?: Record<string, { deleted: string[]; modified: string[]; ok: boolean; cum: number }>;                      // `test-integrity` event, by story
+  planChecks?: Record<string, { ok: boolean; verdict: 'ok'|'blocked'|'inconclusive'; reason: string|null; cum: number }>;   // `plan-check` event, by story
+  bmadMetrics?: { storiesCompleted: number; storiesHalted: number; devGates: number; reviews: number;
+                  smokeIters: number; prsCreated: number; prsMerged: number; retros: number; planChecks: number;
+                  verifies: number; gateReds: number; flakyRetries: number; quotaWaits: number; inputTokens: number;
+                  outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; hitRatio: number;
+                  cumUsd: number; durationSec: number };                                                                    // BMAD flavor of `metrics`
   events: number;                    // count (raw events kept in a side buffer/drawer, not here)
 }
 
