@@ -20,8 +20,4 @@ export const bmadAdapter: Adapter = {
     }
     return ev;
   },
-  handles(): boolean {
-    // BMAD understands the full superset (core + bmad events)
-    return true;
-  },
 };

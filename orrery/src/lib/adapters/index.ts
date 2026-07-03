@@ -10,8 +10,6 @@ export interface Adapter {
   id: 'generic' | 'bmad' | 'custom';
   /** normalise a raw event (e.g. backfill epic); return null to drop it. */
   normalize(ev: RawEvent): RawEvent | null;
-  /** whether this adapter recognises an event name (else reducer ignores it). */
-  handles(event: string): boolean;
 }
 
 export type AdapterId = Adapter['id'];

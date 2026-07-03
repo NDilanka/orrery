@@ -15,11 +15,30 @@
     handoff: '◈',
     quota: '❄',
   };
+
+  // Cap the visible stack — a multi-loop bad night (several failures + handoffs) shouldn't
+  // fill the viewport. The store has no ordering concept of its own (plain insertion order,
+  // see alerts.svelte.ts), so severity ordering lives here: failures sort ahead of the amber
+  // kinds (handoff/quota), stable otherwise.
+  const MAX_VISIBLE = 3;
+  const SEVERITY_RANK: Record<RunAlert['kind'], number> = { failed: 0, handoff: 1, quota: 1 };
+
+  let expanded = $state(false);
+
+  let sorted = $derived(
+    [...alertStore.alerts].sort((a, b) => SEVERITY_RANK[a.kind] - SEVERITY_RANK[b.kind]),
+  );
+  let overflow = $derived(sorted.length > MAX_VISIBLE);
+  let visible = $derived(expanded ? sorted : sorted.slice(0, MAX_VISIBLE));
+  let hidden = $derived(sorted.slice(MAX_VISIBLE));
+  // never hue-alone: the summary's amber/red family is a shorthand for "does the hidden
+  // tail contain a failure", but the "+N more" text carries the actual information.
+  let hiddenHasFailure = $derived(hidden.some((a) => a.kind === 'failed'));
 </script>
 
 {#if alertStore.alerts.length}
   <div class="alerts" role="alert">
-    {#each alertStore.alerts as a (a.id)}
+    {#each visible as a (a.id)}
       <div class="bar {a.kind}" class:reduced={uiStore.reducedMotion}>
         <span class="glyph" aria-hidden="true">{GLYPH[a.kind]}</span>
         <span class="msg">{a.message}</span>
@@ -33,6 +52,18 @@
         >
       </div>
     {/each}
+    {#if overflow}
+      <button
+        type="button"
+        class="bar summary"
+        class:sev-amber={!hiddenHasFailure}
+        class:reduced={uiStore.reducedMotion}
+        onclick={() => (expanded = !expanded)}
+      >
+        <span class="glyph" aria-hidden="true">{hiddenHasFailure ? GLYPH.failed : GLYPH.handoff}</span>
+        <span class="msg">{expanded ? 'show less' : `+${hidden.length} more`}</span>
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -74,6 +105,27 @@
   .bar.handoff {
     background: color-mix(in srgb, var(--amber) 14%, var(--void-2));
     border-bottom-color: color-mix(in srgb, var(--amber) 35%, transparent);
+  }
+  /* summary row (overflow cap) — a real <button> so it's keyboard-reachable; reset the
+     native button chrome back to the plain `.bar` look. `.sev-amber` is a severity
+     shorthand (not a real alert kind) for "no failure in the hidden tail"; unset it falls
+     through to the base crimson tint above, same family as a failed alert. */
+  .bar.summary {
+    appearance: none;
+    width: 100%;
+    margin: 0;
+    border: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--crimson) 35%, transparent);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .bar.summary.sev-amber {
+    background: color-mix(in srgb, var(--amber) 14%, var(--void-2));
+    border-bottom-color: color-mix(in srgb, var(--amber) 35%, transparent);
+  }
+  .bar.summary.sev-amber .glyph {
+    color: var(--amber);
   }
   .glyph {
     flex: none;
