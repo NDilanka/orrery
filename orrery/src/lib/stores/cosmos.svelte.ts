@@ -198,6 +198,11 @@ class CosmosStore {
   loading = $state(true);
   source = $state<'tauri' | 'dev'>('dev');
   error = $state<string | null>(null);
+  // Set only when we're running under Tauri and the real backend load failed,
+  // forcing the fixture fallback below — i.e. the Cosmos LOOKS populated but is
+  // showing fake demo data. Non-Tauri dev mode (fixtures are the intended source
+  // there) must never set this. Cleared on the next successful Tauri load.
+  backendError = $state<string | null>(null);
 
   // ── A5 Tuning Console ──────────────────────────────────────────────────────
   // `console` is null when closed; otherwise it carries the edit target (an
@@ -213,12 +218,20 @@ class CosmosStore {
       if (hasTauri()) {
         this.source = 'tauri';
         await this.loadTauri();
+        // a real backend load just succeeded — any prior "showing demo fixtures" warning is stale
+        this.backendError = null;
       } else {
         this.source = 'dev';
         await this.loadDev();
       }
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      const detail = e instanceof Error ? e.message : String(e);
+      this.error = detail;
+      // Tauri backend failed — we're about to silently fall back to fixtures below.
+      // Record that (never set in plain-browser dev, where fixtures ARE the source).
+      if (this.source === 'tauri') {
+        this.backendError = `couldn't list loops at ${DEFAULT_LOOPS_DIR} — ${detail}`;
+      }
       // dev fallback so the Cosmos is never blank even if Tauri commands fail
       if (this.loops.length === 0) {
         try {

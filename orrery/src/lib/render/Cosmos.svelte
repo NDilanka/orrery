@@ -56,6 +56,11 @@
   // it without creating a loop and it stays gone for the rest of this visit.
   let onboardingDismissed = $state(false);
 
+  // Session-local dismiss for the "showing demo fixtures" backend-error strip below.
+  // Holds the LAST dismissed message so a *changed* backendError (a new/different
+  // failure) re-shows the strip instead of staying suppressed forever.
+  let dismissedBackendError = $state<string | null>(null);
+
   // M5.1 (docs/ui-modernization-plan.md §6): the canvas-only jewel-tone scene palette
   // (atmosphere tint + the runCore burn-white) — same fallback literals as theme.ts's
   // FALLBACK.scene, reused here so `C.scene` has a valid value before onMount resolves
@@ -824,6 +829,26 @@
       <button class="retry" onclick={() => cosmosStore.load()}>retry</button>
     </div>
   {/if}
+
+  <!-- backend-unreachable strip (fix-wave): Tauri's real loop registry failed to load
+       and the Cosmos silently fell back to demo fixtures — without this, the roster
+       still looks perfectly healthy while showing fake data. Amber (needs-you/warning
+       taxonomy — this isn't a crash), mirrors .errline's crimson pill but its own slim
+       strip pinned just below the top rail so it never competes with the centered
+       needsbadge/filters row. Session-local dismiss; re-shown if the message changes. -->
+  {#if cosmosStore.backendError && cosmosStore.backendError !== dismissedBackendError}
+    <div class="backend-strip floating-card" role="alert">
+      <span class="bs-glyph" aria-hidden="true">⚠</span>
+      <span class="bs-msg mono">backend unreachable — showing demo fixtures · {cosmosStore.backendError}</span>
+      <button
+        class="bs-x"
+        aria-label="dismiss backend warning"
+        onclick={() => (dismissedBackendError = cosmosStore.backendError)}
+      >
+        ✕
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -1314,6 +1339,60 @@
   }
   .retry:hover {
     border-color: var(--brass);
+  }
+
+  /* ── backend-unreachable strip — amber taxonomy (needs-you/warning, not a crash),
+     mirrors .errline's crimson pill above but sits in its own row clear of the
+     centered needsbadge (chrome-inset)/filters (chrome-inset+46) band so the three
+     never stack on top of each other when all happen to be present at once. */
+  .backend-strip {
+    position: absolute;
+    top: calc(var(--chrome-inset) + 84px);
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(640px, calc(100vw - 2 * var(--space-5)));
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    border-color: color-mix(in srgb, var(--status-warn-core) 40%, var(--panel-edge));
+    z-index: var(--z-scene-overlay);
+  }
+  .bs-glyph {
+    flex: none;
+    font-size: var(--text-sm);
+    color: var(--status-warn-core);
+    line-height: 1;
+  }
+  .bs-msg {
+    min-width: 0;
+    font-size: var(--text-xs);
+    color: var(--text-meta);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bs-x {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--text-faint);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-2xs);
+    cursor: pointer;
+    pointer-events: auto;
+    transition: border-color var(--dur-fast) var(--ease-standard),
+      color var(--dur-fast) var(--ease-standard);
+  }
+  .bs-x:hover {
+    border-color: var(--panel-edge);
+    color: var(--starlight);
   }
 
   /* phone: the centred needs-you badge has nowhere to go on a ~360-390px width
