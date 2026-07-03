@@ -91,7 +91,7 @@ def test_run_full_pass_with_fake_agent(tmp_path):
     mpath = tmp_path / "ac-manifest.json"
     mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
     state = tmp_path / "state"
-    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="webapp")
 
     events: list[dict] = []
 
@@ -142,7 +142,7 @@ def test_run_blocks_epic_when_agent_writes_nothing(tmp_path):
     mpath = tmp_path / "ac-manifest.json"
     mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
     state = tmp_path / "state"
-    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="webapp")
 
     events: list[dict] = []
 
@@ -206,7 +206,7 @@ def test_run_takes_the_shared_lock_and_refuses_when_live(tmp_path, monkeypatch):
     mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
-    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="webapp")
 
     other_pid = os.getpid() + 1
     (state / lockfile.LOCK_NAME).write_text(str(other_pid), encoding="utf-8")
@@ -225,7 +225,7 @@ def test_run_acquires_and_releases_the_lock_on_a_clean_run(tmp_path):
     mpath = tmp_path / "ac-manifest.json"
     mpath.write_text(json.dumps(_manifest()), encoding="utf-8")
     state = tmp_path / "state"
-    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="brain2")
+    cfg = QaConfig(project_root=str(tmp_path), manifest_path=str(mpath), app="webapp")
 
     def silent_invoke(prompt: str, *, timeout_sec: int) -> InvokeResult:
         return InvokeResult(raw="", text="", cost_usd=0.0, is_error=True, timed_out=True)
@@ -237,17 +237,17 @@ def test_run_acquires_and_releases_the_lock_on_a_clean_run(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 4 — the folded brain2-qa/loop.json single-file seed (+ the deprecated but still-working
+# Task 4 — the folded webapp-qa/loop.json single-file seed (+ the deprecated but still-working
 # qa-engine.json) both parse cleanly through QaConfig.from_loop_json.
 # ---------------------------------------------------------------------------
 
 
-def test_seed_brain2_qa_loop_json_parses_with_namespaced_block(capsys):
+def test_seed_webapp_qa_loop_json_parses_with_namespaced_block(capsys):
     data = json.loads(
-        (REPO_ROOT / "orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "orrery/loops/webapp-qa/loop.json").read_text(encoding="utf-8")
     )
     cfg = QaConfig.from_loop_json(data, project_root="/p")
-    assert cfg.app == "brain2"
+    assert cfg.app == "your-webapp"
     assert cfg.effort == "high"
     assert cfg.cost_ceiling_usd == 30
     assert cfg.headless is True
@@ -258,21 +258,21 @@ def test_seed_brain2_qa_loop_json_parses_with_namespaced_block(capsys):
 
 def test_seed_qa_engine_json_still_parses_deprecated_but_working():
     data = json.loads(
-        (REPO_ROOT / "orrery/loops/brain2-qa/qa-engine.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "orrery/loops/webapp-qa/qa-engine.json").read_text(encoding="utf-8")
     )
     cfg = QaConfig.from_loop_json(data, project_root="/p")
-    assert cfg.app == "brain2"
+    assert cfg.app == "your-webapp"
     assert cfg.effort == "high"
 
 
-def test_seed_brain2_qa_loop_json_intra_loop_paths_are_relative():
+def test_seed_webapp_qa_loop_json_intra_loop_paths_are_relative():
     """A4 Task 3: stateDir/stopFlag/checkpoint + the --state-dir/--manifest/--loop-json args are
-    RELATIVE (portable); --project-root (the external brain2 repo) stays absolute, and
+    RELATIVE (portable); --project-root (the external app repo) stays absolute, and
     qa.storageState stays absolute too — it's consumed by a Playwright subprocess whose cwd is
     `project_root`, a DIFFERENT directory than this loop's own dir, so a relative value there
     would resolve against the wrong repo."""
     data = json.loads(
-        (REPO_ROOT / "orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "orrery/loops/webapp-qa/loop.json").read_text(encoding="utf-8")
     )
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
@@ -281,5 +281,6 @@ def test_seed_brain2_qa_loop_json_intra_loop_paths_are_relative():
     assert args[args.index("--state-dir") + 1] == ".loop"
     assert args[args.index("--manifest") + 1] == "ac-manifest.json"
     assert args[args.index("--loop-json") + 1] == "loop.json"
-    assert args[args.index("--project-root") + 1] == "D:/dev/brain2"
-    assert data["qa"]["storageState"].startswith("D:/dev/loop/orrery/loops/brain2-qa/.auth/")
+    assert Path(args[args.index("--project-root") + 1]).is_absolute()
+    assert Path(data["qa"]["storageState"]).is_absolute()
+    assert data["qa"]["storageState"].endswith("/.auth/storage-state.json")

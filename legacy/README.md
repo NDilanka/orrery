@@ -28,3 +28,11 @@ needs to be re-run if the wire shapes in `PROTOCOL.md` change.
 
 > Requires PowerShell 7 (`pwsh`). Nothing else in the repo depends on these scripts at
 > runtime; the supported engine is `../engine`.
+
+## `demo/` — the original sample project
+
+[`demo/`](demo) is the small TypeScript project (`roman.ts`/`calc.ts` plus their bun
+tests, with the `TASK*.md` prompts and `settings.example.json`) that the original
+PowerShell loop harness drove while the loop itself was being developed. Like the
+scripts above it is kept for **provenance** and for regenerating the golden corpus —
+it is not part of the maintained engine.

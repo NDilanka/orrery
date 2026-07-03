@@ -1,0 +1,34 @@
+{
+  "id": "webapp-qa",
+  "name": "your-webapp — functional QA (template)",
+  "theme": "aurora",
+  "kind": "external",
+  "adapter": "generic",
+  "stateDir": ".loop",
+  "logFile": "log.jsonl",
+  "stopFlag": ".loop/STOP",
+  "checkpoint": ".loop/checkpoint.json",
+  "start": {
+    "program": "loop-qa",
+    "args": [
+      "--project-root", "C:/path/to/your-webapp",
+      "--manifest", "ac-manifest.json",
+      "--state-dir", ".loop",
+      "--loop-json", "loop.json"
+    ]
+  },
+  "qa": {
+    "app": "your-webapp",
+    "baseUrl": "http://localhost:3000",
+    "specDir": "e2e/functional",
+    "storageState": "C:/path/to/loop-repo/orrery/loops/webapp-qa/.auth/storage-state.json",
+    "seedSummary": "2 lists (Work, Home). 3 todos: 'Buy milk' (open, Home), 'File expense report' (open, Work, due tomorrow), 'Water the plants' (completed, Home). User settings: darkMode=false, reminders enabled.",
+    "model": "",
+    "effort": "high",
+    "maxTurns": 120,
+    "timeoutSec": 1800,
+    "costCeilingUsd": 30,
+    "headless": true,
+    "caps": "devtools"
+  }
+}

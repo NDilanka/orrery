@@ -414,7 +414,7 @@ def test_loop_bmad_dev_server_argv_honored_from_loop_json(tmp_path):
 
 def test_loop_file_task_honored_when_no_task_flag(tmp_path, monkeypatch):
     """`--task` used to argparse-default to "TASK.md" and clobber a file-provided engine.task
-    on every run that didn't pass the flag (the brain2-regression seed's absolute task path was
+    on every run that didn't pass the flag (an external seed's absolute task path was
     silently replaced). File config is the base now; --task overrides only when passed."""
     loop_json = tmp_path / "loop.json"
     loop_json.write_text('{"engine": {"task": "SPEC/custom-task.md"}}', encoding="utf-8")

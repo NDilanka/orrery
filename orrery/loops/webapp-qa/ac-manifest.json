@@ -1,0 +1,37 @@
+{
+  "app": "your-webapp",
+  "baseUrl": "http://localhost:3000",
+  "generatedFrom": "C:\\path\\to\\your-webapp\\docs\\stories",
+  "epicCount": 1,
+  "storyCount": 2,
+  "acCount": 3,
+  "epics": [
+    {
+      "epic": 1,
+      "storyCount": 2,
+      "acCount": 3,
+      "stories": [
+        {
+          "id": "1.1",
+          "epic": 1,
+          "title": "Create and complete todos",
+          "status": "done",
+          "file": "C:\\path\\to\\your-webapp\\docs\\stories\\1-1-create-and-complete-todos.md",
+          "acCount": 2,
+          "criteria": [],
+          "acMarkdown": "### AC-1: Add a todo\n**Given** the user is on the main list view\n**When** they type 'Buy milk' into the input and press Enter\n**Then** a new todo 'Buy milk' appears at the top of the list with status open\n\n### AC-2: Complete a todo\n**Given** an open todo exists\n**When** the user clicks its checkbox\n**Then** the todo is struck through and moves to the Completed section"
+        },
+        {
+          "id": "1.2",
+          "epic": 1,
+          "title": "Filter by list",
+          "status": "done",
+          "file": "C:\\path\\to\\your-webapp\\docs\\stories\\1-2-filter-by-list.md",
+          "acCount": 1,
+          "criteria": [],
+          "acMarkdown": "### AC-1: Filter todos by list\n**Given** todos exist in both the Work and Home lists\n**When** the user selects the Work list in the sidebar\n**Then** only Work todos are shown and the header reads 'Work'"
+        }
+      ]
+    }
+  ]
+}

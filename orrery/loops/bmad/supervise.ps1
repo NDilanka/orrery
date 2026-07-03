@@ -1,24 +1,26 @@
-# supervise.ps1 — keep the brain2 BMAD loop alive with the CORRECT (--loop-json) config.
+# supervise.ps1 — keep the BMAD loop alive with the CORRECT (--loop-json) config.
 #
 # Why: the checkpoint `resume` string (used by a plain restart / orrery "Reignite") does NOT
-# carry --loop-json, so a restart silently drops back to sonnet/qa and re-hits the review cap.
-# This supervisor always relaunches with the Opus/single-pass engine config.
+# carry --loop-json, so a restart silently drops back to the default engine config and re-hits
+# the review cap. This supervisor always relaunches with the intended engine config.
 #
-# Stop it cleanly:  New-Item -ItemType File "D:\dev\loop\orrery\loops\bmad\.loop\STOP-SUPERVISOR"
+# Customize the C:\path\to\... placeholders below before use.
+#
+# Stop it cleanly:  New-Item -ItemType File "C:\path\to\loop-repo\orrery\loops\bmad\.loop\STOP-SUPERVISOR"
 #                   then (optionally)  loop-stop --state-dir <dir> --now
-# Status:           Get-Content "D:\dev\loop\orrery\loops\bmad\.loop\supervisor.log" -Tail 20
+# Status:           Get-Content "C:\path\to\loop-repo\orrery\loops\bmad\.loop\supervisor.log" -Tail 20
 
 $ErrorActionPreference = 'Continue'
-$stateDir = 'D:\dev\loop\orrery\loops\bmad\.loop'
-$exe      = 'D:\dev\loop\.venv\Scripts\loop-bmad.exe'
-$loopJson = 'D:/dev/loop/orrery/loops/bmad/bmad-engine.json'
+$stateDir = 'C:\path\to\loop-repo\orrery\loops\bmad\.loop'
+$exe      = 'C:\path\to\loop-repo\.venv\Scripts\loop-bmad.exe'
+$loopJson = 'C:/path/to/loop-repo/orrery/loops/bmad/bmad-engine.json'
 $loopArgs = @(
-    '--project-root', 'D:/dev/brain2',
+    '--project-root', 'C:/path/to/your-project',
     '--state-dir',    $stateDir,
     '--merge-base',   'develop',
     '--loop-json',    $loopJson,
-    '--no-smoke'      # browser-smoke hangs on 4-2 (env/agent issue, not a code bug — tests pass);
-                      # skip it so the loop progresses overnight, gated by codegen+lint+vitest.
+    '--no-smoke'      # optional: skip the browser-smoke phase so the loop progresses unattended,
+                      # gated by your project's codegen/lint/test stages instead.
 )
 $log      = Join-Path $stateDir 'supervisor.log'
 $sentinel = Join-Path $stateDir 'STOP-SUPERVISOR'

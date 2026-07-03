@@ -9,6 +9,7 @@ protocol in [`../orrery/PROTOCOL.md`](../orrery/PROTOCOL.md) via a golden corpus
 ## Install
 
 ```bash
+# from the repo root:
 pip install -e ./engine            # or:  uv pip install -e ./engine
 pip install -e "./engine[dev]"     # + pytest, ruff
 ```
@@ -27,7 +28,9 @@ also supported), and a gate command your project already has (`pytest`, `bun tes
 | `loop-supervise` | restart-on-failure wrapper for any of the above (thrash-guarded; see below) |
 
 ```bash
-# from the repo root — fix the bundled example (dry-run spends nothing):
+# from the repo root (the example lives at the repo-root examples/hello, not under engine/)
+# — fix the bundled example (dry-run spends nothing):
+pip install -e ./engine
 loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examples/hello/.loop --dry-run
 # for real (spends quota; needs an agent CLI on PATH):
 loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examples/hello/.loop --runner claude

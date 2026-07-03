@@ -1525,7 +1525,7 @@ def test_seed_bmad_engine_json_still_parses_deprecated_but_working():
 def test_seed_bmad_loop_json_intra_loop_paths_are_relative():
     """A4 Task 3: stateDir/stopFlag/checkpoint + the matching --state-dir/--loop-json args are
     RELATIVE (portable across machines/checkouts); only --project-root, which points OUTSIDE the
-    loop dir at the external brain2 repo, stays absolute."""
+    loop dir at the external project repo, stays absolute."""
     data = json.loads((REPO_ROOT / "orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
@@ -1534,4 +1534,6 @@ def test_seed_bmad_loop_json_intra_loop_paths_are_relative():
     assert "--state-dir" in args and args[args.index("--state-dir") + 1] == ".loop"
     assert "--loop-json" in args and args[args.index("--loop-json") + 1] == "loop.json"
     # the external project root is a different repo entirely -> must stay absolute.
-    assert args[args.index("--project-root") + 1] == "D:/dev/brain2"
+    from pathlib import PureWindowsPath
+
+    assert PureWindowsPath(args[args.index("--project-root") + 1]).is_absolute()

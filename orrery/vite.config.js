@@ -1,11 +1,27 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// Absolute path to this checkout's loops/ registry, baked in at build time so the
+// webview can hand Tauri commands ONE canonical location regardless of the app
+// process's cwd (launcher runs from orrery/, cargo from orrery/src-tauri/).
+// Override per-machine with VITE_LOOPS_DIR (env or orrery/.env). Forward slashes
+// keep the string uniform across platforms (Windows APIs accept them).
+const loopsDir = (
+  process.env.VITE_LOOPS_DIR ??
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "loops")
+).replace(/\\/g, "/");
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [sveltekit()],
+
+  define: {
+    __ORRERY_LOOPS_DIR__: JSON.stringify(loopsDir),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

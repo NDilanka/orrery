@@ -92,7 +92,7 @@ DEFAULT_GATE_STAGES: list[dict[str, Any]] = [
     {"name": "lint", "command": "bun run lint"},
     {
         "name": "test",
-        # brain2's `bun run test` is vitest. Anchor on the "Tests" label so we read the test
+        # A typical `bun run test` is vitest. Anchor on the "Tests" label so we read the test
         # count, NOT the "Test Files" count. The moment ANY test fails, vitest REORDERS the
         # summary to "Tests  <f> failed | <p> passed (<n>)" — the passed count is then no
         # longer adjacent to "Tests". `(?:\d+\s+\w+\s+\|\s+)*` skips any leading "<n> failed |"
@@ -1783,6 +1783,14 @@ def _process_story(
             model=smoke_model,
             effort=smoke_effort,
             changed_files=changed,
+            # Name the CONFIGURED dev-server + gate commands in the prompt (loop.json may
+            # configure anything — no hardcoded 'bun run *'). Callable commands (the
+            # test/extension hook) have no printable form and are skipped.
+            dev_command=" ".join(str(a) for a in config.dev_server_argv),
+            gate_commands=[
+                s["command"] for s in config.gate_stages
+                if isinstance(s.get("command"), str)
+            ],
             progress_sig=_smoke_progress_sig,
         )
         cum += res.cost
@@ -1856,7 +1864,7 @@ def _process_story(
     # --- PHASE: merge -----------------------------------------------------------
     # Discard any uncommitted churn before switching branches. Every phase commits its real work
     # via _commit_if_dirty, so the only thing that can be dirty here is THROWAWAY gate output —
-    # most often a tracked file the baseline gate's `codegen` re-emits (brain2's
+    # most often a tracked file the baseline gate's `codegen` re-emits (e.g. a generated
     # convex/_generated/api.d.ts) or line-ending normalization. This bites hardest on the
     # resume-tail ("done") path, where the baseline gate at story entry runs but NO later phase
     # commits, so the churn survives to here. Left dirty it makes the branch switch fail ("your

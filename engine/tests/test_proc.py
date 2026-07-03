@@ -103,7 +103,7 @@ def test_kill_by_name_scoped_to_within_dir(monkeypatch):
 
     from loop import proc as procmod
 
-    proj = os.path.abspath(os.path.join("X", "brain2"))
+    proj = os.path.abspath(os.path.join("X", "webapp"))
     inside = os.path.join(proj, "sub")
     outside = os.path.abspath(os.path.join("X", "orrery"))
 

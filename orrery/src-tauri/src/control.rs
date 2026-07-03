@@ -1560,14 +1560,14 @@ mod tests {
 
     #[test]
     fn list_loops_resolves_portable_seeds_under_their_own_dir() {
-        // A4 Task 3: bmad/brain2-qa/brain2-regression now ship a RELATIVE `stateDir` (".loop")
+        // A4 Task 3: bmad/webapp-qa now ship a RELATIVE `stateDir` (".loop")
         // instead of a machine-specific `D:/dev/loop/...` absolute path, same as the `hello`
         // seed. `list_loops` must still resolve each to an absolute path under that loop's own
         // dir — proving the seed edit didn't silently break on-disk-relative -> resolved-absolute
         // wiring the watcher/engine both depend on (`state_dir_of` / `resolve_under`).
         let loops_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../loops"));
         let defs = list_loops(loops_dir.to_string_lossy().to_string()).unwrap();
-        for id in ["bmad", "brain2-qa", "brain2-regression"] {
+        for id in ["bmad", "webapp-qa"] {
             let def = defs.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("{id} seed missing"));
             let want = loops_dir.join(id).join(".loop");
             assert_eq!(
@@ -1803,7 +1803,7 @@ mod tests {
             checkpoint: None,
             start: Some(StartSpec {
                 program: "loop-bmad".into(),
-                args: ["--project-root", "D:/dev/brain2", "--state-dir",
+                args: ["--project-root", "D:/dev/example-app", "--state-dir",
                        "D:/dev/loop/orrery/loops/bmad/.loop", "--no-smoke"]
                     .into_iter().map(|s| s.to_string()).collect(),
             }),
@@ -1815,7 +1815,7 @@ mod tests {
         assert!(!tokens.contains(&"d:/dev/loop/orrery/loops/bmad/.loop".to_string()), "{tokens:?}");
 
         // the REAL orchestrator (resolved exe + state-dir on its cmdline) matches → guard works
-        let real = "d:/dev/loop/.venv/scripts/loop-bmad.exe --project-root d:/dev/brain2 \
+        let real = "d:/dev/loop/.venv/scripts/loop-bmad.exe --project-root d:/dev/example-app \
                     --state-dir d:/dev/loop/orrery/loops/bmad/.loop --no-smoke";
         assert!(cmdline_matches(&tokens, real), "real loop-bmad must still match");
 

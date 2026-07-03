@@ -514,6 +514,52 @@ def test_browser_smoke_passes_on_smoke_pass_marker():
     assert runner.calls[0]["timeout_sec"] == 720
 
 
+def test_browser_smoke_prompt_uses_configured_commands_not_hardcoded_bun():
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: ok", cost_usd=0.1)])
+    log, emit = _events("smoke")
+    res = browser_smoke(
+        runner,
+        "3-4",
+        STORY_TEXT,
+        emit=emit,
+        cwd="/repo",
+        server_ctl=FakeServer(url="http://localhost:4137"),
+        gate_fn=lambda: gate(green=True),
+        max_iters=1,
+        timeout_sec=60,
+        model="sonnet",
+        dev_command="pnpm dev",
+        gate_commands=["pnpm test", "pnpm lint"],
+    )
+    assert res.ok is True
+    prompt = runner.calls[0]["prompt"]
+    assert "'pnpm dev'" in prompt
+    assert "'pnpm test' and 'pnpm lint'" in prompt
+    assert "bun run" not in prompt
+
+
+def test_browser_smoke_prompt_generic_fallback_without_commands():
+    # No configured commands -> generic wording, never a hardcoded tool.
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: ok", cost_usd=0.1)])
+    log, emit = _events("smoke")
+    browser_smoke(
+        runner,
+        "3-4",
+        STORY_TEXT,
+        emit=emit,
+        cwd="/repo",
+        server_ctl=FakeServer(url="http://localhost:4137"),
+        gate_fn=lambda: gate(green=True),
+        max_iters=1,
+        timeout_sec=60,
+        model="sonnet",
+    )
+    prompt = runner.calls[0]["prompt"]
+    assert "the dev-server command" in prompt
+    assert "the project's test and lint commands" in prompt
+    assert "bun run" not in prompt
+
+
 def test_browser_smoke_timeout_emits_timed_out_and_stops_server():
     # Two consecutive timeouts -> stop (PS rule: smokeTimeouts >= 2).
     runner = MockRunner(

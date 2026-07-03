@@ -1,6 +1,6 @@
 {
   "id": "bmad",
-  "name": "BMAD — brain2 (xynapsis) sprint",
+  "name": "BMAD — sample sprint (template)",
   "theme": "plasma",
   "kind": "external",
   "adapter": "bmad",
@@ -11,7 +11,7 @@
   "start": {
     "program": "loop-bmad",
     "args": [
-      "--project-root", "D:/dev/brain2",
+      "--project-root", "C:/path/to/your-project",
       "--state-dir", ".loop",
       "--merge-base", "develop",
       "--loop-json", "loop.json",

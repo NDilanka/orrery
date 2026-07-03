@@ -7,12 +7,14 @@ and how to set up each component.
 ## Repository layout
 
 ```
-engine/        # the loop engine — a Python package (port in progress from the .ps1 scripts)
+engine/        # the loop engine — a pip-installable Python package (the port is complete)
 orrery/        # the visualizer — a Tauri v2 + Svelte 5 + PixiJS desktop/web app
-src/           # small TypeScript demo tasks (roman / calc) the engine can drive
-loop*.ps1      # the original PowerShell engine (reference during the Python port)
-*.md           # design notes (loop-engineering.md) and docs
+examples/      # self-contained example loops (e.g. examples/hello) the engine can drive
+legacy/        # the original PowerShell engine + demo tasks (legacy/demo/), kept for reference
+docs/          # docs: capabilities.md and the design notes in loop-engineering.md
 ```
+
+For the engine's design rationale, see [`docs/loop-engineering.md`](docs/loop-engineering.md).
 
 ## The golden rule: the wire protocol is canonical
 
