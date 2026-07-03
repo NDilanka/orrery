@@ -4,7 +4,8 @@
 
    Three tiers:
      1. PRIMITIVES  — the oklch neutral ramp (--n1..--n4), the em-* text-emphasis tiers, the
-        hairline, and the two-tier status hues (--status-*-core/base).
+        hairline, the two-tier status hues (--status-*-core/base), and the CANVAS-ONLY
+        --scene-* tier (M5.1 — see that section's own comment; chrome must never reference it).
      2. SEMANTIC     — --surface-*, --text-primary, --border-* : what components consume.
      3. COMPONENT     — one-off tokens for a specific recurring shape (--accent-border-w, …).
 
@@ -22,7 +23,14 @@
    White-point raise (2026-07-03, owner: "UI looks too grayish — use pure white when needed"):
    --em-hi and --starlight were lifted to L≈0.985 (near-pure white) — see their own comments
    below for the resolved before/after hex. Everything that already referenced var(--em-hi)
-   (--status-run/ok-core, --plasma-green, --text-primary, --border-focus) follows automatically. */
+   (--status-run/ok-core, --plasma-green, --text-primary, --border-focus) follows automatically.
+
+   M5.1 (2026-07-03, "colorful cosmos, calm chrome" — docs/ui-modernization-plan.md §6)
+   SUPERSEDES M4's "only chromatic pixels are alerts" rule, but ONLY for the canvas: a new
+   --scene-* primitive tier (below) gives Pixi jewel-tone state hues with real glow. The M4
+   chrome rule stands unchanged — panels/HUD/buttons/chips stay on em-* / status-* / surface-*
+   grayscale, red/amber keep their exclusive DOM alert meaning. See the --scene-* section's
+   own comment for the full law. */
 
 :root {
   /* ══ TIER 1 — primitives ══════════════════════════════════════════════════ */
@@ -72,6 +80,26 @@
   --status-err-base: oklch(0.5 0.11 20);
   --status-idle-core: var(--em-low);
   --status-idle-base: oklch(0.35 0.008 265);
+
+  /* ══ TIER 1b — scene palette (M5.1, docs/ui-modernization-plan.md §6) ═══════════════════
+     CANVAS-SCOPED. New binding law (2026-07-03, second owner interview): "the scene is the
+     color; the chrome stays calm" — color returns, but ONLY to the two Pixi canvases
+     (Cosmos.svelte, Observatory.svelte via palette.ts's restColor()). Chrome (panels, HUD,
+     buttons, chips) must NEVER reference a --scene-* token — it stays on the em-* / status-* /
+     surface-* grayscale system above, red/amber keep their exclusive DOM alert meaning. These
+     are deliberately vivid (real glow, not the muted M4 status-base tier) since "the strict
+     monochrome read as dull" was the owner's diagnosis this wave fixes.
+     --scene-needs and --scene-fail are bare var() aliases onto the existing chrome alert
+     hues (amber/crimson) — one meaning, one color, so an alert glows the same hue on the
+     canvas as it does in a chip. */
+  --scene-run-core: oklch(0.98 0.014 85); /* near-white burn core — resolves #fdf8ee */
+  --scene-run: oklch(0.86 0.123 85); /* gold corona — resolves #f6cb6c */
+  --scene-done: oklch(0.77 0.153 163); /* emerald seal — resolves #35d298 */
+  --scene-paused: oklch(0.75 0.162 47); /* banked ember orange — resolves #ff894a */
+  --scene-quota: oklch(0.81 0.097 263); /* ice frost — resolves #a0c1ff */
+  --scene-needs: var(--status-warn-core); /* same resolved amber as chrome alerts — resolves #eab532 */
+  --scene-fail: var(--status-err-core); /* same resolved crimson as chrome alerts — resolves #f75c66 */
+  --scene-atmo: oklch(0.78 0.133 182); /* aurora teal — atmosphere/glow tint only, low alpha — resolves #28d3be */
 
   /* ── v1 core palette — M4.1 monochrome retheme: brass/cyan/amber/crimson retire as hues
      and repoint onto grayscale or the (still-chromatic) status tokens; --void/--starlight/

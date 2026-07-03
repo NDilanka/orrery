@@ -3,11 +3,21 @@
 // same status/restState → hue decision tree ("mirrors starColor", per the Cosmos comment it
 // replaced).
 //
-// M4.5 note: `restColor`'s table now encodes the M4 alert taxonomy (binding owner decision: the
-// only chromatic pixels are alerts — red = failed/crashed, amber = needs-you/handoff/quota;
-// running = white light + motion; paused/done = grayscale). Prior to this pass each canvas
-// LOCALLY patched around this table's stale hues instead of fixing it here; those overrides are
-// gone — this is now the single decision, byte-identical for both callers.
+// M5.1 note (docs/ui-modernization-plan.md §6, SUPERSEDES the M4.5 taxonomy below):
+// "the scene is the color; the chrome stays calm." `restColor` now maps onto the canvas-only
+// --scene-* jewel-tone palette (theme.ts's `scene` group) instead of the grayscale em-*/status-*
+// tones the M4 monochrome retheme pointed it at — this function feeds ONLY the two Pixi canvases
+// (verified: no chrome/DOM consumer calls it), so recoloring it cannot recolor a chip. Chrome
+// still reads status-*/em-* directly and stays monochrome + red/amber alerts; scene.needs/
+// scene.fail are themselves bare aliases of status.warn/err.core in tokens.css, so an alert is
+// still one meaning, one color, just now literally glowing on the canvas instead of reading as
+// a dim gray dot.
+//
+// (Prior M4.5 taxonomy, for history: the only chromatic pixels were alerts — red = failed/
+// crashed, amber = needs-you/handoff/quota; running = white light + motion; paused/done =
+// grayscale. Each canvas previously LOCALLY patched around this table's stale hues instead of
+// fixing it here; those overrides are gone — this is the single decision, byte-identical for
+// both callers.)
 //
 // Each component keeps its own broader Pixi color palette locally (Observatory needs model-tier /
 // planet / ring hues Cosmos never touches) — only the shared DECISION (which status/restState maps
@@ -23,17 +33,20 @@ import { theme } from './theme';
 
 function hue() {
   const t = theme();
-  // FALLBACK-safe: `em` is optional on the ThemeColors type (see theme.ts) even though the
-  // resolved table and FALLBACK both always populate it — guard so a hand-written partial
-  // ThemeColors-shaped object never crashes here.
+  // FALLBACK-safe: `em`/`scene` are optional on the ThemeColors type (see theme.ts) even
+  // though the resolved table and FALLBACK both always populate them — guard so a
+  // hand-written partial ThemeColors-shaped object never crashes here. Scene fields fall back
+  // to the pre-M5 grayscale fields (same tone the chrome still uses) if `scene` is absent.
   const em = t.em;
+  const scene = t.scene;
   return {
-    starlight: t.starlight,
-    amber: t.amber,
-    crimson: t.crimson,
-    frost: t.frost,
-    emHi: em?.hi ?? t.green,
-    emLow: em?.low ?? t.ember,
+    // M5.1 jewel-tone scene hues (docs/ui-modernization-plan.md §6) — canvas-only.
+    sceneFail: scene?.fail ?? t.crimson,
+    sceneQuota: scene?.quota ?? t.frost,
+    sceneNeeds: scene?.needs ?? t.amber,
+    sceneDone: scene?.done ?? (em?.hi ?? t.green),
+    scenePaused: scene?.paused ?? (em?.low ?? t.ember),
+    sceneRunCore: scene?.runCore ?? t.starlight,
   };
 }
 
@@ -45,28 +58,28 @@ function hue() {
  * explicit parameter rather than baked in here, keeping every OTHER hue byte-identical between
  * the two callers without forcing them to agree on the one they never did.
  *
- * M4 alert taxonomy (the only chromatic pixels are alerts — everything else is grayscale or the
- * white starlight running-light):
- *   failed-dark      -> crimson        (red alert — crashed)
- *   quota-frost      -> frost          (neutral cool gray — not an alert)
- *   handoff-beacon   -> amber          (needs-you — amber alert, never red)
- *   certified-done   -> em.hi          (near-white grayscale — "done", not an alert)
- *   stopped-ember    -> em.low         (grayscale — paused is calm, not an alert)
- *   status 'error'   -> crimson        (red alert — no restState yet, defensive)
- *   status 'running' -> starlight      (white light source; motion carries liveness, not hue)
- *   status 'quota-wait' -> frost       (same neutral as quota-frost, bare-status form)
+ * M5.1 scene taxonomy (docs/ui-modernization-plan.md §6, SUPERSEDES the M4 grayscale-alert
+ * table below for the canvas — chrome keeps reading status-* / em-* and stays monochrome):
+ *   failed-dark      -> scene.fail     (crimson — same hue as the chrome red alert)
+ *   quota-frost      -> scene.quota    (ice frost)
+ *   handoff-beacon   -> scene.needs    (amber — same hue as the chrome amber alert)
+ *   certified-done   -> scene.done     (emerald)
+ *   stopped-ember    -> scene.paused   (banked ember orange)
+ *   status 'error'   -> scene.fail     (crimson — no restState yet, defensive)
+ *   status 'running' -> scene.runCore  (near-white burn core; motion still carries liveness)
+ *   status 'quota-wait' -> scene.quota (same as quota-frost, bare-status form)
  *   else             -> fallback       (caller-supplied "healthy idle" tone)
  */
 export function restColor(status: string, restState: string | null, fallback: number): number {
   const HUE = hue();
-  if (restState === 'failed-dark') return HUE.crimson;
-  if (restState === 'quota-frost') return HUE.frost;
-  if (restState === 'handoff-beacon') return HUE.amber;
-  if (restState === 'certified-done') return HUE.emHi;
-  if (restState === 'stopped-ember') return HUE.emLow;
-  if (status === 'error') return HUE.crimson;
-  if (status === 'running') return HUE.starlight;
-  if (status === 'quota-wait') return HUE.frost;
+  if (restState === 'failed-dark') return HUE.sceneFail;
+  if (restState === 'quota-frost') return HUE.sceneQuota;
+  if (restState === 'handoff-beacon') return HUE.sceneNeeds;
+  if (restState === 'certified-done') return HUE.sceneDone;
+  if (restState === 'stopped-ember') return HUE.scenePaused;
+  if (status === 'error') return HUE.sceneFail;
+  if (status === 'running') return HUE.sceneRunCore;
+  if (status === 'quota-wait') return HUE.sceneQuota;
   return fallback;
 }
 

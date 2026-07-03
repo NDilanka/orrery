@@ -56,6 +56,21 @@
   // it without creating a loop and it stays gone for the rest of this visit.
   let onboardingDismissed = $state(false);
 
+  // M5.1 (docs/ui-modernization-plan.md §6): the canvas-only jewel-tone scene palette
+  // (atmosphere tint + the runCore burn-white) — same fallback literals as theme.ts's
+  // FALLBACK.scene, reused here so `C.scene` has a valid value before onMount resolves
+  // the live tokens (see the FALLBACK-safe guard in palette.ts's hue()).
+  const SCENE_FALLBACK = {
+    runCore: 0xfdf8ee,
+    run: 0xf6cb6c,
+    done: 0x35d298,
+    paused: 0xff894a,
+    quota: 0xa0c1ff,
+    needs: 0xeab532,
+    fail: 0xf75c66,
+    atmo: 0x28d3be,
+  };
+
   // palette — resolved from tokens.css via theme.ts (the single color source, plan §M0.4)
   // as soon as onMount runs, below; starts as the static fallback (== today's literal hex)
   // so there's a valid value even for the instant before that resolution happens.
@@ -75,6 +90,8 @@
     // specifically so Cosmos/Observatory can draw calm states off them instead of the
     // retired hue aliases; see glyphColor() below).
     em: FALLBACK.em,
+    // M5.1 — canvas-only scene hues (atmosphere tint, runCore); see SCENE_FALLBACK above.
+    scene: FALLBACK.scene ?? SCENE_FALLBACK,
   };
 
   function fmtUsd(n: number): string {
@@ -151,6 +168,7 @@
       horizonRose: t.horizonRose,
       frost: t.frost,
       em: t.em ?? FALLBACK.em,
+      scene: t.scene ?? FALLBACK.scene ?? SCENE_FALLBACK,
     };
 
     (async () => {
@@ -179,11 +197,20 @@
 
       const world = new PIXI.Container();
       app.stage.addChild(world);
+      // M5 (plan §6 "aurora-teal-led atmosphere"): a faint scene.atmo wash sitting behind
+      // EVERYTHING — reuses the same glow texture as a big soft radial, tinted teal at very
+      // low alpha so it reads as sky atmosphere, not paint. Sized on resize; a slow shimmer
+      // (frozen under reduced motion) lives in tick() below.
+      const aurora = new PIXI.Sprite(glowTex.texture);
+      aurora.anchor.set(0.5);
+      aurora.blendMode = 'screen';
+      aurora.tint = C.scene.atmo;
+      aurora.alpha = 0; // sized+set by rebuildVignette/onResize + tick
       const starfieldFar = new PIXI.Graphics(); // M2.9: two-layer parallax field, far (dim/cool/small)
       const starfieldNear = new PIXI.Graphics(); // near (brighter/bigger)
       const glowsC = new PIXI.Container(); // pooled per-glyph glow sprites (screen blend), BEHIND the discs
       const g = new PIXI.Graphics(); // all glyph discs/silhouettes/rings, redrawn each frame
-      world.addChild(starfieldFar, starfieldNear, glowsC, g);
+      world.addChild(aurora, starfieldFar, starfieldNear, glowsC, g);
 
       // M2.9: pooled glow sprite per loop id — mirrors Observatory's per-planet glow pool
       // (plan §M2.7 "pool Graphics keyed by o.key") so glow sprites aren't torn down/rebuilt
@@ -207,7 +234,9 @@
       // ── M2.9: two-tier parallax starfield data (fx.ts, same params as Observatory) —
       // regenerated on resize; the per-frame twinkle/drift redraw lives in tick(). ──
       let starData: ReturnType<typeof makeStarfieldLayers>;
-      const farTint = mixColor(C.starlight, C.frost, 0.35); // far layer reads slightly cool
+      // M5: far layer leans cooler/tealer (was starlight/frost) — the atmosphere aurora cast
+      // reaches the starfield itself, not just the wash below.
+      const farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
 
       // ── M2.9: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
@@ -222,8 +251,14 @@
           world.addChild(vignetteSprite); // top-most layer, below the DOM station labels
         }
       }
+      // M5: size the aurora wash to comfortably cover the canvas on any aspect ratio; its
+      // own texture falloff (see makeGlowTexture) gives it a soft radial edge for free.
+      function resizeAurora(vw: number, vh: number) {
+        sizeGlowSprite(aurora, glowTex, vw / 2, vh * 0.42, Math.max(vw, vh) * 0.85);
+      }
       starData = makeStarfieldLayers(w, h);
       rebuildVignette(w, h);
+      resizeAurora(w, h);
 
       // ── layout: a balanced, CENTRED constellation that reflows on resize ──
       // Cell size is CAPPED so a couple of loops cluster together in the middle
@@ -271,6 +306,7 @@
         h = host.clientHeight || 600;
         starData = makeStarfieldLayers(w, h);
         rebuildVignette(w, h);
+        resizeAurora(w, h);
         layout();
       };
       const ro = new ResizeObserver(onResize);
@@ -336,14 +372,19 @@
         return 1 - Math.pow(1 - k60, dt / 16.67);
       }
 
-      // M2.9: two-tier color muting — large fills (the glyph disc/silhouette body) move to
+      // M2.9/M5: two-tier color muting — large fills (the glyph disc/silhouette body) move to
       // a "base" tier muted toward void; small accents (inner highlight circles, crack/notch
-      // strokes, the plinth ticks) keep the un-muted "core" hue. Same values as Observatory's
-      // star (MUTE_FILL/MUTE_GLOW) — these hues (ember/frost/crimson/green/amber via
-      // restColor/palette.ts) are the per-silhouette identity hues fx.ts's `muteColor` doc
-      // comment calls out by name, not the generic run/ok/warn/err/idle status vocabulary.
-      const MUTE_FILL = 0.16;
-      const MUTE_GLOW = 0.4;
+      // strokes, the plinth ticks) keep the un-muted "core" hue. These hues (the M5.1
+      // jewel-tone scene.* palette via restColor/palette.ts) are the per-silhouette identity
+      // hues fx.ts's `muteColor` doc comment calls out by name, not the generic
+      // run/ok/warn/err/idle status vocabulary. M5 (plan §6 "the scene is the color"): the
+      // old values (0.16/0.4) crushed the jewel tones toward gray — worse for the glow
+      // (MORE muted than the fill it haloed, backwards for a "living, colorful sky") than
+      // for the fill. Retuned so fills stay rich and glow reads as clearly, saturatedly
+      // colored; wantGlow (below) still keeps failed-dark's glow near-zero so "dead" stays
+      // dead regardless of how saturated the tint is.
+      const MUTE_FILL = 0.08;
+      const MUTE_GLOW = 0.15;
 
       let t = 0;
       let lastCount = -1;
@@ -383,6 +424,11 @@
           if (x > w) x -= w;
           starfieldNear.circle(x, st.y, st.r).fill({ color: C.starlight, alpha: st.alpha * tw });
         }
+
+        // M5: aurora wash — a faint, slow shimmer (frozen under reduced motion); never a
+        // blink, just a gentle breathe on top of the constant low base alpha.
+        const auroraBase = 0.045;
+        aurora.alpha = reduced ? auroraBase : auroraBase + Math.sin(t * 0.12) * 0.015;
 
         // prune glow sprites for loops no longer in the roster
         const activeIds = new Set(loops.map((l) => l.id));
@@ -445,14 +491,21 @@
             g.circle(cx, cy, hr).stroke({ width: 1.2, color: hcol, alpha: 0.55 });
           }
 
-          // ── glow / corona (plan §M2.9): a tinted glow-texture sprite, screen-blended,
-          // replacing the old fixed 3-ring stacked-alpha falloff. Tint carries the MUTED
-          // base hue (glow always carries the base tint, same rule as Observatory);
-          // size and alpha both track e.glow so failed-dark reads as dead, not radiant. ──
+          // ── glow / corona (plan §M2.9, retuned M5 §6 "visibly blooms"): a tinted
+          // glow-texture sprite, screen-blended, replacing the old fixed 3-ring
+          // stacked-alpha falloff. Tint carries the MUTED base hue (glow always carries the
+          // base tint, same rule as Observatory); size and alpha both track e.glow so
+          // failed-dark (wantGlow ≈ 0.05 above) reads as dead, not radiant. M5: raised the
+          // size/alpha ceiling substantially (was r*(2.3+glow*1.7), alpha glow*0.7) so a
+          // running/done glyph visibly blooms — roughly 2x the old presence at full glow —
+          // and added a slow glow-only pulse on running loops (independent of the disc's
+          // own `pulse` above) so the corona itself breathes, not just the silhouette. ──
+          const glowPulse =
+            running && !reduced ? 1 + Math.sin(t * 1.4 + i * 0.9) * 0.15 : 1;
           const glowSprite = getGlowSprite(l.id);
-          sizeGlowSprite(glowSprite, glowTex, cx, cy, r * (2.3 + e.glow * 1.7));
+          sizeGlowSprite(glowSprite, glowTex, cx, cy, r * (2.8 + e.glow * 2.6) * glowPulse);
           glowSprite.tint = muteColor(col, C.void, MUTE_GLOW);
-          glowSprite.alpha = e.glow * 0.7;
+          glowSprite.alpha = Math.min(0.95, e.glow * 0.95 * glowPulse);
 
           // ── the FIVE rest-state silhouettes (greyscale-separable) ──────────
           // M2.9: EXACT same shapes/motion as before — only the main-body fill moves
@@ -512,10 +565,12 @@
             g.fill({ color: C.amber, alpha: 0.12 });
             g.circle(cx, cy, r * 0.55).fill({ color: C.crimson, alpha: 0.75 });
           } else if (l.restState === 'certified-done') {
-            // sealed: calm green disc + brass certification ring + notches. Brass stays
-            // LITERAL brass (identity/certification accent, never muted — plan §1).
+            // sealed: emerald disc + brass certification ring + notches. Brass stays
+            // LITERAL brass (identity/certification accent, never muted — plan §1). M5: a
+            // brighter core (0.4→0.58 alpha) — done is a healthy state, so it earns the
+            // same luminous-core treatment as running (plan §6 item 2).
             g.circle(cx, cy, r).fill({ color: base, alpha: 0.96 });
-            g.circle(cx, cy, r * 0.6).fill({ color: C.starlight, alpha: 0.4 });
+            g.circle(cx, cy, r * 0.6).fill({ color: C.starlight, alpha: 0.58 });
             g.circle(cx, cy, r + 4).stroke({ width: 1.6, color: C.brass, alpha: 0.85 });
             for (let s = 0; s < 8; s++) {
               const ang = (s / 8) * Math.PI * 2;
@@ -526,9 +581,15 @@
           } else {
             // running / idle: a muted base disc + a smaller bright core — the same "light
             // source in an atmosphere" anatomy as Observatory's star, replacing the old
-            // flat full-saturation disc.
+            // flat full-saturation disc. M5: running's core now burns scene.runCore (the
+            // near-white gold-corona hue restColor already resolves for `col`) at a much
+            // higher alpha (0.55→0.85) instead of a flatter starlight tint — the glyph
+            // itself, not just its halo, should visibly bloom (plan §6 items 1-2).
             g.circle(cx, cy, r).fill({ color: base, alpha: running ? 0.92 : 0.55 });
-            g.circle(cx, cy, r * 0.5).fill({ color: C.starlight, alpha: running ? 0.55 : 0.2 });
+            g.circle(cx, cy, r * 0.5).fill({
+              color: running ? C.scene.runCore : C.starlight,
+              alpha: running ? 0.85 : 0.22,
+            });
           }
 
           // a tiny "system" plinth (three faint base ticks). Names live in the

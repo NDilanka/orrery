@@ -42,6 +42,8 @@
     muteColor,
     mixColor,
     sizeGlowSprite,
+    WIDE_GLOW_STOPS,
+    BURN_GLOW_STOPS,
     type GlowTexture,
   } from './fx';
   import ObservatoryLabels from './ObservatoryLabels.svelte';
@@ -119,6 +121,9 @@
     opus: FALLBACK.opus,
     hairline: FALLBACK.hairline,
     status: FALLBACK.status,
+    // M5.3 (docs/ui-modernization-plan.md §6): the canvas-only jewel-tone scene palette —
+    // consumed below by the star's burn corona, planet tints, and the aurora atmosphere.
+    scene: FALLBACK.scene,
   };
   // M4.5: the four text-emphasis tiers (theme.ts) — the canvas's monochrome vocabulary for
   // every element that isn't one of the 5 fixed status pairs or a genuine per-silhouette
@@ -146,24 +151,33 @@
   // M2.2: a planet's two-tier status pair. `.base` drives the disc fill (large area);
   // `.core` drives rims/notches/pulses (small accents). 'ready' stays literal brass (an
   // identity marker, not a status hue) for both tiers — unchanged from before.
+  // M5.3 (docs/ui-modernization-plan.md §6): planets may pick up a RESTRAINED scene-hue tint
+  // from their state — but muted far harder than the star's own corona (mute 0.5 on the base
+  // fill vs the star's ~0.1) so the hierarchy stays "star first" (plan invariant). Only the
+  // two non-alert states that have a matching scene hue (done/in-progress) get tinted; warn/
+  // err/ready are already chrome-shared alert or identity colors and are untouched.
+  function scenePair(hex: number): { core: number; base: number } {
+    return { core: muteColor(hex, C.void, 0.12), base: muteColor(hex, C.void, 0.5) };
+  }
   function planetPair(o: { status: string; certified: boolean; merged: boolean }): {
     core: number;
     base: number;
   } {
-    if (o.certified || o.merged) return C.status.ok;
+    const scene = C.scene ?? FALLBACK.scene!;
+    if (o.certified || o.merged) return scenePair(scene.done);
     switch (o.status) {
       case 'done':
-        return C.status.ok;
+        return scenePair(scene.done);
       // M4.5 alert taxonomy: 'review' and 'blocked' both mean "a human needs to look at this",
       // not "this crashed" — the warn/amber bucket. Previously 'blocked' was lumped in with
       // 'failed' under err/red; split out so red is reserved for genuinely failed/crashed
       // bodies (plan §5: "ONLY failed/crashed bodies use --status-err … ONLY needs-you/handoff
-      // use --status-warn").
+      // use --status-warn"). M5.3: warn/err stay the chrome-shared alert hues, untinted.
       case 'review':
       case 'blocked':
         return C.status.warn;
       case 'in-progress':
-        return C.status.run;
+        return scenePair(scene.run);
       case 'failed':
         return C.status.err;
       case 'ready':
@@ -203,6 +217,7 @@
       opus: t.opus,
       hairline: t.hairline,
       status: t.status,
+      scene: t.scene,
     };
     emC = t.em as EmTiers;
 
@@ -216,8 +231,19 @@
     // of the whole scene (plan §M2 acceptance: "reads as a light source in an atmosphere"),
     // so it's only LIGHTLY muted; the corona/glow tint (already at ≤~12% alpha from the
     // glow texture itself) can take the fuller mute without going dark.
-    const MUTE_FILL = 0.16;
-    const MUTE_GLOW = 0.4;
+    // M5.3 (docs/ui-modernization-plan.md §6, owner: "the monochrome scene read as DULL"):
+    // both constants pulled back toward the source hue — the old 0.16/0.4 crushed the new
+    // jewel-tone --scene-* colors (esp. the gold running corona) toward gray. MUTE_FILL still
+    // only lightly mutes the star's own "light source" disc; MUTE_GLOW no longer nearly halves
+    // saturation on the corona tint (the glow TEXTURE itself already tops out ~12% alpha, so a
+    // less-muted tint doesn't blow out — it just lets the hue actually read).
+    const MUTE_FILL = 0.1;
+    const MUTE_GLOW = 0.15;
+    // M5.3: the WIDE gold bleed halo (running only) is the one place the gold should read at
+    // near-full saturation — the tight corona and the disc itself are already near-white by
+    // design (scene.runCore), so this is the layer that carries the "gold corona" identity;
+    // muted far less than MUTE_GLOW.
+    const MUTE_GLOW_WIDE = 0.04;
 
     (async () => {
       const PIXI = await import('pixi.js');
@@ -239,6 +265,17 @@
 
       // ── shared fx: glow texture (plan §M2.1), built once against the real renderer ──
       const glowTex: GlowTexture = makeGlowTexture(PIXI, app.renderer);
+      // M5.3: a second, wider/gentler falloff profile (fx.ts WIDE_GLOW_STOPS) for the running
+      // star's "wide bleed" halo layer — see coronaGlowWide below.
+      const wideGlowTex: GlowTexture = makeGlowTexture(PIXI, app.renderer, {
+        stops: WIDE_GLOW_STOPS,
+        size: 320,
+      });
+      // M5.3: a hotter-peaked falloff (fx.ts BURN_GLOW_STOPS) for the star's own tight corona
+      // ONLY — planet glows (pv.glow below) keep the original glowTex/DEFAULT_GLOW_STOPS.
+      const burnGlowTex: GlowTexture = makeGlowTexture(PIXI, app.renderer, {
+        stops: BURN_GLOW_STOPS,
+      });
 
       // ── scene graph ─────────────────────────────────────────────────────
       const world = new PIXI.Container();
@@ -251,7 +288,10 @@
       const ringsG = new PIXI.Graphics(); // group rings
       const ghostG = new PIXI.Graphics(); // frozen target wireframe
       const trailG = new PIXI.Graphics(); // M2.6: current-body ring-buffer trail
-      const coronaGlow = new PIXI.Sprite(glowTex.texture); // M2.1: star halo (glow-texture sprite)
+      // M5.3: a second, wider gold bleed halo — running only, drawn BEHIND coronaGlow so the
+      // tight corona still reads on top; makes the star's light visibly reach past the orbits.
+      const coronaGlowWide = new PIXI.Sprite(wideGlowTex.texture);
+      const coronaGlow = new PIXI.Sprite(burnGlowTex.texture); // M2.1/M5.3: star halo (hot-profile glow-texture sprite)
       const starFlareG = new PIXI.Graphics(); // M2.1: 4-point cross-flare, running only
       const supernovaG = new PIXI.Graphics(); // transient crimson supernova on crash
       const starG = new PIXI.Graphics(); // star core
@@ -263,6 +303,9 @@
       // additive hotspot; 'add' is reserved for true transient moments below.
       coronaGlow.anchor.set(0.5);
       coronaGlow.blendMode = 'screen';
+      coronaGlowWide.anchor.set(0.5);
+      coronaGlowWide.blendMode = 'screen';
+      coronaGlowWide.visible = false;
       starFlareG.blendMode = 'screen';
       supernovaG.blendMode = 'add';
 
@@ -381,6 +424,7 @@
         ghostG,
         trailG,
         particlesC,
+        coronaGlowWide,
         coronaGlow,
         starFlareG,
         supernovaG,
@@ -395,13 +439,36 @@
       //    lives in tick(). ──
       let starData: ReturnType<typeof makeStarfieldLayers>;
       // far layer reads slightly cool (a touch toward frost) vs. the near layer's neutral
-      // starlight — computed once against the resolved theme, not per-star.
-      const farTint = mixColor(C.starlight, C.frost, 0.35);
+      // starlight — computed once against the resolved theme, not per-star. M5.3 (plan §6
+      // "aurora atmosphere: starfield twinkle picks up a faint teal cast"): the far layer's
+      // cool lean now bends a further touch toward scene.atmo (aurora teal) on top of the
+      // pre-existing frost mix — kept faint (0.22 of the way) so it reads as atmosphere, not a
+      // hue swap. A subset of the NEAR layer is tinted the same way below (every 9th star) for
+      // a "the sky itself has color" read without recoloring the whole field.
+      const sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
+      const farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
+      const nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
 
       // ── M2.3: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
+      // M5.3 (docs/ui-modernization-plan.md §6): a second, VERY low-alpha vignette tinted
+      // scene.atmo (aurora teal) sitting above the black one, screen-blended so it only ever
+      // brightens the corners toward teal rather than muddying the black falloff. Its alpha is
+      // further modulated per-frame (a slow "breath") in tick() — see vignetteAuroraSprite use
+      // below. Uses fx.ts's EXISTING makeVignetteTexture opts (color/cornerAlpha/innerFrac) —
+      // no fx.ts signature change needed, this is purely a second call with different opts.
+      let vignetteAuroraSprite: any = null;
       function rebuildVignette(vw: number, vh: number) {
-        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh);
+        // M5.3 finding: makeVignetteTexture's default cornerAlpha (0.7, fx.ts — UNCHANGED
+        // there, Cosmos still gets it as-is) renders as a near-UNIFORM dark wash across the
+        // whole canvas in this app's actual Pixi/browser combo, not a true corner-only
+        // falloff (verified empirically: corner vs. center brightness is ~identical at any
+        // cornerAlpha). At 0.7 that was crushing EVERYTHING ~65-70% dark — almost certainly a
+        // major, previously-unnoticed contributor to the owner's "reads as dull" complaint,
+        // independent of the color-mute constants above. Scoped down hard for Observatory's
+        // own call only (fx.ts's exported default is untouched — Cosmos unaffected) so the
+        // new scene hues + corona actually have room to read.
+        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh, { cornerAlpha: 0.2 });
         if (vignetteSprite) {
           const old = vignetteSprite.texture;
           vignetteSprite.texture = tex;
@@ -410,12 +477,36 @@
           vignetteSprite = new PIXI.Sprite(tex);
           world.addChild(vignetteSprite); // top-most non-transient layer, below DOM labels
         }
+        // M5.3: kept deliberately faint — a first pass at 0.55/0.16 washed the WHOLE frame
+        // teal (screen-blend disproportionately brightens/tints a near-black --void), not just
+        // the corners the plan calls for. innerFrac pulled out further so the transparent zone
+        // covers most of the visible scene; cornerAlpha dropped hard so even the true corners
+        // only get a breath, not a tint.
+        const scene = C.scene ?? FALLBACK.scene!;
+        const auroraTex = makeVignetteTexture(PIXI, app.renderer, vw, vh, {
+          color: scene.atmo,
+          innerFrac: 0.68,
+          cornerAlpha: 0.07,
+        });
+        if (vignetteAuroraSprite) {
+          const old = vignetteAuroraSprite.texture;
+          vignetteAuroraSprite.texture = auroraTex;
+          old.destroy(true);
+        } else {
+          vignetteAuroraSprite = new PIXI.Sprite(auroraTex);
+          vignetteAuroraSprite.blendMode = 'screen';
+          world.addChild(vignetteAuroraSprite);
+        }
       }
 
       // eased visual state (interpolated toward store targets each frame)
       const vis = {
         starR: STAR_R0,
         starColor: C.starlight,
+        // M5.3: the running star's gold CORONA hue, eased separately from the near-white core
+        // (starColor) — running targets scene.run (gold), every rest state just mirrors
+        // starColor (one hue per silhouette, not two).
+        coronaColor: (C.scene ?? FALLBACK.scene!).run,
         emitColor: C.sonnet,
         horizonFrac: 0,
         burn: 0,
@@ -602,11 +693,26 @@
           starfieldFar.circle(x, st.y, st.r).fill({ color: farTint, alpha: st.alpha * tw });
         }
         starfieldNear.clear();
+        let nearI = 0;
         for (const st of starData.near) {
           const tw = reduced ? 1 : 0.4 + Math.abs(Math.sin(vis.t * 0.9 + st.phase)) * 0.6;
           let x = st.x + driftNear;
           if (x > w) x -= w;
-          starfieldNear.circle(x, st.y, st.r).fill({ color: C.starlight, alpha: st.alpha * tw });
+          // M5.3: every 9th near star carries the aurora tint (a stable, deterministic subset
+          // — index-based, not random, so it doesn't flicker between colors frame to frame).
+          const col = nearI % 9 === 0 ? nearAuroraTint : C.starlight;
+          starfieldNear.circle(x, st.y, st.r).fill({ color: col, alpha: st.alpha * tw });
+          nearI++;
+        }
+
+        // M5.3 (plan §6 "the vignette may carry a very low-alpha teal breath at the edges"):
+        // a slow, gentle alpha drift on the aurora vignette layer built in rebuildVignette();
+        // frozen (held at its midpoint) under reduced-motion. Faded down when the dusk/polar
+        // night wash is active (vis.night, below) so the two atmospheres don't fight for the
+        // same corners — the night wash stays the dominant read during a quota pause.
+        if (vignetteAuroraSprite) {
+          const breath = reduced ? 0.55 : 0.4 + Math.sin(vis.t * 0.15) * 0.15;
+          vignetteAuroraSprite.alpha = breath * (1 - vis.night * 0.6);
         }
 
         // ── A3: edge-detect transient moments from steady state ──────────────
@@ -679,6 +785,11 @@
         // paused/done are grayscale. No local override needed.
         const targetColor = restColor(s.run.status, s.run.restState, C.starlight);
         vis.starColor = lerpColor(vis.starColor, targetColor, kdt(0.08, dt));
+        // M5.3: the corona/halo hue — gold (scene.run) while actively burning (running, no
+        // rest-state settled yet), otherwise mirrors the core color so every rest-state
+        // silhouette still reads as ONE hue, not two.
+        const targetCorona = running && !rest ? (C.scene ?? FALLBACK.scene!).run : targetColor;
+        vis.coronaColor = lerpColor(vis.coronaColor, targetCorona, kdt(0.08, dt));
         vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), kdt(0.06, dt));
         vis.burn = lerp(vis.burn, running ? runStore.burn : 0, kdt(0.05, dt));
 
@@ -687,9 +798,14 @@
         vis.night = lerp(vis.night, night ? 1 : 0, kdt(0.04, dt));
         vis.nightHue = lerp(vis.nightHue, night === 'polar' ? 1 : 0, kdt(0.03, dt));
 
-        // breathing pulse scaled by burn (telemetry liveness; frozen if reduced)
-        const pulseAmt = 0.03 + vis.burn * 0.12;
+        // breathing pulse scaled by burn (telemetry liveness; frozen if reduced). M5.3: the
+        // amplitude is deepened slightly (was 0.03/0.12) now that the running star actually
+        // burns bright enough for the breathing to read.
+        const pulseAmt = 0.035 + vis.burn * 0.14;
         const pulse = running && !reduced ? 1 + Math.sin(vis.t * (2.2 + vis.burn * 2.4)) * pulseAmt : 1;
+        // M5.3: a slow, independent corona shimmer (separate phase from the breathing pulse)
+        // — a gentle size/alpha drift on the WIDE bleed halo only, frozen under reduced-motion.
+        const coronaShimmer = reduced ? 1 : 1 + Math.sin(vis.t * 0.35 + 1.7) * 0.06;
 
         // ── dusk / polar-night wash (behind everything but the dust) ──
         nightG.clear();
@@ -912,25 +1028,58 @@
         // ── corona/halo (M2.1: glow-texture sprite, replaces stacked alpha circles) +
         //    star (bloom scaled by burn) ──
         const coronaR = vis.starR * pulse;
-        // corona is suppressed for the cold frost state (it should read "cold"); a
-        // crashed run gets NO glow at all (failed-dark reads as dead, not radiant)
-        const coronaAlpha = rest === 'quota-frost' ? 0.4 : rest === 'failed-dark' ? 0.1 : 1;
+        // M5.3 (plan §6 "rest-states keep their scene hue with calmer, state-appropriate
+        // glow"): corona brightness now varies per silhouette instead of one flat "1 unless
+        // frost/failed" — done/paused read serene/banked, handoff stays visible-but-not-
+        // maximal amber, quota-frost stays cold/suppressed, failed-dark reads near-dead (red
+        // lives only in the fracture accents drawn in the star silhouette below, not the glow).
+        const coronaAlpha =
+          rest === 'failed-dark'
+            ? 0.08
+            : rest === 'quota-frost'
+              ? 0.4
+              : rest === 'certified-done'
+                ? 0.55
+                : rest === 'stopped-ember'
+                  ? 0.35
+                  : rest === 'handoff-beacon'
+                    ? 0.8
+                    : 1; // running / idle — the star BURNS
         // M2.2: the star's OWN disc fill is only lightly muted (it's the one deliberate
         // "light source" identity element — plan acceptance: "reads as a light source in
         // an atmosphere"); the corona/glow sprite tint takes the fuller mute (M2.2 "glow
         // tint always = base tier"), safe since the glow texture itself tops out ~12% alpha.
+        // M5.3: both MUTE_* constants pulled back (see their declaration) so the new
+        // jewel-tone scene hues actually survive this mute instead of reading gray/dull.
         const starFill = muteColor(vis.starColor, C.void, MUTE_FILL);
         const glowTint = muteColor(vis.starColor, C.void, MUTE_GLOW);
         if (coronaAlpha > 0.01) {
           coronaGlow.visible = true;
-          const haloR = coronaR * (3 + Math.min(1, vis.burn) * 3); // 3–6× core radius
-          sizeGlowSprite(coronaGlow, glowTex, cx, cy, haloR);
+          // M5.3: raised from (3 + burn*3) — the owner's core complaint was "dull"; a bigger,
+          // more decisive halo scale is the single biggest lever on that.
+          const haloR = coronaR * (3.2 + Math.min(1, vis.burn) * 3.6); // ~3.2–6.8× core radius
+          sizeGlowSprite(coronaGlow, burnGlowTex, cx, cy, haloR);
           coronaGlow.tint = glowTint;
           // the glow texture's own stops (peak 0.12) already ARE the intended falloff
           // alpha — modulate lightly by burn/suppression rather than crushing it further.
-          coronaGlow.alpha = coronaAlpha * (0.75 + Math.min(1, vis.burn) * 0.25);
+          coronaGlow.alpha = coronaAlpha * (0.8 + Math.min(1, vis.burn) * 0.2);
         } else {
           coronaGlow.visible = false;
+        }
+        // M5.3: the WIDE gold bleed halo — running only (no rest-state settled), so it never
+        // appears on a parked/failed/quota star; screen-blended and reaching well past the
+        // orbits (plan §6 "the star's glow should visibly bleed into the scene … reaching past
+        // the orbits when running"). Uses vis.coronaColor (gold while burning) muted the same
+        // amount as the tight corona so the two layers read as one light source at two radii.
+        const isBurningCorona = running && !rest;
+        if (isBurningCorona) {
+          coronaGlowWide.visible = true;
+          const wideR = coronaR * (5.5 + Math.min(1, vis.burn) * 3.5) * coronaShimmer;
+          sizeGlowSprite(coronaGlowWide, wideGlowTex, cx, cy, wideR);
+          coronaGlowWide.tint = muteColor(vis.coronaColor, C.void, MUTE_GLOW_WIDE);
+          coronaGlowWide.alpha = (0.5 + Math.min(1, vis.burn) * 0.3) * coronaShimmer;
+        } else {
+          coronaGlowWide.visible = false;
         }
 
         // ── M2.1: 4-point cross-flare, central star ONLY while actively running ──
