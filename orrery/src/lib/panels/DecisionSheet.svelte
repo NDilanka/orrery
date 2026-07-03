@@ -29,6 +29,19 @@
   let busy = $state(false);
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
+  // stale-draft guard: if the pending question CHANGES under the user (a new q.id —
+  // e.g. this one got answered elsewhere and the next one rotated in), clear the
+  // draft so it doesn't persist under the wrong question. A same-question re-render
+  // (q.id unchanged) must NOT clear it — that would eat the user's in-progress typing.
+  let lastQId = $state<string | null>(null);
+  $effect(() => {
+    const id = q?.id ?? null;
+    if (id !== lastQId) {
+      lastQId = id;
+      text = '';
+    }
+  });
+
   async function send() {
     if (busy || observeOnly || !q) return;
     busy = true;
@@ -186,8 +199,11 @@
       color var(--dur-feedback) var(--ease-standard);
   }
   .x:hover {
-    border-color: var(--crimson);
-    color: var(--crimson);
+    /* M4.5: interaction states are white/gray only (plan §5) — this is a plain
+       dismiss, not a destructive action, so it gets the standard ghost hover
+       (matches BodyView's .back:hover) instead of the alert-red accent. */
+    border-color: var(--panel-edge);
+    color: var(--starlight);
   }
 
   .qtext {

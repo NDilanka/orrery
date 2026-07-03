@@ -10,23 +10,18 @@
   //
   // wave U2 Task 5: rendered as a right-side drawer over the (already dimmed —
   // see +page.svelte .layer.out-near) System canvas on desktop, a full-screen
-  // sheet on phone. Escape and the breadcrumb both already route back through
-  // +page.svelte's existing nav (onKeydown / the crumb button) — unchanged here.
-  // The slide-in animation + reduced-motion gate mirror DecisionSheet's contract.
+  // sheet on phone. The breadcrumb still routes back through +page.svelte's own
+  // nav (the crumb button); Escape and focus containment are now the shared
+  // `use:focusTrap` action (see the dialog markup below) — same contract as
+  // DecisionSheet/TuningConsole. The slide-in animation + reduced-motion gate
+  // mirror DecisionSheet's contract too.
 
-  import { onMount } from 'svelte';
   import { runStore } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { focusTrap } from '../actions/focusTrap';
   import type { WorkItem } from '../types';
 
   let { itemKey, onBack }: { itemKey: string; onBack?: () => void } = $props();
-
-  let dialogEl = $state<HTMLDivElement | null>(null);
-  onMount(() => {
-    // land keyboard focus inside the drawer on open (a minimal a11y contract —
-    // the back button/breadcrumb/Escape all already close it).
-    dialogEl?.focus();
-  });
 
   const s = $derived(runStore.state);
   const item = $derived<WorkItem | null>(s.items[itemKey] ?? null);
@@ -44,8 +39,13 @@
   aria-modal="true"
   aria-label="Body dossier — {itemKey}"
   tabindex="-1"
-  bind:this={dialogEl}
+  use:focusTrap={{ onClose: () => onBack?.() }}
 >
+  <!-- Esc is consumed here (focusTrap) and routes back through onBack/backToSystem
+       synchronously, same as the visible back button/breadcrumb — before the event
+       bubbles to +page.svelte's window-level Escape handler. That handler's own
+       `view === 'body'` check is therefore already false by the time it runs, so it
+       falls through to its no-op branch instead of double-handling the close. -->
   {#if onBack}
     <button class="back" type="button" onclick={() => onBack?.()}>
       <span class="back-glyph" aria-hidden="true">←</span> system

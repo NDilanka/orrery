@@ -118,9 +118,27 @@
   }
 
   // ── validation (mirrors the Rust guard) ─────────────────────────────────────
+  // numeric bounds cover the drawer-typed engine fields (ceiling/iters/turns/
+  // timeout/limits) — see blueprints.ts's NUMERIC_FIELD_LABEL comment for why
+  // each is bounded the way it is (only iterTimeoutMin has a documented 0=off).
   const validation = $derived(
     validateDraft(
-      { id: loopId, name: loopName, acceptanceCriteria, gateStages },
+      {
+        id: loopId,
+        name: loopName,
+        acceptanceCriteria,
+        gateStages,
+        numeric: {
+          ceilingUsd: finalEngine.cost.ceilingUsd,
+          maxIters: finalEngine.stop.maxIters,
+          maxTurns: finalEngine.maxTurns,
+          iterTimeoutMin: finalEngine.iterTimeoutMin,
+          stagnationLimit: finalEngine.stop.stagnationLimit,
+          plateauLimit: finalEngine.stop.plateauLimit,
+          regressLimit: finalEngine.stop.regressLimit,
+          recallLimit: finalEngine.memory.recallLimit,
+        },
+      },
       // editing keeps its own id legal
       cosmosStore.existingIds.filter((id) => id !== editId),
     ),
@@ -1188,10 +1206,11 @@
     font-size: var(--text-xs);
   }
   .inp:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--brass) 30%, var(--hairline));
+    border-color: color-mix(in srgb, var(--em-mid) 30%, var(--hairline));
   }
   .inp:focus {
-    border-color: var(--brass);
+    /* matches QAConsole's .qinput:focus / DecisionSheet's .answer:focus */
+    border-color: color-mix(in srgb, var(--em-mid) 50%, transparent);
   }
   .inp:disabled {
     opacity: 0.4;
@@ -1339,7 +1358,7 @@
     margin-top: 8px;
     background: transparent;
     border: 1px solid var(--hairline);
-    color: var(--plasma-cyan);
+    color: var(--em-mid);
     border-radius: var(--radius-pill);
     padding: 5px 12px;
     font-size: var(--text-2xs);
@@ -1351,7 +1370,7 @@
   }
   .night-btn:hover {
     background: color-mix(in srgb, var(--n4) 55%, transparent);
-    border-color: var(--plasma-cyan);
+    border-color: var(--panel-edge);
   }
   .night-btn:active {
     background: color-mix(in srgb, var(--n4) 80%, transparent);
@@ -1426,9 +1445,10 @@
       color var(--dur-feedback) var(--ease-standard);
   }
   .probe-btn:hover:not(:disabled) {
+    /* ghost hover (matches BodyView's .back:hover / DecisionSheet's .x:hover) */
     background: color-mix(in srgb, var(--n4) 55%, transparent);
-    border-color: var(--plasma-cyan);
-    color: var(--plasma-cyan);
+    border-color: var(--panel-edge);
+    color: var(--starlight);
   }
   .probe-btn:active:not(:disabled) {
     background: color-mix(in srgb, var(--n4) 80%, transparent);
@@ -1458,7 +1478,7 @@
   .probe-toggle {
     background: transparent;
     border: none;
-    color: var(--plasma-cyan);
+    color: var(--em-mid);
     cursor: pointer;
     font-size: var(--text-2xs);
     text-decoration: underline;
@@ -1514,8 +1534,8 @@
   }
   .add:hover {
     background: color-mix(in srgb, var(--n4) 45%, transparent);
-    border-color: var(--brass);
-    color: var(--brass);
+    border-color: var(--panel-edge);
+    color: var(--starlight);
   }
   .add:active {
     background: color-mix(in srgb, var(--n4) 70%, transparent);
@@ -1543,13 +1563,13 @@
   }
   .dtab:hover {
     background: color-mix(in srgb, var(--n4) 55%, var(--void-3));
-    border-color: color-mix(in srgb, var(--brass) 40%, transparent);
+    border-color: color-mix(in srgb, var(--em-mid) 40%, transparent);
   }
   .dtab:active {
     background: color-mix(in srgb, var(--n4) 80%, var(--void-3));
   }
   .dtab.on {
-    border-color: var(--brass);
+    border-color: var(--em-mid);
     color: var(--starlight);
   }
   .odot {
@@ -1605,7 +1625,7 @@
     transition: border-color var(--dur-feedback) var(--ease-standard);
   }
   .kv select:hover {
-    border-color: color-mix(in srgb, var(--brass) 30%, var(--hairline));
+    border-color: color-mix(in srgb, var(--em-mid) 30%, var(--hairline));
   }
   .kv input[type='number'] {
     width: 84px;
