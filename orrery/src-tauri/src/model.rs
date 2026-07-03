@@ -160,6 +160,20 @@ pub struct RunState {
     pub questions: Vec<Qa>,
     /// by item key, latest
     pub verdicts: BTreeMap<String, Verdict>,
+    /// adversarial verify-before-merge verdict per story (`verify` event). Additive: omitted from
+    /// the wire when empty so older goldens (pre-`verify`) stay byte-identical.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verifies: BTreeMap<String, Verify>,
+    /// pre-existing-test tamper check per story (`test-integrity` event). Additive/omit-when-empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub test_integrity: BTreeMap<String, TestIntegrity>,
+    /// pre-dev plan-gate verdict per story (`plan-check` event). Additive/omit-when-empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_checks: BTreeMap<String, PlanCheck>,
+    /// BMAD-flavored run-quality summary (the BMAD flavor of the `metrics` event, distinct fields
+    /// from the generic `metrics` above). `None`/omitted until seen. Additive/omit-when-none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bmad_metrics: Option<BmadMetrics>,
     /// raw event count
     pub events: u64,
 }
@@ -179,6 +193,10 @@ impl RunState {
             metrics: None,
             questions: Vec::new(),
             verdicts: BTreeMap::new(),
+            verifies: BTreeMap::new(),
+            test_integrity: BTreeMap::new(),
+            plan_checks: BTreeMap::new(),
+            bmad_metrics: None,
             events: 0,
         }
     }
@@ -436,6 +454,69 @@ pub struct Metrics {
     pub total_iters: i64,
     pub total_cost: f64,
     pub final_green: bool,
+}
+
+/// §2 engine-v3 `verify` event — the adversarial verify-before-merge verdict for one story.
+/// `verdict` is one of `pass`|`refute`|`skipped`|`inconclusive`; a `refute` blocks the merge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Verify {
+    pub verdict: String,
+    /// null when the event carries no reason (e.g. a plain `pass`).
+    pub reason: Option<String>,
+    pub cum: f64,
+}
+
+/// §2 engine-v3 `test-integrity` event — git tamper check on PRE-EXISTING test files for one story.
+/// `deleted` = pre-existing tests removed on the branch (a tamper → `ok:false`); `modified` = edited
+/// in place (not a halt, but scrutinized). `ok` is false when a deletion was found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestIntegrity {
+    pub deleted: Vec<String>,
+    pub modified: Vec<String>,
+    pub ok: bool,
+    pub cum: f64,
+}
+
+/// §2 engine-v3 `plan-check` event — the plan-gate verdict before dev-story for one story.
+/// `verdict` is one of `ok`|`blocked`|`inconclusive`; `blocked` halts the story.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanCheck {
+    pub ok: bool,
+    pub verdict: String,
+    /// null when the event carries no reason (e.g. a plain `ok`).
+    pub reason: Option<String>,
+    pub cum: f64,
+}
+
+/// §2 engine-v3 BMAD flavor of the `metrics` event — a zero-token run-quality summary emitted once
+/// right before the terminal stop. Distinct field set from the generic `Metrics` above (a BMAD run
+/// has no `iter` events); the reducer discriminates on `storiesCompleted` being present.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BmadMetrics {
+    pub stories_completed: i64,
+    pub stories_halted: i64,
+    pub dev_gates: i64,
+    pub reviews: i64,
+    pub smoke_iters: i64,
+    pub prs_created: i64,
+    pub prs_merged: i64,
+    pub retros: i64,
+    pub plan_checks: i64,
+    pub verifies: i64,
+    pub gate_reds: i64,
+    pub flaky_retries: i64,
+    pub quota_waits: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub hit_ratio: f64,
+    pub cum_usd: f64,
+    pub duration_sec: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -387,9 +387,38 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
 
     // ─── core v3: run-quality summary ──────────────────────────────────────
     case 'metrics': {
-      // A run-quality fold of the event stream, emitted once at stop. Idempotent
-      // (last one wins); itersToGreen/costToGreen are null when never green.
-      // Mirrors reducer.rs on_metrics — same field-by-field defaults so goldens agree.
+      // Two FLAVORS share `event:"metrics"`: the generic-loop shape (iteration-shaped:
+      // firstTryGreen/itersToGreen) and the BMAD shape (pipeline counters: storiesCompleted/…).
+      // Discriminate on `storiesCompleted` being present (a BMAD-only field) and route to the
+      // matching field — never crash on either, and a run only ever emits one flavor. Idempotent
+      // (last write wins). Mirrors reducer.rs on_metrics.
+      if (ev.storiesCompleted !== undefined) {
+        state.bmadMetrics = {
+          storiesCompleted: num(ev.storiesCompleted) ?? 0,
+          storiesHalted: num(ev.storiesHalted) ?? 0,
+          devGates: num(ev.devGates) ?? 0,
+          reviews: num(ev.reviews) ?? 0,
+          smokeIters: num(ev.smokeIters) ?? 0,
+          prsCreated: num(ev.prsCreated) ?? 0,
+          prsMerged: num(ev.prsMerged) ?? 0,
+          retros: num(ev.retros) ?? 0,
+          planChecks: num(ev.planChecks) ?? 0,
+          verifies: num(ev.verifies) ?? 0,
+          gateReds: num(ev.gateReds) ?? 0,
+          flakyRetries: num(ev.flakyRetries) ?? 0,
+          quotaWaits: num(ev.quotaWaits) ?? 0,
+          inputTokens: num(ev.inputTokens) ?? 0,
+          outputTokens: num(ev.outputTokens) ?? 0,
+          cacheReadTokens: num(ev.cacheReadTokens) ?? 0,
+          cacheCreationTokens: num(ev.cacheCreationTokens) ?? 0,
+          hitRatio: num(ev.hitRatio) ?? 0,
+          cumUsd: num(ev.cumUsd) ?? 0,
+          durationSec: num(ev.durationSec) ?? 0,
+        };
+        break;
+      }
+      // generic flavor: a run-quality fold of the event stream, emitted once at stop.
+      // itersToGreen/costToGreen are null when never green.
       state.metrics = {
         firstTryGreen: ev.firstTryGreen === true,
         itersToGreen: num(ev.itersToGreen) ?? null,
@@ -399,6 +428,48 @@ export function apply(state: RunState, ev: RawEvent, t: number): RunState {
         totalIters: num(ev.totalIters) ?? 0,
         totalCost: num(ev.totalCost) ?? 0,
         finalGreen: ev.finalGreen === true,
+      };
+      break;
+    }
+    // ─── core v3: adversarial verify / tamper / plan gate (per story) ───────
+    case 'verify': {
+      // Adversarial verify-before-merge verdict per story, keyed by `story` (last write wins,
+      // like verdicts). `cum` folds into the running-max like every cost-bearing agent call.
+      // The map is created lazily so a state with no `verify` event omits the key entirely
+      // (byte-identical to older goldens). Mirrors reducer.rs on_verify.
+      bumpCum(state, ev, t);
+      if (typeof ev.story !== 'string') break;
+      (state.verifies ??= {})[ev.story] = {
+        verdict: typeof ev.verdict === 'string' ? ev.verdict : 'inconclusive',
+        reason: typeof ev.reason === 'string' ? ev.reason : null,
+        cum: num(ev.cum) ?? 0,
+      };
+      break;
+    }
+    case 'test-integrity': {
+      // git tamper check on pre-existing test files per story. Lazy map. Mirrors
+      // reducer.rs on_test_integrity.
+      bumpCum(state, ev, t);
+      if (typeof ev.story !== 'string') break;
+      const strs = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      (state.testIntegrity ??= {})[ev.story] = {
+        deleted: strs(ev.deleted),
+        modified: strs(ev.modified),
+        ok: ev.ok !== false, // default true when absent (matches reducer.rs unwrap_or(true))
+        cum: num(ev.cum) ?? 0,
+      };
+      break;
+    }
+    case 'plan-check': {
+      // plan-gate verdict before dev-story per story. Lazy map. Mirrors reducer.rs on_plan_check.
+      bumpCum(state, ev, t);
+      if (typeof ev.story !== 'string') break;
+      (state.planChecks ??= {})[ev.story] = {
+        ok: ev.ok !== false, // default true when absent (matches reducer.rs unwrap_or(true))
+        verdict: typeof ev.verdict === 'string' ? ev.verdict : 'inconclusive',
+        reason: typeof ev.reason === 'string' ? ev.reason : null,
+        cum: num(ev.cum) ?? 0,
       };
       break;
     }

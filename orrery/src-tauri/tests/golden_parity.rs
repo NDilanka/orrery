@@ -75,6 +75,15 @@ fn parity_metrics_generic() {
     assert_golden("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json");
 }
 #[test]
+fn parity_engine_polish_bmad() {
+    // engine-v3 visibility events: `verify` (pass + refute), `test-integrity` (ok+modified +
+    // deleted/not-ok), `plan-check` (ok + blocked), and the BMAD FLAVOR of `metrics` (pipeline
+    // counters, discriminated from the generic flavor by `storiesCompleted`). Proves Rust and TS
+    // agree on all four new events + both metrics flavors, and that the new RunState maps/summary
+    // populate (the other fixtures omit them, keeping older goldens byte-identical).
+    assert_golden("engine-polish", "bmad", "engine-polish-log.jsonl", None, "engine-polish.bmad.json");
+}
+#[test]
 fn parity_failed_dark_bmad() {
     // a BMAD stop{ok:false} that ENDS the log (here: retro halted after the epic's only story
     // was already merged) must produce status 'error' + restState 'failed-dark' — and must
@@ -90,7 +99,7 @@ fn parity_failed_dark_bmad() {
 fn regenerate_goldens() {
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     std::fs::create_dir_all(&out).unwrap();
-    let cases: [(&str, &str, &str, Option<&str>, &str); 8] = [
+    let cases: [(&str, &str, &str, Option<&str>, &str); 9] = [
         ("demo", "bmad", "demo-events.jsonl", None, "demo.bmad.json"),
         ("bmad", "bmad", "bmad-log.jsonl", Some("checkpoint.json"), "bmad.bmad.json"),
         ("roman", "generic", "roman-log.jsonl", None, "roman.generic.json"),
@@ -98,6 +107,7 @@ fn regenerate_goldens() {
         ("multirun", "generic", "multirun-log.jsonl", None, "multirun.generic.json"),
         ("collision", "generic", "series-collision-log.jsonl", None, "series-collision.generic.json"),
         ("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json"),
+        ("engine-polish", "bmad", "engine-polish-log.jsonl", None, "engine-polish.bmad.json"),
         ("failed-dark", "bmad", "failed-dark-log.jsonl", None, "failed-dark.bmad.json"),
     ];
     for (lid, ad, fx, cp, g) in cases {

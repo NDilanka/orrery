@@ -29,8 +29,20 @@
   const activeKey = $derived(runStore.selectedItem ?? autoKey);
   const verdict = $derived<Verdict | null>(activeKey ? s.verdicts[activeKey] ?? null : null);
   const item = $derived(activeKey ? s.items[activeKey] ?? null : null);
-  // show the panel only when there is something to report for the active item
-  const open = $derived(!!activeKey && (!!verdict || !!item?.gate));
+  // engine-v3 per-story trust signals (additive maps; absent until their event fires).
+  const verify = $derived(activeKey ? s.verifies?.[activeKey] ?? null : null);
+  const integrity = $derived(activeKey ? s.testIntegrity?.[activeKey] ?? null : null);
+  const planCheck = $derived(activeKey ? s.planChecks?.[activeKey] ?? null : null);
+  // test-integrity is only worth surfacing when it's a red tamper (a deletion / not-ok) or a
+  // neutral "tests were modified" note; an all-clear ok+no-modifications result stays silent.
+  const integrityAlert = $derived(!!integrity && ((integrity.deleted?.length ?? 0) > 0 || !integrity.ok));
+  const integrityNote = $derived(!!integrity && !integrityAlert && (integrity.modified?.length ?? 0) > 0);
+  // plan-check is only loud when it BLOCKED (the run will have halted); ok/inconclusive is quiet
+  // (it still shows in the LOG panel), so it doesn't render a chip here.
+  const planBlocked = $derived(!!planCheck && (planCheck.verdict === 'blocked' || !planCheck.ok));
+  const hasChecks = $derived(!!verify || integrityAlert || integrityNote || planBlocked);
+  // show the panel when there is something to report for the active item
+  const open = $derived(!!activeKey && (!!verdict || !!item?.gate || hasChecks));
 
   function close() {
     runStore.selectItem(null);
@@ -94,6 +106,56 @@
         gate {item.gate.pass}/{item.gate.total} · {item.gate.green ? 'green' : 'red'}
         {#if item.strikes > 0}
           <span class="strikes">· {item.strikes}/{item.strikeBudget} strikes (rollback lives)</span>
+        {/if}
+      </div>
+    {/if}
+
+    {#if hasChecks}
+      <div class="checks">
+        {#if verify}
+          <div
+            class="chk {verify.verdict === 'refute'
+              ? 'alert-red'
+              : verify.verdict === 'pass'
+                ? 'ok'
+                : 'neutral'}"
+          >
+            {#if verify.verdict === 'pass'}
+              Adversarial check: passed
+            {:else if verify.verdict === 'refute'}
+              REFUTED{verify.reason ? `: ${verify.reason}` : ''}
+            {:else}
+              Adversarial check: {verify.verdict}
+            {/if}
+          </div>
+        {/if}
+
+        {#if integrityAlert && integrity}
+          <div class="chk alert-red">
+            Test tamper — {integrity.deleted.length} pre-existing test file{integrity.deleted
+              .length === 1
+              ? ''
+              : 's'} deleted
+            {#if integrity.deleted.length}
+              <ul class="ck-list mono">
+                {#each integrity.deleted as f (f)}
+                  <li>{f}</li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {:else if integrityNote && integrity}
+          <div class="chk neutral">
+            {integrity.modified.length} pre-existing test{integrity.modified.length === 1
+              ? ''
+              : 's'} modified
+          </div>
+        {/if}
+
+        {#if planBlocked && planCheck}
+          <div class="chk alert-amber">
+            Plan gate blocked{planCheck.reason ? `: ${planCheck.reason}` : ''}
+          </div>
         {/if}
       </div>
     {/if}
@@ -254,6 +316,49 @@
   }
   .strikes {
     color: var(--status-err-core);
+  }
+
+  /* engine-v3 per-story trust chips (verify / test-integrity / plan-check). Chrome stays
+     monochrome (M5 law); the red/amber families are reserved for genuine alerts — a REFUTED
+     verify and a deleted-test tamper are reds, a blocked plan gate is amber, everything else
+     (passed/skipped/inconclusive verify, tests-modified note) stays grayscale. */
+  .checks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    border-top: 1px solid var(--hairline);
+    padding-top: var(--space-2);
+  }
+  .chk {
+    font-size: var(--text-xs);
+    line-height: 1.4;
+  }
+  .chk.ok {
+    color: var(--em-hi);
+    font-weight: 600;
+  }
+  .chk.neutral {
+    color: var(--text-faint);
+  }
+  .chk.alert-red {
+    color: var(--status-err-core);
+    font-weight: 600;
+  }
+  .chk.alert-amber {
+    color: var(--status-warn-core);
+    font-weight: 600;
+  }
+  .ck-list {
+    margin: 4px 0 0;
+    padding-left: 1.2em;
+    list-style: disc;
+  }
+  .ck-list li {
+    font-size: var(--text-2xs);
+    font-weight: 400;
+    color: var(--text-dim);
+    line-height: 1.35;
+    word-break: break-word;
   }
 
   /* ── M1.5 empty-state skeleton shimmer ── reduced motion is handled globally
