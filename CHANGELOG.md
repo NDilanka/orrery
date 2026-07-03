@@ -23,6 +23,16 @@ changes between minor versions.
 - **Gate fail-fast** (opt-in, engine + BMAD): stop launching gate stages after the first
   failure; skipped stages carry a `skipped` marker safe for floor/flaky consumers.
 
+### Added — the new quality telemetry is visible in Orrery
+- Both reducers (Rust + TS, new cross-language golden case) carry the four new engine events:
+  **verify** verdicts join the trust chips in VerdictPanel (REFUTED = red alert),
+  **test-integrity** tamper is a red alert with the deleted-file list, a blocked
+  **plan-check** is amber with its reason, and MetricsPanel renders whichever **metrics**
+  flavor arrives (BMAD or generic). Documented in PROTOCOL.md; all additive
+  (omit-when-absent), older reducers keep dropping them safely.
+- The quota probe is **lean**: `--strict-mcp-config` skips loading every MCP server on each
+  wait cycle (same rate-limit verdict, cheaper outage).
+
 ### Added — opt-in CLI capability adoption (all default-off; verified vs claude 2.1.199)
 - **`fallbackModel`** (engine / bmad / qa blocks): threads `--fallback-model` (comma chain)
   through every runner path for overload resilience.
