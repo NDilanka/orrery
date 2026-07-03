@@ -24,6 +24,10 @@ export class TauriTransport implements Transport {
   private onState: (s: RunState) => void;
   private state: RunState;
   private unlisten: (() => void) | null = null;
+  // Set by stop(); checked after the `watch_run` await and by onDelta, so a stop() that
+  // arrives while start() is still in flight (unlisten not yet set) still neutralizes the
+  // channel instead of leaving it live once the invoke resolves.
+  private stopped = false;
 
   constructor(cfg: TauriConfig, opts: TransportOpts) {
     this.cfg = cfg;
@@ -42,6 +46,12 @@ export class TauriTransport implements Transport {
       logFile: this.cfg.logFile,
       channel,
     });
+    if (this.stopped) {
+      // stop() ran while watch_run was in flight — neutralize immediately rather than
+      // arming `unlisten` and leaving the channel live into a mount that already moved on.
+      channel.onmessage = () => {};
+      return;
+    }
     // Channel has no explicit close in the surface; track for symmetry.
     this.unlisten = () => {
       channel.onmessage = () => {};
@@ -49,6 +59,7 @@ export class TauriTransport implements Transport {
   }
 
   private onDelta(delta: Delta) {
+    if (this.stopped) return;
     if (delta.kind === 'event') {
       // raw event → live LOG feed only; the authoritative reduced RunState arrives via the
       // matching `state` delta (the watcher sends Event then State per log line).
@@ -67,6 +78,7 @@ export class TauriTransport implements Transport {
   }
 
   stop(): void {
+    this.stopped = true;
     this.unlisten?.();
     this.unlisten = null;
   }

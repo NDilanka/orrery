@@ -5,6 +5,7 @@
 //   - cost-horizon fraction + quota countdown
 // Events mutate the store; the renderer's rAF loop interpolates toward targets.
 
+import { browser } from '$app/environment';
 import type { RunState, WorkItem } from '../types';
 import { initialState } from '../reduce';
 
@@ -48,6 +49,24 @@ function angleFor(index: number, count: number, ringIndex: number): number {
 
 class RunStore {
   state = $state<RunState>(initialState());
+
+  // ── quota countdown's reactive clock ──────────────────────────────────────
+  // `quotaSecondsLeft` below reads `Date.now()`; without a reactive dependency on the clock
+  // it only recomputes when `state` changes, so the HUD/Planetarium countdown freezes between
+  // events. `nowMs` is that dependency — ticked every 30s, but ONLY while quota is active, so
+  // no interval runs (or leaks) the rest of the time or during SSR.
+  private nowMs = $state(Date.now());
+  private quotaTimer: ReturnType<typeof setInterval> | null = null;
+
+  private syncQuotaTimer(active: boolean): void {
+    if (!browser) return;
+    if (active && this.quotaTimer == null) {
+      this.quotaTimer = setInterval(() => (this.nowMs = Date.now()), 30_000);
+    } else if (!active && this.quotaTimer != null) {
+      clearInterval(this.quotaTimer);
+      this.quotaTimer = null;
+    }
+  }
 
   // ── derived geometry ──────────────────────────────────────────────────────
   starRadius = $derived(STAR_R0 + STAR_K * Math.log1p(Math.max(0, this.state.run.cumUsd)));
@@ -120,7 +139,7 @@ class RunStore {
     const q = this.state.quota;
     if (!q.active) return null;
     if (q.resumeAt) {
-      const left = Math.round((new Date(q.resumeAt).getTime() - Date.now()) / 1000);
+      const left = Math.round((new Date(q.resumeAt).getTime() - this.nowMs) / 1000);
       return left > 0 ? left : 0;
     }
     return q.waitSec || 0;
@@ -202,6 +221,7 @@ class RunStore {
   // ── mutations (called by the transport) ──────────────────────────────────
   set(next: RunState) {
     this.state = next;
+    this.syncQuotaTimer(next.quota.active);
   }
 
   // A8 — optimistic local answer: stamp a pending question's `a` (answeredBy
@@ -218,6 +238,7 @@ class RunStore {
   reset() {
     this.state = initialState();
     this.selectedItem = null;
+    this.syncQuotaTimer(false);
   }
 }
 
