@@ -28,6 +28,20 @@ export type EmTiers = {
   faint: number;
 };
 
+// M5.1 (docs/ui-modernization-plan.md §6): the canvas-only scene palette. Consumed by
+// palette.ts's restColor() (which feeds ONLY Cosmos.svelte + Observatory.svelte) — chrome
+// components must never read this group.
+export type SceneColors = {
+  runCore: number;
+  run: number;
+  done: number;
+  paused: number;
+  quota: number;
+  needs: number;
+  fail: number;
+  atmo: number;
+};
+
 export type ThemeColors = {
   void: number;
   brass: number;
@@ -53,6 +67,9 @@ export type ThemeColors = {
   // keep typechecking without edits; the M4.5 canvas sweep is what wires `em` into actual
   // consumers. FALLBACK and initTheme()'s resolved table always populate it in practice.
   em?: EmTiers;
+  // M5.1: same optionality convention as `em` above — always populated by FALLBACK/
+  // initTheme(), optional only so hand-written partial ThemeColors literals keep typechecking.
+  scene?: SceneColors;
 };
 
 // The CSS custom property each key resolves from.
@@ -75,7 +92,7 @@ const TOKEN_MAP = {
   sonnet: '--spectral-sonnet',
   opus: '--spectral-opus',
   hairline: '--hairline',
-} satisfies Record<Exclude<keyof ThemeColors, 'status' | 'em'>, string>;
+} satisfies Record<Exclude<keyof ThemeColors, 'status' | 'em' | 'scene'>, string>;
 
 const STATUS_TOKEN_MAP: Record<keyof StatusColors, [core: string, base: string]> = {
   run: ['--status-run-core', '--status-run-base'],
@@ -93,6 +110,18 @@ const EM_TOKEN_MAP: Record<keyof EmTiers, string> = {
   mid: '--em-mid',
   low: '--em-low',
   faint: '--em-faint',
+};
+
+// M5.1 (docs/ui-modernization-plan.md §6): the --scene-* canvas-only tier (tokens.css).
+const SCENE_TOKEN_MAP: Record<keyof SceneColors, string> = {
+  runCore: '--scene-run-core',
+  run: '--scene-run',
+  done: '--scene-done',
+  paused: '--scene-paused',
+  quota: '--scene-quota',
+  needs: '--scene-needs',
+  fail: '--scene-fail',
+  atmo: '--scene-atmo',
 };
 
 // Static fallback table — used for any non-DOM context (SSR, unit tests) and for any
@@ -151,6 +180,20 @@ export const FALLBACK: ThemeColors = {
     mid: 0x9c9ea4, // oklch(0.70 0.008 265)
     low: 0x787a7f, // oklch(0.58 0.008 265) — lifted from the plan's literal .50 (4.5:1 floor)
     faint: 0x616368, // oklch(0.50 0.008 265) — lifted from the plan's literal .38 (3:1 floor)
+  },
+  // M5.1 (docs/ui-modernization-plan.md §6): canvas-only jewel-tone scene hues — offline
+  // sRGB computed from each --scene-* token's oklch() (tokens.css), same OKLab matrices
+  // contrast.test.ts uses. needs/fail mirror status.warn/err.core exactly (bare var() alias
+  // in tokens.css — one meaning, one color between chip and canvas).
+  scene: {
+    runCore: 0xfdf8ee, // oklch(0.98 0.014 85)
+    run: 0xf6cb6c, // oklch(0.86 0.123 85)
+    done: 0x35d298, // oklch(0.77 0.153 163)
+    paused: 0xff894a, // oklch(0.75 0.162 47)
+    quota: 0xa0c1ff, // oklch(0.81 0.097 263)
+    needs: 0xeab532, // var(--status-warn-core) — same as FALLBACK.status.warn.core
+    fail: 0xf75c66, // var(--status-err-core) — same as FALLBACK.status.err.core
+    atmo: 0x28d3be, // oklch(0.78 0.133 182)
   },
 };
 
@@ -216,7 +259,22 @@ export function initTheme(): ThemeColors {
   // optional on the ThemeColors *type* so hand-written partial literals elsewhere (e.g.
   // Observatory.svelte's `C` palette state) keep typechecking without listing every em key.
   const fallbackEm: EmTiers = FALLBACK.em ?? { hi: 0, mid: 0, low: 0, faint: 0 };
-  const out = { ...FALLBACK, status: { ...FALLBACK.status }, em: { ...fallbackEm } } as ThemeColors;
+  const fallbackScene: SceneColors = FALLBACK.scene ?? {
+    runCore: 0,
+    run: 0,
+    done: 0,
+    paused: 0,
+    quota: 0,
+    needs: 0,
+    fail: 0,
+    atmo: 0,
+  };
+  const out = {
+    ...FALLBACK,
+    status: { ...FALLBACK.status },
+    em: { ...fallbackEm },
+    scene: { ...fallbackScene },
+  } as ThemeColors;
   for (const key of Object.keys(TOKEN_MAP) as (keyof typeof TOKEN_MAP)[]) {
     const v = resolveVarHex(TOKEN_MAP[key]);
     if (v != null) out[key] = v;
@@ -233,6 +291,10 @@ export function initTheme(): ThemeColors {
   for (const key of Object.keys(EM_TOKEN_MAP) as (keyof EmTiers)[]) {
     const v = resolveVarHex(EM_TOKEN_MAP[key]);
     out.em![key] = v ?? fallbackEm[key];
+  }
+  for (const key of Object.keys(SCENE_TOKEN_MAP) as (keyof SceneColors)[]) {
+    const v = resolveVarHex(SCENE_TOKEN_MAP[key]);
+    out.scene![key] = v ?? fallbackScene[key];
   }
   resolved = out;
   return out;

@@ -436,3 +436,51 @@ TuningConsole/CommandPalette/overlays sweep.
 are genuine alerts; squint test — the eye lands on HUD status → star →
 controls, in that order; all prior invariants (reduced motion,
 greyscale-separable silhouettes, protocol untouched) hold.
+
+## 6. Phase M5 — Colorful cosmos, calm chrome
+*(added 2026-07-03 after second owner interview; SUPERSEDES §5's
+"alerts-only color" rule for the CANVAS — the chrome rule stands)*
+
+**Owner decisions**: the strict monochrome read as dull. Color returns,
+ruled: **the scene is the color; the chrome stays calm.** Canvas states
+get jewel-tone identity hues with real glow; panels/HUD/buttons/chips
+remain dark monochrome (red/amber keep their exclusive alert meanings in
+the DOM). Hue family lead: **teal / aurora green** — glow language,
+starfield/nebula tints, and the vignette bleed all lean aurora.
+
+### M5.1 Scene palette (foundation)
+A NEW canvas-scoped token tier — `--scene-*` — separate from the
+`status-*` / `em-*` chrome tokens, so recoloring the sky cannot recolor
+a chip. Semantic set (exact oklch tuned in implementation; hues below
+are the targets):
+- `--scene-run`: warm gold-white burn (the living star; core near-white,
+  corona gold ~#f5c96b)
+- `--scene-done`: emerald ~#34d399 (seal ring native to the aurora lead)
+- `--scene-paused`: banked ember orange ~#ff8a4a
+- `--scene-quota`: ice frost ~#9fc0ff
+- `--scene-needs`: amber (same resolved hue as the chrome alert amber —
+  one meaning, one color)
+- `--scene-fail`: crimson (ditto)
+- `--scene-atmo`: aurora teal ~#2dd4bf — starfield/nebula/vignette
+  tint, glow wash, at low alpha only
+theme.ts exposes the set to Pixi; palette.ts `restColor()` maps onto it
+(chrome consumers keep reading `status-*`).
+
+### M5.2 Chrome depth + micro-motion (foundation, monochrome)
+- `.panel`: top-lit gradient surface, elevation shadow, brighter top
+  edge (1px inside highlight) — real altitude instead of hairline-on-flat.
+- `.btn`/interactive: hover lift (translateY −1px + shadow), pressed
+  state, focus sheen. All monochrome; reduced-motion freezes lifts.
+
+### M5.3 Canvas sweeps (parallel: Cosmos, Observatory)
+- Glyphs/star consume `--scene-*`: bigger luminous cores, glow 2–3×
+  (size + alpha), colored glow bleeding into the vignette.
+- Aurora atmosphere: starfield twinkle picks up a faint teal cast;
+  nebula/vignette tinted `--scene-atmo`; light is the material.
+- DOM overlays inside the canvases (station cards, labels, captions)
+  are CHROME — they stay monochrome + red/amber alerts.
+
+**Acceptance**: the scene reads as a living, colorful sky through a
+dark instrument; panels/chips contain no chromatic pixels besides
+red/amber alerts; state hues remain greyscale-separable (shape/motion
+coding unchanged); reduced-motion + protocol invariants hold.

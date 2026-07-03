@@ -62,6 +62,37 @@ export const DEFAULT_GLOW_STOPS: GlowStop[] = [
   { r: 4.0, alpha: 0.015 },
 ];
 
+/**
+ * M5.3 (docs/ui-modernization-plan.md §6, additive — DEFAULT_GLOW_STOPS/makeGlowTexture's
+ * default behavior is untouched, Cosmos's existing `makeGlowTexture(PIXI, renderer)` calls
+ * still get DEFAULT_GLOW_STOPS unchanged). A gentler, wider-reaching falloff for the running
+ * star's second "wide bleed" halo layer — a lower peak alpha spread over a bigger radius so a
+ * large on-screen scale reads as an atmosphere the light bleeds into (screen-blend, reaching
+ * past the orbits) rather than a bigger hot disc. Pass via `makeGlowTexture(PIXI, renderer,
+ * { stops: WIDE_GLOW_STOPS, size: 320 })`.
+ */
+export const WIDE_GLOW_STOPS: GlowStop[] = [
+  { r: 1.0, alpha: 0.13 },
+  { r: 2.2, alpha: 0.075 },
+  { r: 3.6, alpha: 0.04 },
+  { r: 5.5, alpha: 0.018 },
+];
+
+/**
+ * M5.3 (additive, same non-goal as WIDE_GLOW_STOPS above): a hotter, brighter-peaked falloff
+ * for the star's own tight corona specifically — the owner's core M5 complaint was the
+ * monochrome scene reading "dull"; DEFAULT_GLOW_STOPS' 0.12 peak (tuned for planet glows,
+ * which stay small/restrained per plan §6) reads too faint blown up to star-corona scale.
+ * ~1.8× DEFAULT_GLOW_STOPS at every stop. Pass via `makeGlowTexture(PIXI, renderer, { stops:
+ * BURN_GLOW_STOPS })` — planets keep using the DEFAULT-stops texture, untouched.
+ */
+export const BURN_GLOW_STOPS: GlowStop[] = [
+  { r: 1.0, alpha: 0.22 },
+  { r: 1.6, alpha: 0.11 },
+  { r: 2.6, alpha: 0.055 },
+  { r: 4.0, alpha: 0.025 },
+];
+
 export type GlowTexture = {
   texture: PixiNS.Texture;
   /** texture px per r=1.0 unit. Size a sprite for a desired on-screen radius R with
