@@ -323,20 +323,27 @@ Each is **additive / default-off** (preserves the 375-test golden parity) and CL
 1. ~~**`--effort` wiring**~~ — **DONE (§5.5).** `effort` threads through `AgentRunner.run` → all 3
    backends (`ClaudeRunner` emits `--effort`; `aider`/`codex` accept-and-ignore) → per-phase
    `BmadConfig.effort` map + `effort_for(phase)` → CLI `--loop-json`. Default empty = byte-parity.
-2. **Adversarial verify-before-merge** — port `core.py:_run_verify` into the driver **between smoke and
-   `pr.create_pr`**, sourcing the contract from `story_acs(story_text)` and the diff from
-   `story_meta().baseline`, on the **Haiku** tier; refute → block the PR + actionable handoff. Add a
-   `bmad.verify` config block. *(biggest quality win)*
-3. **BMAD run-quality metrics** — teach `compute_metrics` to read the `bmad-stop` event (or emit a
-   parallel `stop`-shaped event); flag `bmad.metrics.emit`.
-4. **Cheap plan-gate** before dev-story (Haiku, single-turn, `BLOCKED:`→halt); additive `plan-check`
-   event.
-5. **Gate `fail-fast`** — opt-in `gate.fail_fast` that `break`s `run_gate` after the first non-zero
-   stage; keep the pass-count floor keyed off the test stage.
-6. **Quota survival hardening** (sink #4/#8) — don't blind-re-run a near-budget unbounded phase;
-   probe with a minimal no-MCP invocation; consider a shorter re-probe clamp (trades probe tokens for
-   faster resume — see §8).
-7. **Extend hash-lock into BMAD** (sink, §6 table).
+2. ~~**Adversarial verify-before-merge**~~ — **DONE (2026-07-03, default-on).** Refute-biased
+   single-turn checker (frozen ACs + baseline diff only) between smoke and PR; `REFUTE` blocks the
+   PR; skipped/inconclusive fail open. `bmad.verify` block / `--no-verify`.
+3. ~~**BMAD run-quality metrics**~~ — **DONE (2026-07-03, default-on).** One additive `metrics`
+   event injected before every terminal `stop` (tokens, hit ratio, gate reds, flaky retries, quota
+   waits, cum USD, duration). `bmad.metricsEmit`.
+4. ~~**Cheap plan-gate**~~ — **DONE (2026-07-03, default-on).** Decider-tier single-turn
+   `PLAN_OK`/`BLOCKED:` check before dev-story; `BLOCKED:` halts, anything else fails open.
+   `bmad.planGate` / `--no-plan-gate`.
+5. ~~**Gate `fail-fast`**~~ — **DONE (2026-07-03, opt-in).** `gate.failFast` (engine) +
+   `bmad.gateFailFast`; skipped stages carry a floor/flaky-safe `skipped` shape.
+6. **Quota survival hardening** (sink #4/#8) — **PARTIAL (2026-07-03):** a quota-interrupted phase
+   now **resumes its own session** (`--resume <session_id>`) after the wait instead of re-running
+   from scratch (kills the double-charge), the probe is time-bounded (120s), and any errored phase
+   probes independently (PS parity). Remaining: a minimal no-MCP probe invocation; shorter re-probe
+   clamp.
+7. ~~**Extend hash-lock into BMAD**~~ — **DONE (2026-07-03, as git-based test-integrity,
+   default-on).** Deliberate redesign: `git diff --name-status` vs the story baseline (survives
+   crash/resume) instead of in-memory hash maps — BMAD's TDD flow *authors* tests, so only
+   pre-existing test files are protected: deletion halts, modification is fed to the verifier.
+   `bmad.testIntegrity`.
 8. **Evaluate `ClaudeSDKClient`** for the review/retro Q&A loops (warm session, fewer cold starts) —
    *after* confirming the subscription-OAuth ToS position (§4).
 
