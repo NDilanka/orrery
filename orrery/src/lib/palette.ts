@@ -66,6 +66,7 @@ function hue() {
  *   certified-done   -> scene.done     (emerald)
  *   stopped-ember    -> scene.paused   (banked ember orange)
  *   status 'error'   -> scene.fail     (crimson — no restState yet, defensive)
+ *   status 'stopping' -> scene.paused  (banked ember — winding down reads as approaching-paused)
  *   status 'running' -> scene.runCore  (near-white burn core; motion still carries liveness)
  *   status 'quota-wait' -> scene.quota (same as quota-frost, bare-status form)
  *   else             -> fallback       (caller-supplied "healthy idle" tone)
@@ -78,6 +79,7 @@ export function restColor(status: string, restState: string | null, fallback: nu
   if (restState === 'certified-done') return HUE.sceneDone;
   if (restState === 'stopped-ember') return HUE.scenePaused;
   if (status === 'error') return HUE.sceneFail;
+  if (status === 'stopping') return HUE.scenePaused; // winding down reads as approaching-paused
   if (status === 'running') return HUE.sceneRunCore;
   if (status === 'quota-wait') return HUE.sceneQuota;
   return fallback;
