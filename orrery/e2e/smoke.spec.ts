@@ -83,7 +83,7 @@ test.describe('orrery — browser replay smoke', () => {
     await expect(hud).toBeVisible({ timeout: 20_000 });
     await expect(hud).toContainText('cum spend'); // HUD cost label
     await expect(hud).toContainText(/\$\d+\.\d{2}/); // a $ cum-spend figure
-    await expect(hud.locator('.pill')).toBeVisible(); // the status pill
+    await expect(hud.locator('.status-pill')).toBeVisible(); // the status pill (Hud.svelte)
 
     expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
   });
@@ -118,8 +118,10 @@ test.describe('orrery — browser replay smoke', () => {
       .toBeGreaterThan(start);
 
     // pause → the cursor should settle (stop advancing). Toggle via the play/pause
-    // control (aria-label flips between "play" and "pause").
-    const playPause = page.locator('.transport .tbtn.play');
+    // control (a `.transport` icon button whose aria-label flips between "play"
+    // and "pause" — target by role/name rather than the button's CSS classes,
+    // which are subject to the concurrent gating/a11y rename in TransportBar.svelte).
+    const playPause = page.locator('.transport').getByRole('button', { name: /^(play|pause)$/ });
     await expect(playPause).toBeVisible();
     if ((await playPause.getAttribute('aria-label')) === 'pause') {
       await playPause.click(); // currently playing → pause it
@@ -141,7 +143,7 @@ test.describe('orrery — browser replay smoke', () => {
     expect(pageErrors, pageErrors.map((e) => e.message).join(' | ')).toEqual([]);
   });
 
-  test('4 · ? opens the keyboard HelpOverlay; Esc closes it', async ({ page }) => {
+  test('4 · ? opens the HelpOverlay reference card; Esc closes it', async ({ page }) => {
     const { pageErrors } = collectErrors(page);
 
     await page.goto('/');
@@ -150,7 +152,7 @@ test.describe('orrery — browser replay smoke', () => {
     await page.locator('.station .enter').first().click();
     await expect(page.locator('.hud')).toBeVisible({ timeout: 20_000 });
 
-    const help = page.locator('[role="dialog"]', { hasText: 'KEYBOARD' });
+    const help = page.locator('[role="dialog"]', { hasText: 'REFERENCE' });
     await expect(help).toHaveCount(0); // closed by default
     await page.keyboard.press('Shift+Slash'); // "?"
     await expect(help).toBeVisible({ timeout: 5_000 });
