@@ -1,173 +1,126 @@
 # Orrery
 
-**An autonomous AI coding-loop engine — and a live orbital visualizer to watch it run.**
+**Build, run, and *watch* autonomous Claude Code loops — rendered as a living orbital star system.**
 
 [![CI](https://github.com/NDilanka/orrery/actions/workflows/ci.yml/badge.svg)](https://github.com/NDilanka/orrery/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/NDilanka/orrery)](https://github.com/NDilanka/orrery/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Orrery drives a coding agent (`claude`, `aider`, or `codex`) in a **fix-until-green**
-loop: it picks up a task, lets the agent edit code, then runs a **real external test
-gate** and uses the exit code — not the model's self-assessment — as the only truth.
-It survives quota limits and crashes, commits per iteration so it can roll back, and
-stops on green or hands off cleanly. The companion app (`orrery/`) renders that loop as
-a living star-system you can watch and steer.
+![Orrery desktop app: a live coding loop rendered as an orbital star system](docs/assets/orrery-hero.gif)
 
-> The design rationale and the research behind it are in
-> **[`loop-engineering.md`](loop-engineering.md)** — read that for the *why*. This README
-> is the *how*.
+## What is this
 
-**Status: alpha** (pre-1.0). APIs, the wire protocol, and engine internals may change.
-See [SECURITY.md](SECURITY.md) before running an agent unattended against a real repo.
+Orrery is a desktop app (Tauri v2 + Svelte 5 + PixiJS) for running coding agents unattended — and actually seeing what they're doing. Its embedded Python engine drives the `claude` CLI in a guarded self-prompting loop: an external test gate is the only source of truth, every iteration is a git commit, and the run survives crashes and quota walls. The app tails the loop's event log and renders it as a star system — epics become rings, stories become planets, and a quota pause becomes polar night.
 
----
+**Status: alpha.** This drives a paid CLI (`claude`) against your real repo. Read [SECURITY.md](SECURITY.md) before running anything unattended, and expect APIs and the wire protocol to change before 1.0.
 
-## How it works
-
-A loop is **mechanism, not luck** — the control flow lives in *your* code, not the
-model's. Each outer iteration runs six blocks (fresh context every time; state lives in
-files + git, not the model's memory):
-
-```
- 1. DISCOVER  read the task (TASK.md) + prior state
- 2. ASSEMBLE  build the prompt: spec + frozen acceptance criteria + last gate feedback
- 3. EXECUTE   one agent turn (claude/aider/codex) edits the code
- 4. VERIFY ★  the ORCHESTRATOR runs the gate (e.g. pytest) — exit code is truth
- 5. PERSIST   log.jsonl + checkpoint.json + a git commit (per-iteration rollback)
- 6. DECIDE    continue / roll back / stop / hand off
-      └── repeat until: green | max iters | cost ceiling | stagnation | tamper
-```
-
-**★ Block 4 is the whole ballgame.** The gate is an *external* command the orchestrator
-runs and reads the exit code of — never the model's word. This is what stops the classic
-failure where an agent declares victory on tests it never really passed (or quietly
-deletes the failing one). Orrery hardens it further: test files are **hash-locked** and
-the test count can't drop without triggering a handoff.
-
-**Recovery-first.** State is durable by construction — every productive iteration is a
-git commit, every event is appended to `log.jsonl`, and a `checkpoint.json` records where
-to resume. If the run dies (or hits a quota wall), resume = re-run. Why this matters, and
-why hand-rolling the outer loop beats the native "just run it unattended" path, is laid
-out in [`loop-engineering.md`](loop-engineering.md).
-
----
-
-## Quickstart
-
-**Requirements:** Python ≥ 3.10, an agent CLI on your `PATH` (`claude` by default; or
-`aider` / `codex`), and a gate command your project already has (`pytest`, `bun test`, …).
-
-```bash
-# 1. install the engine (pip or uv)
-pip install -e ./engine          # or:  uv pip install -e ./engine
-#    add the dev extras for ruff + pytest:  pip install -e "./engine[dev]"
-
-# 2. run the bundled example (a tiny Python project with a deliberate bug).
-#    Dry-run first — runs the gate ONCE, spends nothing, calls no agent:
-cd examples/hello
-loop --loop-json loop.json --cwd . --state-dir .loop --dry-run
-#    -> Baseline: 0/2 pass  green=False   (RED on purpose — that's the bug to fix)
-
-# 3. let an agent fix it for real (spends quota; needs `claude` on PATH):
-loop --loop-json loop.json --cwd . --state-dir .loop --runner claude
-```
-
-> The gate runs in the directory passed via `--cwd`, so you can launch `loop` from
-> anywhere. Full walkthrough: [`examples/hello/README.md`](examples/hello/README.md).
-
-**Watch it in the visualizer:** point Orrery at the `log.jsonl` the run produced (e.g.
-`examples/hello/.loop/log.jsonl`) — see [The visualizer](#the-visualizer) below.
-
----
-
-## The engine
-
-A pip-installable Python package in [`engine/`](engine/). Three console scripts:
-
-| Command | What it does |
+| | |
 |---|---|
-| `loop`      | the generic fix-until-green loop (one task, one gate) |
-| `loop-bmad` | the BMAD multi-story epic pipeline (a queue-driven applied loop) |
-| `loop-stop` | cooperative safe-stop controller (request a clean stop at the next checkpoint) |
+| ![Observatory view: one loop's instruments, gate state, and cost horizon](docs/assets/observatory.png) | ![Cosmos view: every loop as a star system](docs/assets/cosmos.png) |
+| ![Tuning Console: author a loop.json in the app](docs/assets/tuning-console.png) | ![Cosmos on a phone via the LAN server](docs/assets/cosmos-mobile.png) |
 
-**Pluggable backends.** `--runner claude` (default), `--runner aider`, `--runner codex`.
+## Try it in 30 seconds
 
-**Always-on guardrails** (no flags needed): an external exit-code gate, a cumulative cost
-ceiling, max-iters + stagnation/plateau/regress stops, test-file hash-lock + count-floor,
-per-iteration git commits (rollback), quota-survival (wait-and-resume across resets), and
-a concurrency lock.
-
-**Research-backed capabilities** — all **OFF by default**, additive when on, full parity
-when off. Each has a `loop.json` `engine.*` key *and* a CLI flag. Details + citations +
-config snippets: **[`docs/capabilities.md`](docs/capabilities.md)**.
-
-| Capability | One-line value | Enable | Grounded in |
-|---|---|---|---|
-| **Held-out test split** | a hidden suite the agent can't read → can't overfit to | gate stage `heldOut: true` | Krakovna et al. *Specification Gaming* (2020); METR reward-hacking (2024–25) |
-| **Compact feedback** | feed back only the first failing test, not the whole log | `--compact-feedback` / `feedback.compact` | SWE-agent (Yang 2024); Self-Debug (Chen 2023) |
-| **Lint/type pre-gate** | a fast static stage fails the gate before tests run | add an ordered gate stage | SWE-agent (Yang 2024) |
-| **Cross-run lessons memory** | recall lessons from past runs into the cached prefix | `--memory` / `memory.enabled` | Reflexion (Shinn 2023); ExpeL (Zhao 2024); CoALA (Sumers 2024); ACE (2025) |
-| **Mutation audit** | probe whether the suite would *notice* a wrong line | `--mutation-audit` / `verify.mutationAudit` | Just et al. (FSE 2014) |
-| **Run-quality metrics** | first-try-green + iters/cost-to-green instead of pass@k | `--emit-metrics` / `metrics.emit` | pass@k critique (Chen 2021) |
-| **Anti-false-green verifier** | a second, independent judge tries to *refute* "done" | `--verify` / `verify.enabled` | Krakovna et al. (2020) |
-
-The original PowerShell scripts (`legacy/loop.ps1` / `legacy/loopcore.ps1`) are the
-**reference implementation** (Windows / PowerShell), kept under [`legacy/`](legacy/) for
-provenance + to regenerate the parity goldens; the Python package is a faithful port.
-`engine/tests` holds the golden parity suite (375 tests).
-
----
-
-## The visualizer
-
-[`orrery/`](orrery/) is a GPU-accelerated **orrery** (clockwork solar-system) that turns
-any loop into a living star-system you can watch from desktop, browser, or phone. It
-**tails** the `log.jsonl` a loop emits and **reduces** it (per [`orrery/PROTOCOL.md`](orrery/PROTOCOL.md))
-into a `RunState`: cost horizon, the six-phase cadence, per-item gate state, quota-night,
-rest-states, and a verifier seal. The BMAD sprint loop is one seeded built-in — Orrery is
-a general platform; you can author your own loops in its Tuning Console.
-
-**Stack:** Tauri v2 (Rust core) + SvelteKit / Svelte 5 (runes) + PixiJS v8 + uPlot.
-
-**Quickest — double-click to run:** on Windows, double-click **`run-orrery.bat`** at the
-repo root (macOS/Linux: `bash run-orrery.sh`). It installs deps on first run, compiles, and
-opens the desktop app — where you can author loops in the Tuning Console and start/stop
-them. (First launch compiles the Rust core, so it takes a few minutes; needs Node 18+ and a
-[Rust toolchain](https://rustup.rs).) Or run it manually:
+No Rust, no Python, no API cost — the browser build replays recorded runs:
 
 ```bash
 cd orrery
 npm install
-npm run tauri dev      # desktop window (HMR) — drives loops LIVE (spawns + tails the engine)
-npm run tauri build    # release bundle/installer
+npm run dev        # → http://localhost:1420
 ```
 
----
+Needs Node 18+. You get the full UI — Cosmos, Observatory, Rewind — driven by bundled fixtures of real runs.
+
+## Run the real thing
+
+### Desktop app
+
+```bash
+cd orrery
+npm run tauri dev      # desktop window — spawns and tails real loops
+```
+
+Requires a [Rust toolchain](https://rustup.rs) (the Tauri CLI ships as a devDependency). Or use the root launchers — **`run-orrery.bat`** (Windows) / **`run-orrery.sh`** (macOS/Linux) — which set up the Python venv and open the app.
+
+### The engine, standalone
+
+```bash
+pip install -e "./engine[dev]"    # Python ≥ 3.10; deps are just psutil + pyyaml ([dev] adds pytest, which the example's gate runs)
+
+# dry-run the bundled example — runs the gate once, calls no agent, spends nothing:
+loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examples/hello/.loop --dry-run
+
+# for real: add --runner claude
+```
+
+Live runs need the [`claude` CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated. **Be clear-eyed: a real loop spends your Claude quota or API money on every iteration.** Cost ceilings are on by default, but you set them.
+
+## How it works
+
+```mermaid
+flowchart LR
+    E["Python engine<br/>(engine/, drives claude CLI)"] -->|"log.jsonl events"| T["Rust tailer (Tauri)<br/>or browser replay"]
+    T --> RR["Rust reducer<br/>src-tauri/src/reducer.rs"]
+    T --> TR["TS reducer<br/>src/lib/reduce.ts"]
+    RR -->|RunState| P["PixiJS renderer<br/>rings, planets, polar night"]
+    TR -->|RunState| P
+    RR <-.->|golden-corpus parity tests| TR
+```
+
+The engine appends one JSON event per line to `log.jsonl` — the wire contract is [`orrery/PROTOCOL.md`](orrery/PROTOCOL.md). The desktop app tails that file from Rust; the browser build replays recorded copies. Twin reducers (Rust and TypeScript) fold events into one `RunState`, and golden-corpus parity tests keep them in lockstep. The renderer draws the result: cost horizon, six-phase cadence, per-item gate state, quota night, verifier seal.
+
+## The engine
+
+[`engine/`](engine/) is a pip-installable Python package (`orrery-loop`) with five console scripts:
+
+| Command | What it does |
+|---|---|
+| `loop` | the generic fix-until-green loop (one task, one external gate) |
+| `loop-bmad` | multi-story BMAD epic pipeline (queue-driven applied loop) |
+| `loop-qa` | AC-driven functional QA pass that judges the app headlessly and authors Playwright specs |
+| `loop-supervise` | restart wrapper that survives flaky gates (thrash-guarded) |
+| `loop-stop` | cooperative safe-stop via a flag file, honored at the next checkpoint |
+
+Guardrails (details in [`engine/README.md`](engine/README.md) and [`docs/capabilities.md`](docs/capabilities.md)):
+
+- **External test gate** — the orchestrator runs your test command and reads the exit code; regex-verified stages, never the model's self-assessment.
+- **Test-integrity hash-locks** — test files are hash-locked and the test count can't silently drop; tampering triggers a handoff.
+- **Held-out verify + mutation audit** — a hidden test split the agent can't overfit to, and a probe that checks the suite would notice a wrong line.
+- **Cost ceilings + quota survival** — cumulative spend caps, and a quota wall pauses the run and resumes it in the next window.
+- **Safe-stop checkpoints** — every iteration commits to git and writes a checkpoint; resume = re-run.
+- **Timeouts + decider caps** — every agent-spawning phase has a wall-clock timeout; hung processes get their whole tree killed.
+
+## Loops
+
+Loops are defined by a `loop.json` ([`orrery/PROTOCOL.md`](orrery/PROTOCOL.md) §7). The app seeds three:
+
+| Loop | Kind | What it is |
+|---|---|---|
+| `hello` | runnable | self-contained fix-until-green demo — a tiny Python project with a deliberate bug and a pytest gate |
+| `bmad` | template | drives a [BMAD-method](https://github.com/bmad-code-org/BMAD-METHOD) project through a multi-story epic pipeline |
+| `webapp-qa` | template | the AC-driven QA loop against a web app |
+
+`roman` and `calc` ship as replay-only fixtures for Rewind/Planetarium. The repo-root [`examples/hello/`](examples/hello/) is the engine-side copy of the same example ([walkthrough](examples/hello/README.md)). To write your own loop — or a whole new driver — start with [`engine/README.md`](engine/README.md) ("Writing a new loop driver") and PROTOCOL §7.
 
 ## Project layout
 
 ```
-engine/                 the loop engine — a pip-installable Python package
-  loop/                 config, gate, decide, runners (claude/aider/codex), capabilities
-  tests/                golden parity suite
-orrery/                 the visualizer — Tauri v2 + Svelte 5 + PixiJS app
-  PROTOCOL.md           the canonical wire contract (events, RunState, commands)
-  src-tauri/            Rust core: model, reducer, tailer, watcher, control
-  src/lib/              transport, stores, adapters, Pixi render, panels
-examples/hello/         a runnable, cross-platform example (pytest gate) ← start here
-src/                    small TypeScript demo tasks (roman / calc) the engine can drive
-docs/capabilities.md    the research-backed, default-off capabilities reference
-loop-engineering.md     the design essay — the WHY behind all of this
-legacy/                 the original PowerShell engine (reference impl; goldens source)
+engine/          the loop engine — pip-installable Python package (orrery-loop)
+orrery/          the desktop app — Tauri v2 + Svelte 5 + PixiJS
+  PROTOCOL.md    the canonical wire contract (events, RunState, loop.json)
+examples/hello/  runnable cross-platform example (pytest gate) ← start here
+docs/            capabilities reference + the design essay
+legacy/          the original PowerShell engine (reference impl; golden source)
+run-orrery.bat   one-click launchers (venv setup + desktop app)
+run-orrery.sh
 ```
 
----
+Tested: 631 engine pytest tests, ~145 Vitest tests, 81 Rust `#[test]`s, 5 Playwright e2e smokes, plus golden-corpus parity between the two reducers.
 
-## Contributing & policies
+## The why
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — layout, dev setup, and the one rule (the wire
-  protocol is canonical).
-- **[orrery/PROTOCOL.md](orrery/PROTOCOL.md)** — the single source of truth for event /
-  state shapes shared across the engine, the Rust reducer, and the TS reducer.
-- **[SECURITY.md](SECURITY.md)** — the threat model for running an agent against your repo.
-- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** · **[LICENSE](LICENSE)** (MIT).
+This project started as a PowerShell harness (kept in [`legacy/`](legacy/) as the reference implementation) and was ported to Python. The design rationale — why an external gate beats trusting the model, why the outer loop belongs in your code, what the research says — is the essay at [`docs/loop-engineering.md`](docs/loop-engineering.md).
 
-> CI runs on every push and pull request; the badge above tracks the default branch.
+## Contributing, security, license
+
+[CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · [CHANGELOG.md](CHANGELOG.md) · [LICENSE](LICENSE) (MIT)

@@ -1,0 +1,72 @@
+name: Bug report
+description: Something broke in the engine, the Orrery app, or the docs/build.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Keep it minimal and concrete — for engine bugs, the
+        smallest `TASK.md` + gate command that reproduces it is ideal.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / what you expected
+      description: What actually happened, and what you expected instead.
+      placeholder: "Ran `loop --dry-run` against examples/hello; expected baseline 0/2, got a crash."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands and config (loop.json / TASK.md snippets) to reproduce.
+      placeholder: |
+        1. cd examples/hello
+        2. loop --loop-json loop.json --cwd . --state-dir .loop --dry-run
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - Orrery app (Tauri/Svelte visualizer)
+        - Engine (Python loop / runners / gate)
+        - Docs / build / CI
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: app-mode
+    attributes:
+      label: App mode (if the Orrery app is involved)
+      options:
+        - Not applicable (engine/docs only)
+        - Browser dev / replaying a log
+        - Tauri desktop window
+        - Live loop run (app spawning + tailing the engine)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log.jsonl events or console output
+      description: |
+        Paste only the relevant lines. **Do NOT paste secrets, API keys, or full agent
+        transcripts containing private code** — redact paths/tokens first.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "node / rust / python / claude CLI versions, as applicable."
+      placeholder: "node 20.11, rustc 1.79, python 3.12, claude 1.0.x"
