@@ -108,6 +108,10 @@ class GateConfig:
 
     stages: list[GateStage] = field(default_factory=list)
     lock_globs: list[str] = field(default_factory=lambda: list(_DEFAULT_LOCK_GLOBS))
+    # Opt-in short-circuit: stop launching gate stages after the first non-zero exit (skipped
+    # stages still appear in the result — see :func:`loop.gate.run_gate`). Default OFF so the gate
+    # runs every stage exactly as before (parity).
+    fail_fast: bool = False
 
 
 @dataclass
@@ -224,7 +228,7 @@ class EngineConfig:
 # `green_when` are RETIRED (Task 5): the field was parsed but the gate has always hardcoded
 # "green = every stage exit 0" (loop.gate.run_gate); old configs that still carry it get a
 # gentler "retired" notice instead of "unrecognized key".
-_GATE_KNOWN_KEYS = {"stages", "lockGlobs", "lock_globs"}
+_GATE_KNOWN_KEYS = {"stages", "lockGlobs", "lock_globs", "failFast", "fail_fast"}
 _GATE_RETIRED_KEYS = {"greenWhen", "green_when"}
 
 
@@ -248,6 +252,7 @@ def _gate_from(d: dict[str, Any]) -> GateConfig:
     return GateConfig(
         stages=stages,
         lock_globs=list(resolve(d, "lockGlobs", "lock_globs", default=list(_DEFAULT_LOCK_GLOBS))),
+        fail_fast=bool(resolve(d, "failFast", "fail_fast", default=False)),
     )
 
 

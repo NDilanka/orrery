@@ -6,10 +6,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from conftest import REPO_ROOT
+
 from loop.config import EngineConfig, from_loop_json, model_for_phase
 
-# The seeded, self-contained Python loop the visualizer ships (pytest gate).
-HELLO = Path("orrery/loops/hello/loop.json")
+# The seeded, self-contained Python loop the visualizer ships (pytest gate). Resolved off the
+# repo root (from the test file's location) so this passes from any CWD, not just the repo root.
+HELLO = REPO_ROOT / "orrery/loops/hello/loop.json"
 
 
 # =====================================================================
@@ -232,7 +235,7 @@ def test_known_engine_keys_produce_no_warning(capsys):
 
 
 def test_load_brain2_regression_seed():
-    cfg = from_loop_json(Path("orrery/loops/brain2-regression/loop.json"))
+    cfg = from_loop_json(REPO_ROOT / "orrery/loops/brain2-regression/loop.json")
     assert cfg.task.endswith("TASK.md")
     assert cfg.gate.stages[0].name == "e2e"
     assert cfg.cost.ceiling_usd == 2.0
@@ -246,7 +249,9 @@ def test_seed_brain2_regression_intra_loop_paths_are_relative():
     `--cwd` = the brain2 repo, NOT this loop's dir), so a relative task path would be looked up
     in the WRONG repo first (and only fall through to the loop dir if no same-named file exists
     there) -- a silent footgun if brain2 ever grows its own TASK.md. Absolute keeps it unambiguous."""
-    data = json.loads(Path("orrery/loops/brain2-regression/loop.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (REPO_ROOT / "orrery/loops/brain2-regression/loop.json").read_text(encoding="utf-8")
+    )
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
     assert data["checkpoint"] == ".loop/checkpoint.json"
@@ -254,4 +259,9 @@ def test_seed_brain2_regression_intra_loop_paths_are_relative():
     assert args[args.index("--state-dir") + 1] == ".loop"
     assert args[args.index("--loop-json") + 1] == "loop.json"
     assert args[args.index("--cwd") + 1] == "D:/dev/brain2"
-    assert data["engine"]["task"] == "D:/dev/loop/orrery/loops/brain2-regression/TASK.md"
+    # `engine.task` stays ABSOLUTE on purpose (see docstring). Assert that portably: an absolute
+    # path ending in the seed's TASK.md — NOT the exact machine-specific "D:/dev/loop/..." string,
+    # which pinned the suite to one checkout location.
+    task = data["engine"]["task"]
+    assert Path(task).is_absolute()
+    assert task.endswith("orrery/loops/brain2-regression/TASK.md")

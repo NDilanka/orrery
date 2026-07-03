@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import REPO_ROOT
 
 from loop import lockfile
 from loop.bmad import driver, pr, recovery
@@ -31,8 +32,28 @@ from loop.runners.base import AgentResult, AgentRunner
 # ---------------------------------------------------------------------------
 
 
+def _advance_story_files(cwd) -> None:
+    """Simulate the real dev-story agent advancing the story FILE's ``Status:`` to 'review'
+    (the durable signal the driver's completion check re-reads after a green dev gate)."""
+    if not cwd:
+        return
+    artifacts = Path(cwd) / "_bmad-output" / "implementation-artifacts"
+    if not artifacts.is_dir():
+        return
+    for f in artifacts.glob("*.md"):
+        text = f.read_text(encoding="utf-8")
+        new = text.replace("Status: ready-for-dev", "Status: review").replace(
+            "Status: in-progress", "Status: review"
+        )
+        if new != text:
+            f.write_text(new, encoding="utf-8")
+
+
 class MockRunner(AgentRunner):
-    """Returns queued AgentResults in order; records each run()'s kwargs. Supports sessions."""
+    """Returns queued AgentResults in order; records each run()'s kwargs. Supports sessions.
+
+    On the dev-story prompt it advances the story file's Status like the real agent would,
+    so the driver's dev-story completion check passes."""
 
     name = "mock"
     supports_sessions = True
@@ -43,6 +64,8 @@ class MockRunner(AgentRunner):
 
     def run(self, **kwargs) -> AgentResult:  # type: ignore[override]
         self.calls.append(dict(kwargs))
+        if "bmad-dev-story" in str(kwargs.get("prompt", "")):
+            _advance_story_files(kwargs.get("cwd"))
         if self._results:
             return self._results.pop(0)
         return AgentResult(raw="", text="ok", cost_usd=0.0)
@@ -926,6 +949,8 @@ def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
             if not self._did_limit:
                 self._did_limit = True
                 return AgentResult(raw="", text="", is_error=True, quota_limited=True)
+            if "bmad-dev-story" in str(kwargs.get("prompt", "")):
+                _advance_story_files(kwargs.get("cwd"))
             return self._queue.pop(0)
 
         def probe_quota(self):
@@ -1452,7 +1477,7 @@ def test_loop_json_can_tune_flaky_knobs():
 
 
 def test_seed_bmad_loop_json_parses_with_namespaced_block(capsys):
-    data = json.loads(Path("orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
+    data = json.loads((REPO_ROOT / "orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
     cfg = driver.BmadConfig.from_loop_json({**data, "bmad": {**data["bmad"], "projectRoot": "/p"}})
     assert cfg.project_root == "/p"
     assert cfg.model_for("dev") == "claude-opus-4-8[1m]"
@@ -1466,7 +1491,9 @@ def test_seed_bmad_loop_json_parses_with_namespaced_block(capsys):
 
 
 def test_seed_bmad_engine_json_still_parses_deprecated_but_working():
-    data = json.loads(Path("orrery/loops/bmad/bmad-engine.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (REPO_ROOT / "orrery/loops/bmad/bmad-engine.json").read_text(encoding="utf-8")
+    )
     data["bmad"]["projectRoot"] = "/p"
     cfg = driver.BmadConfig.from_loop_json(data)
     assert cfg.model_for("dev") == "claude-opus-4-8[1m]"
@@ -1477,7 +1504,7 @@ def test_seed_bmad_loop_json_intra_loop_paths_are_relative():
     """A4 Task 3: stateDir/stopFlag/checkpoint + the matching --state-dir/--loop-json args are
     RELATIVE (portable across machines/checkouts); only --project-root, which points OUTSIDE the
     loop dir at the external brain2 repo, stays absolute."""
-    data = json.loads(Path("orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
+    data = json.loads((REPO_ROOT / "orrery/loops/bmad/loop.json").read_text(encoding="utf-8"))
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
     assert data["checkpoint"] == ".loop/checkpoint.json"

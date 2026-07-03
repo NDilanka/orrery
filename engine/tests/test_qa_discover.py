@@ -13,6 +13,8 @@ import os
 import re
 from pathlib import Path
 
+from conftest import REPO_ROOT
+
 from loop import lockfile
 from loop.qa.discover import InvokeResult, QaConfig, findings_to_events, run, story_gate
 
@@ -191,7 +193,9 @@ def test_run_acquires_and_releases_the_lock_on_a_clean_run(tmp_path):
 
 
 def test_seed_brain2_qa_loop_json_parses_with_namespaced_block(capsys):
-    data = json.loads(Path("orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (REPO_ROOT / "orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8")
+    )
     cfg = QaConfig.from_loop_json(data, project_root="/p")
     assert cfg.app == "brain2"
     assert cfg.effort == "high"
@@ -203,7 +207,9 @@ def test_seed_brain2_qa_loop_json_parses_with_namespaced_block(capsys):
 
 
 def test_seed_qa_engine_json_still_parses_deprecated_but_working():
-    data = json.loads(Path("orrery/loops/brain2-qa/qa-engine.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (REPO_ROOT / "orrery/loops/brain2-qa/qa-engine.json").read_text(encoding="utf-8")
+    )
     cfg = QaConfig.from_loop_json(data, project_root="/p")
     assert cfg.app == "brain2"
     assert cfg.effort == "high"
@@ -215,7 +221,9 @@ def test_seed_brain2_qa_loop_json_intra_loop_paths_are_relative():
     qa.storageState stays absolute too — it's consumed by a Playwright subprocess whose cwd is
     `project_root`, a DIFFERENT directory than this loop's own dir, so a relative value there
     would resolve against the wrong repo."""
-    data = json.loads(Path("orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (REPO_ROOT / "orrery/loops/brain2-qa/loop.json").read_text(encoding="utf-8")
+    )
     assert data["stateDir"] == ".loop"
     assert data["stopFlag"] == ".loop/STOP"
     assert data["checkpoint"] == ".loop/checkpoint.json"

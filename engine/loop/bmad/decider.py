@@ -56,6 +56,7 @@ def review_decider(
     story_scope: str,
     model: str = "haiku",
     effort: str = "",
+    timeout_sec: int = 0,
 ) -> str:
     """Port of ``Invoke-ReviewDecider``.
 
@@ -64,6 +65,11 @@ def review_decider(
     used the story key). Build the decisive-and-concise orchestrator prompt, run it on the
     CHEAP ``model``, and return the answer as a single trimmed line. Falls back to a safe
     in-scope answer when the model returns nothing usable.
+
+    ``timeout_sec`` (0 = unbounded) bounds the decider's own ``runner.run`` — the driver passes
+    a FINITE value so a wedged decider call can't hang the whole review phase forever (a hung
+    decider produces no text, so :func:`_answer_text` returns the safe fallback and the review
+    proceeds).
     """
     prompt = (
         f"You are the orchestrator, standing in for the human in a BMAD code review of "
@@ -86,6 +92,7 @@ def review_decider(
         permission_mode=_DECIDER_PERMISSION_MODE,
         max_turns=_DECIDER_MAX_TURNS,
         cwd=None,
+        timeout_sec=timeout_sec,
     )
     return _answer_text(getattr(res, "text", None), _REVIEW_FALLBACK)
 
@@ -97,6 +104,7 @@ def retro_decider(
     epic_scope: str,
     model: str = "haiku",
     effort: str = "",
+    timeout_sec: int = 0,
 ) -> str:
     """Port of ``Invoke-RetroDecider``.
 
@@ -105,6 +113,10 @@ def retro_decider(
     constructive-and-decisive team-lead prompt, run it on the CHEAP ``model``, and return the
     answer as a single trimmed line. Falls back to a carry-forward answer when the model
     returns nothing usable.
+
+    ``timeout_sec`` (0 = unbounded) bounds the decider's own ``runner.run`` — the driver passes
+    a FINITE value so a wedged decider call can't hang the retro phase forever (a hung decider
+    produces no text, so :func:`_answer_text` returns the safe fallback and the retro proceeds).
     """
     prompt = (
         f"You are the team lead / orchestrator standing in for the human in a BMAD EPIC "
@@ -130,5 +142,6 @@ def retro_decider(
         permission_mode=_DECIDER_PERMISSION_MODE,
         max_turns=_DECIDER_MAX_TURNS,
         cwd=None,
+        timeout_sec=timeout_sec,
     )
     return _answer_text(getattr(res, "text", None), _RETRO_FALLBACK)

@@ -112,6 +112,7 @@ def _run_command(command: Command, cwd: str | None = None) -> tuple[str, int]:
 def run_gate(
     stages: list[dict[str, Any]] | None = None,
     cwd: str | None = None,
+    fail_fast: bool = False,
 ) -> dict[str, Any]:
     """Port of ``Invoke-Gate`` (loopcore.ps1 ~lines 114-181).
 
@@ -122,13 +123,32 @@ def run_gate(
     ``cwd`` is the working directory STRING-command stages run in (``None`` -> the current
     process directory, byte-identical to today's behavior). Callable hooks are unaffected.
 
+    ``fail_fast`` (default ``False`` -> byte-identical to prior behavior: every stage always
+    runs) short-circuits the pipeline: once a stage exits non-zero, no later stage's command is
+    launched. This saves paying for a full (build-heavy) test run after lint already failed. The
+    skipped stages STILL appear in ``stages`` — see below — so every consumer's shape is intact.
+
     Green = every stage exited 0. ``pass`` / ``fail`` / ``total`` come from the LAST stage
     that reported any counts (so a no-count pre-stage does not zero the totals). When no
     stages are supplied the default reproduces the single ``bun test`` stage with patterns
     ``(\\d+)\\s+pass`` / ``(\\d+)\\s+fail``.
 
     Returns ``{green, pass, fail, total, stages, raw}`` where ``stages`` is a list of
-    ``{name, ok, exit}`` and ``raw`` is the concatenated per-stage output.
+    ``{name, ok, exit}`` for stages that RAN, plus ``{name, ok: False, exit: None,
+    skipped: True}`` for any stage short-circuited by ``fail_fast``. ``raw`` is the concatenated
+    per-stage output (a skipped stage produced none, so it adds no ``### stage`` section).
+
+    Skipped-stage shape rationale (safe for every known consumer):
+    - ``ok`` is ``False`` — a stage that did not run is NOT green (matches ``phases._stage_ok``'s
+      "absent/didn't-run = not ok" contract) and keeps the gate red, which it already is.
+    - ``exit`` is ``None`` — there is no real exit code. The only reader is ``phases._gate_summary``
+      (``f"{name}={s.get('exit')}"`` -> renders ``test=None``, no crash). ``feedback`` parses exit
+      codes out of ``raw`` headers, and a skipped stage writes no header, so it is never parsed.
+    - No per-stage count/pass field is emitted, so a skipped TEST stage feeds NOTHING into the
+      pass/fail/total floor logic: ``last_counts`` is only updated by a stage whose command ran
+      and matched, so ``total``/``fail`` stay zero-safe. BMAD's ``_is_flaky_shape`` then reads a
+      gate-level ``fail`` of 0 (``0 < fail`` is False) -> NOT flaky -> the red gate is reported at
+      once with no wasted retries, which is correct: the real failure was the earlier stage.
     """
     if not stages:
         stages = [
@@ -144,10 +164,19 @@ def run_gate(
     all_green = True
     last_counts: dict[str, Any] | None = None
     raw_parts: list[str] = []
+    short_circuited = False  # fail_fast: a prior stage failed -> launch no more commands
 
     for s in stages:
         name = s.get("name")
         cmd = s.get("command")
+
+        if short_circuited:
+            # fail_fast already tripped on an earlier stage — record this one as skipped WITHOUT
+            # running its command. ``ok=False`` / ``exit=None`` / no counts keeps every consumer
+            # safe (see the docstring); it contributes nothing to pass/fail/total.
+            stage_results.append({"name": name, "ok": False, "exit": None, "skipped": True})
+            continue
+
         # ``is not None`` guard mirrors the PS ``if ($null -ne $s.PassPattern)`` — an
         # explicit empty/None pattern falls back to the default.
         pass_pattern = s.get("pass_pattern")
@@ -167,6 +196,8 @@ def run_gate(
         ok = exit_code == 0
         if not ok:
             all_green = False
+            if fail_fast:
+                short_circuited = True
 
         stage_results.append({"name": name, "ok": ok, "exit": exit_code})
         raw_parts.append(f"### stage '{name}' (exit={exit_code})\n{output}")
