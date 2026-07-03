@@ -91,10 +91,16 @@ class ResilientRunner(AgentRunner):
         quota_cfg: dict[str, Any] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         activity_path: Any = None,
+        fallback_model: str = "",
     ):
         self._base = base_runner
         self._emit = emit
         self._sleep = sleep
+        # Wave-4 Task A — a comma-separated model chain the CLI falls back to on overload. Injected
+        # (when non-empty) into EVERY wrapped call so all BMAD/QA phases + deciders + verify/plan-gate
+        # inherit overload resilience in ONE place. Empty (default) -> never injected -> the wrapped
+        # call is byte-identical to before (parity), and non-claude base runners accept-and-ignore it.
+        self._fallback_model = str(fallback_model or "")
         # When set, a liveness Heartbeat overwrites this file (activity.json) every few seconds
         # for the DURATION of each agent call, so a watcher can tell a long silent phase (a 30-min
         # dev-story is one continuous claude call that emits no log line until its gate) from a
@@ -217,6 +223,11 @@ class ResilientRunner(AgentRunner):
         fresh_fallback_used = False
         while True:
             call_kwargs = dict(kwargs)
+            # Inject the fallback-model chain only when configured AND the caller didn't already set
+            # one, so an unset config leaves the call byte-identical (fixed-signature test doubles
+            # never see an unexpected kwarg).
+            if self._fallback_model and "fallback_model" not in call_kwargs:
+                call_kwargs["fallback_model"] = self._fallback_model
             if resume:
                 call_kwargs["resume_session"] = resume
             was_resume = resume is not None

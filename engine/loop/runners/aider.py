@@ -64,9 +64,13 @@ class AiderRunner(AgentRunner):
         resume_session: str | None = None,
         output_format: str = "json",
         effort: str = "",
+        fallback_model: str = "",
+        json_schema: str = "",
+        settings: str = "",
     ) -> AgentResult:
-        # allowed_tools / permission_mode / resume_session / max_turns / output_format / effort
-        # have no aider equivalent — accepted and ignored on purpose (see module docstring).
+        # allowed_tools / permission_mode / resume_session / max_turns / output_format / effort /
+        # fallback_model / json_schema / settings have no aider equivalent — accepted and ignored
+        # on purpose (see module docstring), exactly like `effort`.
         argv = [
             "aider",
             "--message",

@@ -43,6 +43,9 @@ class ClaudeRunner(AgentRunner):
         effort: str = "",
         mcp_config: str = "",
         strict_mcp_config: bool = False,
+        fallback_model: str = "",
+        json_schema: str = "",
+        settings: str = "",
     ) -> AgentResult:
         # Build argv EXACTLY like loop.ps1 (~635): a single --allowedTools flag followed by
         # the tool list spread as separate positional args (PS: '--allowedTools' + $toolArgs).
@@ -76,6 +79,20 @@ class ClaudeRunner(AgentRunner):
             argv += ["--mcp-config", mcp_config]
             if strict_mcp_config:
                 argv.append("--strict-mcp-config")
+        # --- Wave-4 opt-in flags (all default "" -> omitted, byte-identical argv when unset) ----
+        # --fallback-model takes ONE value that may itself be a comma-separated chain the CLI tries
+        # in order (verified against claude 2.1.199 --help: "Accepts a comma-separated list"). We
+        # pass it through verbatim so a caller can hand us "sonnet,haiku" as a single token.
+        if fallback_model:
+            argv += ["--fallback-model", fallback_model]
+        # --json-schema takes the schema INLINE as a JSON string (verified: the CLI example is a
+        # literal '{"type":"object",...}' arg, not a file path). Pass it straight through.
+        if json_schema:
+            argv += ["--json-schema", json_schema]
+        # --settings takes a file path OR inline JSON. The in-session gate writes a settings file
+        # and hands us its path here (Wave-4 Task C, experimental).
+        if settings:
+            argv += ["--settings", settings]
         argv += ["--allowedTools", *list(allowed_tools)]
         if resume_session:
             argv += ["--resume", resume_session]
@@ -99,6 +116,13 @@ class ClaudeRunner(AgentRunner):
             return AgentResult(raw=raw, is_error=True, parse_failed=True)
 
         is_error = bool(parsed.get("is_error", False))
+        # --json-schema validated output rides on the result JSON's `structured_output` field
+        # (confirmed via the SDK structured-outputs docs). Only surface a dict; anything else
+        # (absent field on a normal run, or a non-object) leaves `structured` None so consumers
+        # fall back to text parsing. A run that requested a schema but failed validation reports
+        # subtype `error_max_structured_output_retries` with no structured_output -> None here.
+        so = parsed.get("structured_output")
+        structured = so if isinstance(so, dict) else None
         return AgentResult(
             raw=raw,
             text=parsed.get("result", "") or "",
@@ -107,6 +131,7 @@ class ClaudeRunner(AgentRunner):
             session_id=parsed.get("session_id"),
             usage=parsed.get("usage"),
             quota_limited=is_error and quota.test_quota_limited_text(raw),
+            structured=structured,
         )
 
     def probe_quota(self) -> QuotaStatus:

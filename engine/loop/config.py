@@ -212,6 +212,15 @@ class EngineConfig:
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
+    # Wave-4 Task A — overload resilience: a comma-separated model chain the claude CLI tries when
+    # the primary model is overloaded/unavailable (``--fallback-model``). "" = omitted (parity).
+    # Threaded into the execute + verify runner.run calls (empty -> byte-identical argv).
+    fallback_model: str = ""
+    # Wave-4 Task C (EXPERIMENTAL, default "off") — in-session gate prototype for the GENERIC loop
+    # only. "off" = no change (parity); "stop-hook" installs a Stop hook (via --settings) that
+    # re-runs the gate and BLOCKS turn-end until green; "goal" prepends a /goal condition line to
+    # the execute prompt. The orchestrator's real external gate remains the sole arbiter either way.
+    session_gate: str = "off"
     # The --loop-json path THIS run was launched with, if any. Not sourced from the JSON content
     # itself (a file doesn't know its own path) — cli.py sets it after loading, mirroring
     # loop.bmad.driver.BmadConfig.loop_json. A resume/Reignite must re-point at it (loop.core's
@@ -316,6 +325,8 @@ _ENGINE_KNOWN_KEYS = {
     "iterTimeoutMin", "iter_timeout_min",
     "allowedTools", "allowed_tools",
     "permissionMode", "permission_mode",
+    "fallbackModel", "fallback_model",
+    "sessionGate", "session_gate",
     "gate", "cost", "stop", "verify", "feedback", "memory", "metrics",
 }
 
@@ -358,6 +369,8 @@ def from_loop_json(path_or_dict: str | Path | dict[str, Any]) -> EngineConfig:
         permission_mode=resolve(
             eng, "permissionMode", "permission_mode", default=_DEFAULT_PERMISSION_MODE
         ),
+        fallback_model=str(resolve(eng, "fallbackModel", "fallback_model", default="") or ""),
+        session_gate=str(resolve(eng, "sessionGate", "session_gate", default="off") or "off"),
         gate=_gate_from(resolve(eng, "gate", default={}) or {}),
         cost=_cost_from(resolve(eng, "cost", default={}) or {}),
         stop=_stop_from(resolve(eng, "stop", default={}) or {}),

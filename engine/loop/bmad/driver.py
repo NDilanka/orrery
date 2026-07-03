@@ -32,6 +32,7 @@ follow-up) are noted in the module docstring of the final report rather than cha
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -188,6 +189,9 @@ _BMAD_KNOWN_KEYS = {
     "plan_gate", "planGate",
     "metrics_emit", "metricsEmit",
     "gate_fail_fast", "gateFailFast",
+    # Wave-4 flat knobs (both spellings).
+    "fallback_model", "fallbackModel",
+    "structured_verdicts", "structuredVerdicts",
 }
 
 
@@ -289,6 +293,16 @@ class BmadConfig:
     # FEATURE 5 — gate fail-fast (OPT-IN, unlike the above): once a gate stage exits non-zero, skip
     # the later (build-heavy) stages instead of always running the whole pipeline.
     gate_fail_fast: bool = False
+    # --- Wave-4 (all default-OFF / experimental, flagless — ride the --loop-json re-point) ------
+    # Task A — overload resilience: a comma-separated model chain the claude CLI tries when the
+    # primary is overloaded (``--fallback-model``). "" = omitted (parity). Threaded into EVERY phase
+    # by the ResilientRunner (which wraps every BMAD agent call), so it is empty-safe everywhere.
+    fallback_model: str = ""
+    # Task B — structured verdicts: when ON, the adversarial verify + plan-gate calls request a
+    # validated ``structured_output`` via ``--json-schema`` and PREFER it over free-text VERDICT
+    # parsing, falling back to the existing text parse (and its fail-open polarity) when the
+    # structured field is absent/invalid. OFF (default) -> zero argv change.
+    structured_verdicts: bool = False
     # The --loop-json config path, if one was used. Per-phase models/effort have NO CLI flag — they
     # live ONLY in this file — so a Reignite from the checkpoint `resume` string must re-point at it
     # to restore the full tuning (else it silently reverts models/effort to defaults). "" = none.
@@ -357,6 +371,10 @@ class BmadConfig:
             # Wave-2: the only new knobs with a CLI flag are the two default-ON disablers.
             verify_enabled=not bool(getattr(args, "no_verify", False)),
             plan_gate_enabled=not bool(getattr(args, "no_plan_gate", False)),
+            # Wave-4: flagless knobs (like models/effort) — read from args when present, else "".
+            # They otherwise live in --loop-json and ride its re-point in _resume_command.
+            fallback_model=getattr(args, "fallback_model", None) or "",
+            structured_verdicts=bool(getattr(args, "structured_verdicts", False)),
             loop_json=getattr(args, "loop_json", None) or "",
         )
 
@@ -371,8 +389,6 @@ class BmadConfig:
         ``dev_server_argv``/``devServerArgv`` (previously not read at all, despite being
         documented as configurable) are both wired here.
         """
-        import json
-
         if isinstance(path_or_dict, dict):
             data = path_or_dict
         else:
@@ -467,6 +483,13 @@ class BmadConfig:
         ff = resolve(b, "gate_fail_fast", "gateFailFast")
         if ff is not None:
             kwargs["gate_fail_fast"] = bool(ff)
+        # Wave-4 flat knobs.
+        fbm = resolve(b, "fallback_model", "fallbackModel")
+        if fbm is not None:
+            kwargs["fallback_model"] = str(fbm)
+        sv = resolve(b, "structured_verdicts", "structuredVerdicts")
+        if sv is not None:
+            kwargs["structured_verdicts"] = bool(sv)
         return cls(**kwargs)
 
 
@@ -596,7 +619,8 @@ def _resume_command(config: BmadConfig, state_dir: Any) -> str:
         parts.append("--auto-rollback")
     # Wave-2: the two default-ON quality gates each have a disabler flag; round-trip it only when
     # the user turned the gate OFF (the flagless knobs — verify model/effort/timeout, testIntegrity,
-    # metricsEmit, gateFailFast — ride the --loop-json re-point above, like models/effort).
+    # metricsEmit, gateFailFast, and the Wave-4 fallbackModel/structuredVerdicts — ride the
+    # --loop-json re-point above, like models/effort).
     if not config.verify_enabled:
         parts.append("--no-verify")
     if not config.plan_gate_enabled:
@@ -814,6 +838,7 @@ def _run_inner(
             "cum": cum,
         },
         activity_path=state / "activity.json",
+        fallback_model=config.fallback_model,
     )
 
     def gate_fn() -> dict[str, Any]:
@@ -1029,6 +1054,49 @@ _PLAN_GATE_PROMPT_TEMPLATE = (
 )
 
 
+# --- Wave-4 Task B: structured-verdict schemas + resolver (opt-in via structured_verdicts) ------
+# Inline JSON Schemas handed to claude's ``--json-schema``; the validated result rides the result
+# JSON's ``structured_output`` field (-> AgentResult.structured). Each mirrors the free-text verdict
+# these gates already parse, so resolution PREFERS the structured field and falls back to the text
+# parse (and its fail-open polarity) whenever the field is absent/invalid — never a behavior break.
+_PLAN_GATE_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "verdict": {"enum": ["PLAN_OK", "BLOCKED"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["verdict"],
+})
+_VERIFY_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "verdict": {"enum": ["PASS", "REFUTE"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["verdict"],
+})
+
+
+def _structured_verdict(res: Any, allowed: set[str]) -> tuple[str, str] | None:
+    """``(verdict, reason)`` from a run's validated ``structured_output``, or None to fall back.
+
+    Returns None (so the caller uses its existing text parse) unless ``res.structured`` is a dict
+    carrying a ``verdict`` string in ``allowed`` — i.e. only a PRESENT and VALID structured verdict
+    short-circuits the text path. ``reason`` defaults to "" when absent.
+    """
+    so = getattr(res, "structured", None)
+    if not isinstance(so, dict):
+        return None
+    v = so.get("verdict")
+    if not isinstance(v, str):
+        return None
+    vu = v.strip().upper()
+    if vu not in allowed:
+        return None
+    reason = so.get("reason")
+    return vu, (str(reason).strip() if reason is not None else "")
+
+
 def _run_plan_gate(
     config: BmadConfig,
     resilient: ResilientRunner,
@@ -1050,6 +1118,10 @@ def _run_plan_gate(
     tasks = _story_tasks(story_text) or "(no Tasks section found)"
     timeout = config.decider_timeout_min * 60 if config.decider_timeout_min > 0 else 0
     resilient.set_context("plan-gate", target.key)
+    # Task B: request a validated structured verdict when enabled (OFF -> no --json-schema flag).
+    pg_extra: dict[str, Any] = {}
+    if config.structured_verdicts:
+        pg_extra["json_schema"] = _PLAN_GATE_SCHEMA
     res = resilient.run(
         prompt=_PLAN_GATE_PROMPT_TEMPLATE.format(story=target.key, acs=acs, tasks=tasks),
         model=config.model_for("decider"),
@@ -1059,6 +1131,7 @@ def _run_plan_gate(
         max_turns=1,
         cwd=cwd,
         timeout_sec=timeout,
+        **pg_extra,
     )
     cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
     if (
@@ -1071,7 +1144,31 @@ def _run_plan_gate(
             reason="plan-gate call errored/timed out; proceeding", cum=cum + cost,
         ))
         return None, cost
+    # Prefer a valid structured verdict; else fall back to the free-text BLOCKED:/PLAN_OK parse.
+    sv = _structured_verdict(res, {"PLAN_OK", "BLOCKED"}) if config.structured_verdicts else None
     text = getattr(res, "text", "") or ""
+    if sv is not None:
+        sv_verdict, sv_reason = sv
+        if sv_verdict == "BLOCKED":
+            reason = sv_reason or "story judged not ready to implement as one story"
+            emit(plan_check_event(
+                story=target.key, ok=False, verdict="blocked", reason=reason, cum=cum + cost,
+            ))
+            emit(bmad_stop_event(
+                False,
+                f"plan-gate BLOCKED {target.key}: {reason}. Its ACs/Tasks are ambiguous, "
+                f"untestable, or too large for one story — split/clarify it, then resume: "
+                f"{resume_cmd}",
+                cum + cost,
+            ))
+            print(f"\n[HALT] plan-gate BLOCKED {target.key}: {reason}")
+            if resume_cmd:
+                print(f"       resume: {resume_cmd}")
+            return 1, cost
+        emit(plan_check_event(
+            story=target.key, ok=True, verdict="ok", reason=None, cum=cum + cost
+        ))
+        return None, cost
     bm = re.search(r"BLOCKED:\s*(.*)", text, re.IGNORECASE)
     if bm:
         reason = bm.group(1).strip() or "story judged not ready to implement as one story"
@@ -1253,6 +1350,10 @@ def _run_verify(
     )
     timeout = config.verify_timeout_min * 60 if config.verify_timeout_min > 0 else 0
     resilient.set_context("adversarial-verify", target.key)
+    # Task B: request a validated structured verdict when enabled (OFF -> no --json-schema flag).
+    vf_extra: dict[str, Any] = {}
+    if config.structured_verdicts:
+        vf_extra["json_schema"] = _VERIFY_SCHEMA
     res = resilient.run(
         prompt=prompt,
         model=config.verify_model,
@@ -1262,6 +1363,7 @@ def _run_verify(
         max_turns=1,
         cwd=cwd,
         timeout_sec=timeout,
+        **vf_extra,
     )
     cost = float(getattr(res, "cost_usd", 0.0) or 0.0)
     if (
@@ -1275,19 +1377,28 @@ def _run_verify(
             cum=cum + cost,
         ))
         return None, cost
+    # Prefer a valid structured verdict; else fall back to the free-text VERDICT: line parse. Both
+    # paths keep the wave-2 fail-open polarity (no parseable verdict -> proceed).
+    sv = _structured_verdict(res, {"PASS", "REFUTE"}) if config.structured_verdicts else None
     text = getattr(res, "text", "") or ""
-    matches = list(re.finditer(r"VERDICT:\s*(PASS|REFUTE)[^\n]*", text, re.IGNORECASE))
-    if not matches:
-        emit(verify_event(
-            story=target.key, verdict="inconclusive",
-            reason="no parseable VERDICT line; fail-open", cum=cum + cost,
-        ))
-        return None, cost
-    last = matches[-1]
-    if last.group(1).upper() == "REFUTE":
+    if sv is not None:
+        verdict, sv_reason = sv
+        reason = sv_reason
+    else:
+        matches = list(re.finditer(r"VERDICT:\s*(PASS|REFUTE)[^\n]*", text, re.IGNORECASE))
+        if not matches:
+            emit(verify_event(
+                story=target.key, verdict="inconclusive",
+                reason="no parseable VERDICT line; fail-open", cum=cum + cost,
+            ))
+            return None, cost
+        last = matches[-1]
+        verdict = last.group(1).upper()
         reason = re.sub(
             r"^VERDICT:\s*REFUTE\s*[—:\-]*\s*", "", last.group(0), flags=re.IGNORECASE
-        ).strip() or "diff does not satisfy the frozen acceptance criteria"
+        ).strip()
+    if verdict == "REFUTE":
+        reason = reason or "diff does not satisfy the frozen acceptance criteria"
         emit(verify_event(story=target.key, verdict="refute", reason=reason, cum=cum + cost))
         emit(bmad_stop_event(
             False,
