@@ -1072,9 +1072,21 @@ fn spawn_cwd(state_dir: &Path) -> PathBuf {
 /// `..` (`ParentDir`) component anywhere in it, so a relative path can never escape
 /// the loop's own directory. A `.` (`CurDir`) segment is a harmless no-op; a
 /// Windows drive-prefix or root component is rejected the same as an absolute path.
+/// Windows path syntax is rejected on EVERY platform, not just where std parses it:
+/// on POSIX a backslash or drive prefix is an ordinary filename character, so
+/// `..\x` / `C:/x` would otherwise resolve INSIDE base as one weird component —
+/// per-platform "safe", but the same relPath escapes on Windows. One contract, both
+/// platforms (`:` is unrepresentable in Windows filenames anyway, so nothing of
+/// value is lost).
 fn resolve_rel_path_in(base: &Path, rel: &str) -> Result<PathBuf, String> {
     if rel.trim().is_empty() {
         return Err("relPath must not be empty".to_string());
+    }
+    if rel.contains('\\') {
+        return Err(format!("relPath escapes the loop dir: {rel:?}"));
+    }
+    if rel.contains(':') {
+        return Err(format!("relPath must be relative to the loop dir: {rel:?}"));
     }
     let candidate = Path::new(rel);
     if candidate.is_absolute() {
