@@ -129,8 +129,14 @@
   }
   .ident {
     position: absolute;
-    /* was 22px — nearest space step is --space-5 (24px, a 2px round per plan §M1.1) */
-    top: var(--space-5);
+    /* was --space-5 (24px) — the shell's floating top rail (+page.svelte `.toprail`,
+       `position: absolute; top: var(--page-inset)`, one row of ghost pills tall) sat over
+       that band and clipped this line. +page.svelte's own `.system-grid` reserves ~60px
+       to clear the identical rail (page-inset top offset + one pill row + a little
+       breathing room — see its grid-template-rows comment); mirror that here instead of
+       inventing a second number: page-inset (the rail's own offset) + 42px (the pill row
+       + breathing room) = the same ~60px. */
+    top: calc(var(--page-inset) + 42px);
     left: 0;
     right: 0;
     text-align: center;
@@ -152,12 +158,12 @@
     color: var(--text-meta);
   }
   /* what the loop is working on right now — the other load-bearing fact.
-     top:44px is `.ident`'s offset + its own line height, not a standalone design
-     position — no --space-* step fits it without breaking that relationship, so it's
-     kept literal. */
+     top is `.ident`'s offset + its own line height (~20px), not a standalone design
+     position — kept as that relationship (now against `.ident`'s rail-cleared base)
+     rather than a bare literal. */
   .curitem {
     position: absolute;
-    top: 44px;
+    top: calc(var(--page-inset) + 42px + 20px);
     left: 0;
     right: 0;
     text-align: center;

@@ -832,9 +832,11 @@
   .s-stat.certified-done {
     color: var(--status-ok-core);
   }
-  /* any PAUSED chip (banked-ember or quota) is a deliberate attention color even though
-     the glyph body itself stays neutral gray (plan §5 M4.5 — "PAUSED → warn-amber") */
-  .s-stat.stopped-ember,
+  /* PAUSED is a calm rest state, not an alert — idle-gray, matching Hud.svelte's
+     treatment. Quota (frost/wait) stays in the amber attention set (owner call). */
+  .s-stat.stopped-ember {
+    color: var(--status-idle-core);
+  }
   .s-stat.quota-frost,
   .s-stat.quota-wait {
     color: var(--status-warn-core);
