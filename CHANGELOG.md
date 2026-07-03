@@ -6,6 +6,40 @@ changes between minor versions.
 
 ## [Unreleased]
 
+### Added — quality machinery wired into the BMAD loop (default-on)
+- **Adversarial verify-before-merge**: an independent, refute-biased checker (Haiku,
+  single-turn) sees only the story's frozen acceptance criteria + the baseline→HEAD diff,
+  right before push/PR. `VERDICT: REFUTE` blocks the PR with an actionable halt;
+  skipped/inconclusive fail open (gate + smoke already passed). Disable: `--no-verify` /
+  `bmad.verify.enabled`.
+- **Test-integrity check** (git-based, survives resume): deleting a pre-existing test file
+  halts as tampering; modifying one is surfaced to the verifier with a scrutinize-for-weakened-
+  assertions note. `bmad.testIntegrity` block.
+- **Plan-gate before dev-story**: one cheap decider-tier call judges the ACs/tasks as
+  unambiguous, testable, one-story-sized; explicit `BLOCKED:` halts before the expensive dev
+  phase, anything else fails open. Disable: `--no-plan-gate`.
+- **Run-quality `metrics` event at stop** (zero model tokens): stories completed/halted, gate
+  reds, flaky retries, quota waits, token totals + cache hit ratio, cum USD, duration.
+- **Gate fail-fast** (opt-in, engine + BMAD): stop launching gate stages after the first
+  failure; skipped stages carry a `skipped` marker safe for floor/flaky consumers.
+
+### Fixed — overnight hang/burn holes (engine reliability)
+- The review/retro **decider calls are now time-bounded** (default 10 min; `0` = unbounded) —
+  one wedged cheap-model call could previously hang an unattended run forever.
+- The **quota probe is time-bounded** (120s; a hung probe counts as "still limited" so the
+  wait loop re-probes instead of hanging), preserving the ≤6h auto-resume guarantee.
+- **Quota detection restored to PS parity**: any errored phase now triggers one independent
+  quota probe (not just result-text matches), so a limit that surfaces as a bare error waits
+  for reset instead of stopping the run.
+- **Session-resume after a quota hit**: a phase interrupted by quota resumes its own session
+  (`--resume <id>`) after the wait instead of re-running the whole (possibly Opus) phase from
+  scratch — with exactly one fresh-run fallback if the resume itself errors.
+- **dev-story completion check restored** (PS parity): a green gate alone no longer advances
+  the story; the story file's Status must have reached `review`/`done`, otherwise the loop
+  halts ("likely a BMAD HALT") instead of pushing half-done work into code-review.
+- The pytest suite is **CWD-portable** (green from repo root and `engine/`) and no longer
+  asserts a machine-specific absolute path.
+
 ### Changed — BMAD driver parity with the original `bmad-loop.ps1`
 - Agent phases **inherit the user's Claude Code default model** (the runner omits `--model`
   when a phase tier is empty), matching the PowerShell loop, which never pinned a model. Pin
