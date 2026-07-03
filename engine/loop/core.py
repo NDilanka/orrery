@@ -26,6 +26,7 @@ wiring):
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -367,6 +368,25 @@ def _run_loop_body(
     recall = memory.recall(config.task, limit=recall_limit)
     prompt = _build_prompt(config, contract, stages, recall=recall)
 
+    # --- EXPERIMENTAL in-session gate (Task C, default off) -------------------
+    # Compute once per run: the --settings path (stop-hook mode) and/or the /goal prompt prefix
+    # (goal mode). Both empty when mode is "off" -> exec_prompt == prompt and no extra flag, so
+    # the argv + prompt are byte-identical to today (parity). The gate command is the first stage's
+    # command when it is a shell string (mirrors `_build_prompt`'s gate_hint; a callable test hook
+    # has no shell form, so the gate stays off for that run).
+    gate_cmd = stages[0]["command"] if stages and isinstance(stages[0]["command"], str) else ""
+    session_settings, goal_prefix = _session_gate_setup(config, state, gate_cmd)
+    exec_prompt = goal_prefix + prompt
+
+    # Opt-in runner kwargs threaded onto the execute call. Passed CONDITIONALLY (only when set) so
+    # an unset config leaves the call byte-identical to before — several existing test doubles have
+    # fixed run() signatures that would reject unknown kwargs.
+    exec_extra: dict = {}
+    if config.fallback_model:
+        exec_extra["fallback_model"] = config.fallback_model
+    if session_settings:
+        exec_extra["settings"] = session_settings
+
     max_iters = config.stop.max_iters
     for it in range(1, max_iters + 1):
         print(f"\n=== iteration {it}/{max_iters}  (cum ${round(cum, 4)}  best {best_pass}/{base_total}) ===")
@@ -405,13 +425,14 @@ def _run_loop_body(
         while True:
             with Heartbeat(state / "activity.json", phase="execute", story=f"iter {it}", repo=work):
                 result = runner.run(
-                    prompt=prompt,
+                    prompt=exec_prompt,
                     model=execute_model,
                     allowed_tools=config.allowed_tools,
                     permission_mode=config.permission_mode,
                     max_turns=config.max_turns,
                     cwd=str(work),
                     timeout_sec=iter_timeout_sec,
+                    **exec_extra,
                 )
             if result.timed_out:
                 emit(phase_timeout_event(f"iter {it}", iter_timeout_sec))
@@ -713,6 +734,53 @@ def _run_loop_body(
     return 1
 
 
+def _session_gate_settings_json(gate_cmd: str) -> dict:
+    """Settings JSON installing a Stop hook that re-runs the gate and BLOCKS turn-end on red.
+
+    Per the Claude Code hooks contract (verified STEP 0 against docs + installed CLI 2.1.199): a
+    Stop hook that EXITS CODE 2 blocks the turn from ending and feeds its stderr back to the agent
+    to keep going. A bare gate command exits 1 on failure (a NON-blocking error, ignored by the
+    Stop event), so we wrap it as ``<gate cmd> || exit 2`` — a green gate exits 0 (turn may end);
+    a red gate is coerced to the blocking exit-2. The gate command is embedded VERBATIM (repo gate
+    stages are shell strings like ``bun run test``, run via the user's shell — we do NOT re-quote
+    it); only the ``|| exit 2`` blocker is appended. Claude Code AUTO-OVERRIDES the hook after ~8
+    consecutive blocks (its documented backstop against an unsatisfiable gate looping forever), and
+    the orchestrator's REAL external gate still runs afterward — this only collapses cold starts.
+    """
+    return {
+        "hooks": {
+            "Stop": [
+                {"hooks": [{"type": "command", "command": f"{gate_cmd} || exit 2"}]}
+            ]
+        }
+    }
+
+
+def _session_gate_setup(config: EngineConfig, state: Path, gate_cmd: str) -> tuple[str, str]:
+    """Return ``(settings_path, goal_prefix)`` for the experimental in-session gate (Task C).
+
+    Both empty for mode ``"off"`` (parity) or when no shell gate command is available:
+
+    - ``"stop-hook"``: writes the Stop-hook settings JSON ONCE to a stable path
+      (``<state>/session-gate-settings.json``) and returns its path for ``--settings``.
+    - ``"goal"``: returns a ``/goal <condition>`` line to PREPEND to the execute prompt. NB: the
+      installed CLI (2.1.199) does not document ``/goal`` in ``--help`` or the CLI reference, so
+      this is a best-effort prototype form (see the module note in the README).
+    """
+    mode = (config.session_gate or "off").lower()
+    if mode in ("off", "") or not gate_cmd:
+        return "", ""
+    if mode == "stop-hook":
+        path = state / "session-gate-settings.json"
+        path.write_text(
+            json.dumps(_session_gate_settings_json(gate_cmd), indent=2), encoding="utf-8"
+        )
+        return str(path), ""
+    if mode == "goal":
+        return "", f"/goal the command `{gate_cmd}` exits 0\n\n"
+    return "", ""
+
+
 def _build_prompt(
     config: EngineConfig, contract: list[str], stages: list[dict], *, recall: str = ""
 ) -> str:
@@ -776,6 +844,9 @@ def _run_verify(runner, config, contract, judge_model, work, use_git, progress_p
         'Respond with ONLY JSON: {"pass": <bool>, "failingCriteria": [..], '
         '"evidence": "..", "nextAction": ".."}'
     )
+    verify_extra: dict = {}
+    if config.fallback_model:
+        verify_extra["fallback_model"] = config.fallback_model
     res = runner.run(
         prompt=judge_prompt,
         model=judge_model,
@@ -784,6 +855,7 @@ def _run_verify(runner, config, contract, judge_model, work, use_git, progress_p
         max_turns=1,
         cwd=str(work),
         output_format="text",
+        **verify_extra,
     )
     verdict = parse_verdict(res.text, config.task, judge_model)
     emit(verdict)  # parse_verdict already returns the verdict_event shape

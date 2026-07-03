@@ -105,6 +105,34 @@ chains; if you truly need OS-specific logic, write it into a small per-OS script
 `.sh`) and point the gate `command` at that script instead of inlining shell syntax in
 `loop.json`.
 
+### Experimental: in-session gate (`engine.sessionGate`, default `off`)
+
+A prototype token optimization for the **generic** loop only (not BMAD, not QA): instead of N
+cold `claude -p` cold starts — one per fix-until-green iteration — a single invocation loops
+*inside* the session until the gate is green, collapsing the outer restarts. **The external gate
+still runs afterward and remains the sole arbiter of green** — this only changes how many cold
+starts happen, never whether a run is trusted.
+
+`engine.sessionGate` takes one of three values:
+
+- `off` (default) — no change. The prompt and the `claude` argv are byte-identical to a run
+  without the knob.
+- `stop-hook` — the loop writes a settings file (`<state-dir>/session-gate-settings.json`) and
+  passes it via `--settings`. It installs a **Stop hook** that re-runs the gate's first (`test`)
+  stage command as `<gate cmd> || exit 2`. Per the Claude Code hooks contract, a Stop hook that
+  exits **code 2** *blocks* turn-end and feeds its stderr back to the agent, so a red gate keeps
+  the session working; a green gate exits 0 and lets the turn end. Claude Code **auto-overrides**
+  the hook after ~8 consecutive blocks (the documented backstop against an unsatisfiable gate
+  looping forever). The gate command is embedded verbatim — it runs through the user's shell, so
+  the same `cmd.exe`-vs-`/bin/sh` caveat as ordinary gate stages applies.
+- `goal` — the loop prepends a `/goal the command `<gate cmd>` exits 0` line as the execute
+  prompt's first line, asking the model to keep going until that condition holds. **Caveat:** the
+  installed CLI (2.1.199) does not document `/goal` in `--help` or the CLI reference, so this mode
+  is a best-effort prototype form and may be a no-op on some builds.
+
+Both `stop-hook` and `goal` fall back to `off` when the first gate stage's `command` is a Python
+callable (a test hook) rather than a shell string, since there is no shell form to install.
+
 ## Module map
 
 ```

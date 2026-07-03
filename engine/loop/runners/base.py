@@ -39,6 +39,11 @@ class AgentResult:
     timed_out: bool = False
     quota_limited: bool = False
     parse_failed: bool = False
+    # Optional validated structured output (claude ``--json-schema`` -> the result JSON's
+    # ``structured_output`` field). None unless the run requested a schema AND the CLI returned a
+    # VALID one; purely additive (every existing caller ignores it), so a text-only run is
+    # byte-identical to before. Wave-4 Task B consumes it in the BMAD verify/plan-gate parsers.
+    structured: dict | None = None
 
 
 @dataclass
@@ -77,12 +82,26 @@ class AgentRunner(ABC):
         resume_session: str | None = None,
         output_format: str = "json",
         effort: str = "",
+        fallback_model: str = "",
+        json_schema: str = "",
+        settings: str = "",
     ) -> AgentResult:
         """Run one agent turn and return a normalized :class:`AgentResult`.
 
         ``effort`` is the reasoning-effort tier (``low``/``medium``/``high``/``xhigh``/``max``);
         an empty string INHERITS the backend's default (the backend omits any effort flag).
         Backends that have no effort knob accept-and-ignore it.
+
+        Wave-4 opt-in knobs (all default ``""`` = no-op, byte-identical argv when unset):
+
+        - ``fallback_model``: a comma-separated model chain the CLI tries when the primary is
+          overloaded (claude ``--fallback-model``); passed verbatim.
+        - ``json_schema``: an inline JSON Schema (claude ``--json-schema``) requesting a validated
+          ``structured_output`` on the result, surfaced as :attr:`AgentResult.structured`.
+        - ``settings``: a settings file path / inline JSON (claude ``--settings``), used by the
+          experimental in-session gate to install a Stop hook.
+
+        Backends with no equivalent accept-and-ignore all three (like ``effort``).
         """
         ...
 

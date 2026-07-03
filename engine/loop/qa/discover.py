@@ -50,6 +50,7 @@ _QA_KNOWN_KEYS = {
     "seedSummary", "seed_summary",
     "model",
     "effort",
+    "fallbackModel", "fallback_model",
     "maxTurns", "max_turns",
     "timeoutSec", "timeout_sec",
     "costCeilingUsd", "cost_ceiling_usd",
@@ -72,6 +73,7 @@ class QaConfig:
     seed_summary: str = ""  # short description of the seeded fixture (the data oracle)
     model: str = ""  # "" / "default" / "inherit" -> agent's default model
     effort: str = ""  # "" inherits; e.g. "high"
+    fallback_model: str = ""  # Wave-4 Task A: comma-separated overload fallback chain ("" = off)
     max_turns: int = 120
     timeout_sec: int = 1800  # per-epic wall-clock (30 min)
     cost_ceiling_usd: float | None = None
@@ -107,6 +109,7 @@ class QaConfig:
             seed_summary=resolve(q, "seedSummary", "seed_summary", default=""),
             model=resolve(q, "model", default=""),
             effort=resolve(q, "effort", default=""),
+            fallback_model=str(resolve(q, "fallbackModel", "fallback_model", default="") or ""),
             max_turns=int(resolve(q, "maxTurns", "max_turns", default=120)),
             timeout_sec=int(resolve(q, "timeoutSec", "timeout_sec", default=1800)),
             cost_ceiling_usd=resolve(q, "costCeilingUsd", "cost_ceiling_usd"),
@@ -340,7 +343,11 @@ def default_invoke(
     """
     base = ClaudeRunner()
     resilient = ResilientRunner(
-        base, emit=emit, quota_cfg={"cum": cum}, activity_path=activity_path
+        base,
+        emit=emit,
+        quota_cfg={"cum": cum},
+        activity_path=activity_path,
+        fallback_model=config.fallback_model,
     )
     resilient.set_context(phase, story)
 
