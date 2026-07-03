@@ -41,6 +41,8 @@ class ClaudeRunner(AgentRunner):
         resume_session: str | None = None,
         output_format: str = "json",
         effort: str = "",
+        mcp_config: str = "",
+        strict_mcp_config: bool = False,
     ) -> AgentResult:
         # Build argv EXACTLY like loop.ps1 (~635): a single --allowedTools flag followed by
         # the tool list spread as separate positional args (PS: '--allowedTools' + $toolArgs).
@@ -66,12 +68,15 @@ class ClaudeRunner(AgentRunner):
         normalized_effort = str(effort).strip() if effort is not None else ""
         if normalized_effort and normalized_effort.lower() not in {"default", "inherit"}:
             argv += ["--effort", normalized_effort]
-        argv += [
-            "--permission-mode",
-            permission_mode,
-            "--allowedTools",
-            *list(allowed_tools),
-        ]
+        argv += ["--permission-mode", permission_mode]
+        # Optional per-run MCP config (the QA discovery pass loads ONLY a pre-authenticated
+        # Playwright server this way). Empty mcp_config OMITS both flags, so the argv is
+        # byte-identical to the pre-MCP form for every existing caller (BMAD / generic loop).
+        if mcp_config:
+            argv += ["--mcp-config", mcp_config]
+            if strict_mcp_config:
+                argv.append("--strict-mcp-config")
+        argv += ["--allowedTools", *list(allowed_tools)]
         if resume_session:
             argv += ["--resume", resume_session]
 
