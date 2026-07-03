@@ -58,7 +58,7 @@
       <span class="bkey mono">{itemKey}</span>
       <span class="bstatus {item.status}">{item.status}</span>
       {#if item.certified}
-        <span class="seal">✦ verified · brass seal</span>
+        <span class="seal">✦ verified · sealed</span>
       {:else if item.gate?.green}
         <span class="claimed">agent claims pass — not yet verified</span>
       {/if}
@@ -278,11 +278,14 @@
     border: 1px solid var(--hairline);
   }
   .bstatus.done {
-    color: var(--plasma-green);
-    border-color: color-mix(in srgb, var(--plasma-green) 40%, transparent);
+    /* M4.5: success is pure monochrome (plan §5) — em-hi, not the retired green. */
+    color: var(--em-hi);
+    border-color: color-mix(in srgb, var(--em-hi) 40%, transparent);
   }
   .bstatus.in-progress {
-    color: var(--plasma-cyan);
+    /* was the retired cyan accent; a live-but-not-final state sits one tier under
+       the settled "done" state (em-hi), not on its own hue. */
+    color: var(--em-mid);
   }
   .bstatus.review {
     color: var(--amber);
@@ -292,7 +295,9 @@
     color: var(--crimson);
   }
   .seal {
-    color: var(--brass);
+    /* certified/verified = pure white + the seal glyph (plan §5), not the retired
+       brass accent — the glyph carries the identity, not a hue. */
+    color: var(--em-hi);
     font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -308,9 +313,12 @@
     gap: var(--space-2);
   }
   .blabel {
-    font-size: var(--text-2xs);
+    /* M4.5: aligned to the shared `.panel-hd` label recipe (primitives.css) — text-xs
+       caps, weight 600, ls .08em — instead of this drawer's own one-off 2xs/.16em. */
+    font-size: var(--text-xs);
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.08em;
     color: var(--text-meta);
   }
   .crit {
@@ -331,7 +339,7 @@
     flex: none;
   }
   .crit li.met {
-    color: var(--plasma-green);
+    color: var(--em-hi);
   }
   .crit li.unmet {
     color: var(--crimson);
@@ -343,7 +351,7 @@
   }
   .gate.g,
   .g {
-    color: var(--plasma-green);
+    color: var(--em-hi);
   }
   .gate.r,
   .r {
@@ -367,8 +375,8 @@
     font-family: var(--font-mono);
   }
   .chamber.ok {
-    color: var(--plasma-green);
-    border-color: color-mix(in srgb, var(--plasma-green) 35%, transparent);
+    color: var(--em-hi);
+    border-color: color-mix(in srgb, var(--em-hi) 35%, transparent);
   }
   .chamber.fail {
     color: var(--crimson);
@@ -381,7 +389,7 @@
     letter-spacing: 0.04em;
   }
   .vbadge.pass {
-    color: var(--brass);
+    color: var(--em-hi);
   }
   .vbadge.fail {
     color: var(--crimson);
@@ -419,7 +427,8 @@
     gap: var(--space-1);
   }
   .prlink {
-    color: var(--plasma-cyan);
+    /* was the retired cyan link accent — interaction is white/gray only now (plan §5). */
+    color: var(--text-dim);
     text-decoration: none;
     word-break: break-all;
     font-size: var(--text-xs);

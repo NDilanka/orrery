@@ -112,7 +112,7 @@
           <p class="pstate mono">
             couldn't start the server{shareStore.error ? `: ${shareStore.error}` : ''}
           </p>
-          <button class="retry" onclick={() => shareStore.start()}>retry</button>
+          <button class="btn btn-ghost btn-sm" onclick={() => shareStore.start()}>retry</button>
         </div>
       {:else if shareStore.status === 'active' && url}
         {#if shareStore.simulated}
@@ -123,14 +123,16 @@
         </div>
         <div class="urlrow">
           <input class="urlfield mono" type="text" readonly value={url} onclick={selectAll} />
-          <button class="copy" onclick={copyUrl}>{copied ? 'copied' : 'copy'}</button>
+          <button class="copy btn btn-primary btn-md" onclick={copyUrl}
+            >{copied ? 'copied' : 'copy'}</button
+          >
         </div>
         <p class="note">
           Anyone with this link on the <strong>same Wi-Fi</strong> can watch the loop; the token
           is required to drive it (start / stop / answer). The link stops working the moment you
           stop sharing.
         </p>
-        <button class="stop" onclick={() => shareStore.stop()}>stop sharing</button>
+        <button class="btn btn-danger btn-md" onclick={() => shareStore.stop()}>stop sharing</button>
       {/if}
     </div>
   {/if}
@@ -158,19 +160,30 @@
       transform var(--dur-feedback) var(--ease-standard);
   }
   .trigger:hover {
-    border-color: var(--brass);
+    border-color: var(--text-dim);
     transform: translateY(-1px);
   }
   .trigger.active {
-    border-color: color-mix(in srgb, var(--plasma-cyan) 45%, transparent);
-    color: var(--plasma-cyan);
+    border-color: color-mix(in srgb, var(--text-primary) 45%, transparent);
+    color: var(--text-primary);
   }
+  /* live/connected = a breathing white dot, never cyan (M4 §5: "interaction = white/gray
+     only… breathing white live dot"); shared `breathe` keyframe from primitives.css. Frozen
+     under prefers-reduced-motion rather than a JS/store check — this is a pure-CSS render
+     pass, no logic added. */
   .trigger .dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--plasma-cyan);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--plasma-cyan) 70%, transparent);
+    background: var(--text-primary);
+    --glow: var(--text-primary);
+    --breathe-r: 7px;
+    animation: breathe 1.8s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .trigger .dot {
+      animation: none;
+    }
   }
 
   .popover {
@@ -225,22 +238,7 @@
     align-items: flex-start;
   }
   .perror .pstate {
-    color: var(--horizon-rose);
-  }
-  .retry {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--hairline);
-    background: var(--surface-2);
-    color: var(--starlight);
-    cursor: pointer;
-    transition: border-color var(--dur-feedback) var(--ease-standard);
-  }
-  .retry:hover {
-    border-color: var(--brass);
+    color: var(--crimson);
   }
   .simnote {
     margin: 0;
@@ -283,19 +281,6 @@
   }
   .copy {
     flex: none;
-    font-family: var(--font-grotesk);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    padding: 6px 12px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--brass);
-    background: color-mix(in srgb, var(--brass) 14%, transparent);
-    color: var(--brass);
-    cursor: pointer;
-    transition: background var(--dur-feedback) var(--ease-standard);
-  }
-  .copy:hover {
-    background: color-mix(in srgb, var(--brass) 24%, transparent);
   }
   .note {
     margin: 0;
@@ -306,23 +291,6 @@
   .note strong {
     color: var(--text-meta);
   }
-  .stop {
-    font-family: var(--font-grotesk);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 8px 14px;
-    border-radius: var(--radius-pill);
-    border: 1px solid color-mix(in srgb, var(--crimson) 45%, transparent);
-    background: color-mix(in srgb, var(--crimson) 10%, transparent);
-    color: var(--crimson);
-    cursor: pointer;
-    transition: background var(--dur-feedback) var(--ease-standard);
-  }
-  .stop:hover {
-    background: color-mix(in srgb, var(--crimson) 20%, transparent);
-  }
-
   @media (max-width: 640px) {
     .popover {
       position: fixed;

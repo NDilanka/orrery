@@ -62,11 +62,13 @@
 
   // ── 4. CONTROLS — keyboard legend. `keys` render as boxed-mono chips; a verb
   //    is paired with each so the shortcut survives a glance (and a screen
-  //    reader) without colour. Exactly 6 entries, by design — verified against
-  //    +page.svelte's onKeydown. ──
+  //    reader) without colour. Exactly 7 entries, by design — verified against
+  //    +page.svelte's onKeydown (M4 sweep: added ⌘K, which M3.1 introduced after
+  //    this list was last checked). ──
   const SHORTCUTS: { keys: string[]; verb: string }[] = [
     { keys: ['?'], verb: 'toggle this help' },
     { keys: ['Esc'], verb: 'close help · leave a Body' },
+    { keys: ['⌘K'], verb: 'open the command palette' },
     { keys: ['i'], verb: 'Start the loop' },
     { keys: ['b'], verb: 'Brake at the next phase' },
     { keys: ['r'], verb: 'Resume from checkpoint' },
@@ -78,7 +80,7 @@
     'the star = the loop itself — its size tracks cumulative spend.',
     'ring segments = groups / epics.',
     'the ring tightening around the star = the budget ceiling — closes in as spend nears it.',
-    'body/planet colour = status, never colour alone — each also carries a distinct ring, dash or glyph (a brass seal ring = verified · a dashed pulsing green ring = claimed, not yet verified).',
+    'body/planet colour = status, never colour alone — each also carries a distinct ring, dash or glyph (a solid white seal ring = verified · a dashed, pulsing ring with no seal = claimed, not yet verified).',
   ];
 
 </script>
@@ -204,15 +206,15 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--brass);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--brass) 70%, transparent);
+    background: var(--text-primary);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--text-primary) 70%, transparent);
     align-self: center;
     flex: none;
   }
   .title {
     font-size: var(--text-md);
     letter-spacing: 0.2em;
-    color: var(--brass);
+    color: var(--text-primary);
   }
   .sub {
     font-size: var(--text-2xs);
@@ -248,11 +250,12 @@
   .h {
     margin: 0;
     /* unified header pattern (M1.2): 11px caps-spaced --text-xs label, matching
-       DecisionSheet's meta row and ShareButton's popover title. */
+       DecisionSheet's meta row, ShareButton's popover title, and .panel-hd's
+       label tier (M4: --text-meta == --em-low, already tuned to the 4.5:1 floor,
+       so no extra opacity dimming on top). */
     font-size: var(--text-xs);
     letter-spacing: 0.16em;
-    color: var(--brass);
-    opacity: 0.85;
+    color: var(--text-meta);
   }
   .hnote {
     font-family: var(--font-grotesk);
@@ -356,7 +359,7 @@
     content: '\00b7';
     position: absolute;
     left: 0;
-    color: var(--brass);
+    color: var(--text-faint);
   }
 
   .ftr {

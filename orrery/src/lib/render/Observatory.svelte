@@ -673,22 +673,11 @@
         // ── eased global signals ──
         const targetR = STAR_R0 + STAR_K * Math.log1p(Math.max(0, s.run.cumUsd));
         vis.starR = lerp(vis.starR, targetR, kdt(0.08, dt));
-        // M4.5 monochrome sweep: restColor() (../palette.ts, shared with Cosmos, not owned by
-        // this sweep) still maps the bare 'running' status onto amber and 'handoff-beacon' onto
-        // crimson — both predate the M4 alert taxonomy ("the only chromatic pixels are alerts:
-        // red=failed/crashed, amber=needs-you/handoff/quota"). A plain running loop is neither —
-        // it's the pale near-white light source breathing/flaring via MOTION, not color; a
-        // handoff is "needs you", the amber bucket, not the red one. Both are overridden here
-        // (Observatory-local, doesn't touch the shared decision table) before falling through to
-        // restColor for every other rest-state, whose hues are correct as-is (crimson=failed-
-        // dark, frost=quota-frost, green=certified-done, ember=stopped-ember — all per-silhouette
-        // identities, unchanged).
-        const targetColor =
-          rest === 'handoff-beacon'
-            ? C.amber
-            : running && !rest
-              ? C.starlight
-              : restColor(s.run.status, s.run.restState, C.starlight);
+        // restColor() (../palette.ts, shared with Cosmos) encodes the M4 alert taxonomy directly
+        // now — running is the white starlight light source (liveness is carried by motion, not
+        // hue), handoff-beacon is amber (needs-you), failed-dark/error are crimson, and
+        // paused/done are grayscale. No local override needed.
+        const targetColor = restColor(s.run.status, s.run.restState, C.starlight);
         vis.starColor = lerpColor(vis.starColor, targetColor, kdt(0.08, dt));
         vis.emitColor = lerpColor(vis.emitColor, modelColor(runStore.model), kdt(0.06, dt));
         vis.burn = lerp(vis.burn, running ? runStore.burn : 0, kdt(0.05, dt));

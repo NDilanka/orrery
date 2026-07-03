@@ -41,7 +41,11 @@
     const rest = s.run.restState;
     // a genuine crash outranks everything — as loud as NEEDS YOU (plan §3
     // "only beacon + weekly-crystal may be loud"; a failure earns the same voice).
-    if (rest === 'failed-dark') return { label: 'FAILED', cls: 'beacon', loud: true };
+    // M4.5: 'fail' and 'beacon' are separate CSS classes (not both 'beacon') so they can
+    // take the app's two different alert hues — a crash is red, a human handoff is amber
+    // (docs/ui-modernization-plan.md §5; matches Hud.svelte's status-pill.beacon, which
+    // made the same red→amber correction for the identical handoff/"needs you" state).
+    if (rest === 'failed-dark') return { label: 'FAILED', cls: 'fail', loud: true };
     if (rest === 'handoff-beacon') return { label: 'NEEDS YOU', cls: 'beacon', loud: true };
     if (rest === 'quota-frost' || s.run.status === 'quota-wait') {
       const left = runStore.quotaSecondsLeft;
@@ -56,7 +60,7 @@
     if (rest === 'stopped-ember') return { label: 'PAUSED', cls: 'ember', loud: false };
     // defensive fallback: status flipped to error but restState hasn't (shouldn't
     // happen — the reducer derives both together — but never silently stay quiet).
-    if (s.run.status === 'error') return { label: 'FAILED', cls: 'beacon', loud: true };
+    if (s.run.status === 'error') return { label: 'FAILED', cls: 'fail', loud: true };
     const hf = runStore.horizonFrac;
     if (hf >= 1) return { label: 'COST HORIZON · 100% — frozen', cls: 'crit', loud: false };
     if (hf >= 0.8) return { label: `COST HORIZON · ${Math.round(hf * 100)}%`, cls: 'warn', loud: false };
@@ -138,8 +142,11 @@
   .ident .lid {
     color: var(--text-dim);
   }
+  /* M4.5: was var(--brass) (a warm gold accent) — the ambient view's spend readout is the
+     canonical "load-bearing number" while Planetarium is up (no HUD onscreen to duplicate),
+     so it earns the primary-value tier like Hud's own spend line, not a signature hue. */
   .ident .cost {
-    color: var(--brass);
+    color: var(--em-hi);
   }
   .ident .rate {
     color: var(--text-meta);
@@ -176,21 +183,36 @@
     text-transform: uppercase;
     color: var(--text-dim);
   }
-  .threshold.note { color: var(--amber); }
-  .threshold.warn { color: var(--horizon-rose); }
-  .threshold.crit { color: var(--crimson); }
-  .threshold.done { color: var(--plasma-green); }
-  .threshold.ember { color: var(--ember); }
-  .threshold.frost { color: var(--frost); }
-  .threshold.beacon { color: var(--crimson); }
-  /* "loud" thresholds (a genuine crash + the weekly quota-night) get the SAME glowing-chip
-     treatment as the NEEDS-A-DECISION pill below (`--glow` + the shared `breathe` keyframe,
-     primitives.css) — a failure earns the same voice, not just bigger pulsing text.
-     Non-interactive (a div, not a button): there's nothing to DO from inside Planetarium
-     besides exit to the full instrument, so unlike `.needs` this never gets
-     `cursor:pointer` or a hover state. */
+  /* M4.5 remap (docs/ui-modernization-plan.md §5; mirrors Hud.svelte's status-pill family
+     for the states that overlap it — fail/beacon/ember/frost track the exact same
+     restState taxonomy Hud's status pill reads, so they take the same tokens):
+       - note/warn (50%/80% cost horizon) are both still-a-warning, not yet a stoppage —
+         one hue (amber), not a red creeping in before the run actually freezes.
+       - crit (100%, frozen) is a genuine stoppage — stays red.
+       - done (verified) is pure monochrome — was var(--plasma-green), a retired hue alias.
+       - ember (paused/resumable) is a calm rest state, not an alert — was var(--ember)
+         (amber-ish); Hud.svelte made the identical correction onto --status-idle-core.
+       - frost (quota pause) is a needs-attention state — was var(--frost) (near-neutral);
+         Hud.svelte reclassified quota-pause onto the warn-amber family, matched here.
+       - fail/beacon: a crash is red, a human handoff ("NEEDS YOU") is amber — see the
+         script's `threshold` $derived for why these are now two different classes. */
+  .threshold.note { color: var(--status-warn-core); }
+  .threshold.warn { color: var(--status-warn-core); }
+  .threshold.crit { color: var(--status-err-core); }
+  .threshold.done { color: var(--em-hi); }
+  .threshold.ember { color: var(--status-idle-core); }
+  .threshold.frost { color: var(--status-warn-core); }
+  .threshold.fail { color: var(--status-err-core); }
+  .threshold.beacon { color: var(--status-warn-core); }
+  /* "loud" thresholds (a genuine crash, a human handoff, + the weekly quota-night) get the
+     SAME glowing-chip treatment as the NEEDS-A-DECISION pill below (`--glow` + the shared
+     `breathe` keyframe, primitives.css) — a failure earns the same voice, not just bigger
+     pulsing text. Non-interactive (a div, not a button): there's nothing to DO from inside
+     Planetarium besides exit to the full instrument, so unlike `.needs` this never gets
+     `cursor:pointer` or a hover state. Base --glow is the 'fail' red; 'beacon' and 'frost'
+     (both amber "needs-you" states) override it below. */
   .threshold.loud {
-    --glow: var(--crimson);
+    --glow: var(--status-err-core);
     left: 50%;
     right: auto;
     bottom: 15%;
@@ -208,8 +230,9 @@
     background: color-mix(in srgb, var(--glow) 22%, var(--void-3));
     animation: breathe 2.6s var(--ease-standard) infinite;
   }
+  .threshold.loud.beacon,
   .threshold.loud.frost {
-    --glow: var(--frost);
+    --glow: var(--status-warn-core);
   }
   .planetarium.reduced .threshold.loud {
     animation: none;
@@ -217,9 +240,12 @@
   /* the BEACON-tier call to act. Loud is allowed here (per the plan only the
      beacon + weekly-crystal may be loud). Glyph + label + count so status never
      rides on hue alone. Urgency reads as a slow TIGHTENING breath, never a
-     blink; reduced-motion drops the animation but keeps the loud styling. */
+     blink; reduced-motion drops the animation but keeps the loud styling.
+     M4.5: --glow was var(--crimson) — a blocked-on-human decision is a handoff,
+     not a crash, so it takes the app's amber "needs-you" hue (same correction as
+     `.threshold.beacon` above and Hud.svelte's status-pill.beacon). */
   .needs {
-    --glow: var(--crimson);
+    --glow: var(--status-warn-core);
     position: absolute;
     left: 50%;
     bottom: 22%;
@@ -233,7 +259,7 @@
     font-weight: 700;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--starlight);
+    color: var(--em-hi);
     /* was 12px 22px — 12 is exact (--space-3); 22 rounds up 2px to --space-5 */
     padding: var(--space-3) var(--space-5);
     border-radius: var(--radius-pill);
@@ -247,11 +273,11 @@
     background: color-mix(in srgb, var(--glow) 32%, var(--void-3));
   }
   .needs-glyph {
-    color: var(--crimson);
+    color: var(--status-warn-core);
     font-size: var(--text-lg);
   }
   .needs-n {
-    color: var(--crimson);
+    color: var(--status-warn-core);
     font-size: var(--text-sm);
     font-weight: 700;
   }
@@ -285,8 +311,10 @@
       border-color var(--dur-feedback) var(--ease-standard);
   }
   .exit:hover {
-    color: var(--starlight);
-    border-color: var(--brass);
+    /* M4.5: border was var(--brass) — interaction is white/gray only, never a signature
+       hue (docs/ui-modernization-plan.md §5), so it now matches the text it pairs with. */
+    color: var(--em-hi);
+    border-color: var(--em-hi);
   }
 
   /* phone: the top edge is taken by the (wrapping) navbar + mode toggle, so the

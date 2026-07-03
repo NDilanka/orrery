@@ -83,15 +83,22 @@
   .badge {
     /* wave U2 Task 1: moved into the System dock's top bar (left of the
        breadcrumb/badge cluster) instead of floating above the cost strip — the
-       grid places it now; this is internal styling only. */
+       grid places it now; this is internal styling only. M4.4: Tier C (meta) —
+       borderless by default, matching the adjacent live/replay `.mode` chip
+       (routes/+page.svelte); live/stale earn a hairline back since they're the
+       two states actually worth a second glance. */
     display: inline-flex;
     align-items: center;
     gap: 7px;
     padding: 5px 11px;
     background: var(--panel);
-    border: 1px solid var(--panel-edge);
+    border: 1px solid transparent;
     border-radius: var(--radius-pill);
     backdrop-filter: blur(8px);
+  }
+  .badge.live,
+  .badge.stale {
+    border-color: var(--panel-edge);
   }
   .dot {
     width: 7px;
@@ -101,17 +108,25 @@
     flex: none;
   }
   .badge.live .dot {
-    background: var(--plasma-green);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--plasma-green) 70%, transparent);
+    background: var(--em-hi);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--em-hi) 70%, transparent);
   }
   /* connecting/stale are STEADY beacons — no opacity blink. Motion is reserved
      for true urgency; freshness state is carried by hue + the text label
-     (connecting… / stale / closed / live), so it survives grayscale. */
+     (connecting… / stale / closed / live), so it survives grayscale.
+     M4.5: connecting is a normal, self-healing transport state (auto-reconnect
+     in flight) — not an alert, so it stays on the monochrome --em-low tier, same
+     as Hud.svelte's status-idle treatment. Only `stale` (the connection is
+     actually lost, or — desktop transport — the engine's heartbeat has gone
+     quiet and may be hung) genuinely means "what you're looking at isn't live
+     and might need you to check in", so it alone earns the app's amber
+     needs-you hue (docs/ui-modernization-plan.md §5; matches Hud.svelte's
+     status-pill.frost reclassification of quota-pause). */
   .badge.connecting .dot {
-    background: var(--amber);
+    background: var(--em-low);
   }
   .badge.stale .dot {
-    background: var(--horizon-rose);
+    background: var(--status-warn-core);
   }
   .badge.closed .dot {
     background: var(--text-faint);
@@ -122,10 +137,10 @@
     letter-spacing: 0.04em;
   }
   .badge.live .txt {
-    color: var(--plasma-green);
+    color: var(--em-hi);
   }
   .badge.stale .txt {
-    color: var(--horizon-rose);
+    color: var(--status-warn-core);
   }
   .att {
     font-size: var(--text-2xs);

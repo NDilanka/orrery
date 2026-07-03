@@ -93,13 +93,13 @@
       {/if}
 
       <div class="actions">
-        <button class="ghost mono" onclick={onClose}>cancel</button>
+        <button class="btn btn-ghost btn-md" onclick={onClose}>Cancel</button>
         <button
-          class="send mono"
+          class="btn btn-primary btn-md send"
           disabled={observeOnly || busy || !text.trim()}
           onclick={send}
         >
-          {busy ? 'sending…' : '↩ Send'}
+          {busy ? 'Sending…' : '↩ Send'}
         </button>
       </div>
     {/if}
@@ -158,11 +158,15 @@
     text-transform: uppercase;
   }
   .meta .kind {
-    color: var(--crimson);
+    /* a blocking question is the "needs-you" case, not a failure — amber, not the
+       retired red (plan §5: red is failed/crashed/destructive only). */
+    color: var(--amber);
     font-weight: 600;
   }
   .meta .epic {
-    color: var(--brass);
+    /* was the retired brass accent — meta detail, one tier up from the row's own
+       em-low base. */
+    color: var(--em-mid);
   }
   .meta .dot {
     color: var(--text-faint);
@@ -211,7 +215,9 @@
     box-sizing: border-box;
   }
   .answer:focus {
-    border-color: var(--brass);
+    /* matches QAConsole's `.qinput:focus` — grayscale border accent, global ring
+       handles the rest. */
+    border-color: color-mix(in srgb, var(--em-mid) 50%, transparent);
   }
 
   .observe {
@@ -228,37 +234,11 @@
     justify-content: flex-end;
     gap: var(--space-2);
   }
-  .ghost {
-    background: transparent;
-    border: 1px solid var(--hairline);
-    color: var(--text-dim);
-    border-radius: var(--radius-pill);
-    padding: 8px 16px;
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition: color var(--dur-feedback) var(--ease-standard);
-  }
-  .ghost:hover {
-    color: var(--starlight);
-  }
-  .send {
-    background: color-mix(in srgb, var(--brass) 14%, transparent);
-    border: 1px solid var(--brass);
-    color: var(--brass);
-    border-radius: var(--radius-pill);
-    padding: 8px 20px;
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-    transition: all var(--dur-fast) var(--ease-standard);
-  }
+  /* M4.5: fill/border/color/shape/size for both actions now come from the shared
+     `.btn`/`.btn-ghost`/`.btn-primary`/`.btn-md` primitives (primitives.css) —
+     replaces the bespoke hairline-pill and translucent-brass-pill pair. `.send`
+     only keeps its own press/hover lift. */
   .send:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--brass) 24%, transparent);
     transform: translateY(-1px);
-  }
-  .send:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 </style>
