@@ -277,6 +277,10 @@ watch_run(stateDir, adapter, logFile?, channel: Channel<Delta>) -> ()
 // reduced RunState. `activity` is null when the file is absent/cleared.
 // Delta = { kind: 'snapshot', state } | { kind: 'event', event: RawEvent } | { kind: 'state', state }
 //       | { kind: 'activity', activity: { ts?, phase?, story?, elapsedSec, dirty, pid? } | null }
+unwatch_run(stateDir, adapter, logFile?) -> ()
+// Stop the active `watch_run` watcher for stateDir, if any (no-op if none) — the explicit
+// counterpart to watch_run's implicit replace-on-remount dedup, for a frontend that stops
+// observing a loop for good (leaving a System view / switching loops).
 list_loops() -> LoopDef[]                                       // from loops/<id>/loop.json
 // A5 — loop CRUD. Every id (and clone target) passes `is_safe_loop_id`: 1-64 chars of ASCII
 // letters/digits/'-'/'_' ONLY (no '.', '/', '\') so an id can never escape loops/ as a path

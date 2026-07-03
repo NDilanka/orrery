@@ -14,6 +14,12 @@ import type {
 } from './types';
 
 const COST_RATE_WINDOW = 8; // samples used for ratePerMin (kept in sync with reducer.rs RATE_WINDOW)
+// PARITY PAIR (reduce.ts <-> reducer.rs COST_SERIES_CAP): cap on retained cost.series samples.
+// A weeks-long run appends one sample per cost-bearing event forever; without a cap the array (and
+// every O(n) scan/slice over it) grows unbounded. Past the cap we drop the OLDEST entries first —
+// the series is a rolling window, not a full history — keeping both language reducers byte-
+// identical in shape. All 8 golden fixtures are far below this, so goldens are unaffected.
+const COST_SERIES_CAP = 2000;
 
 // Format `t` (ms since epoch, PROTOCOL §3 — synthetic line-index×1000 in tests, caller-stamped
 // real wall-clock otherwise) as an ISO-8601 UTC string with millisecond precision, byte-identical
@@ -176,6 +182,12 @@ function pushCostSample(state: RunState, t: number, cum: number) {
     existing.cum = cum;
   } else {
     series.push({ t, cum });
+  }
+  // Cap AFTER the push (never on the upsert-in-place branch above, which never grows the
+  // array) — drop-oldest, so the series stays a bounded rolling window (parity pair, see
+  // COST_SERIES_CAP above / reducer.rs bump_cum).
+  if (series.length > COST_SERIES_CAP) {
+    series.splice(0, series.length - COST_SERIES_CAP);
   }
   // ratePerMin from last N samples
   const window = series.slice(-COST_RATE_WINDOW);

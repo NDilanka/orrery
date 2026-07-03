@@ -81,6 +81,21 @@ export class TauriTransport implements Transport {
     this.stopped = true;
     this.unlisten?.();
     this.unlisten = null;
+    // R1: tell the Rust side to retire the watcher thread + FS watch for this state dir now,
+    // instead of only muting this callback above (`unlisten`) and relying on some FUTURE
+    // `watch_run` call for the same dir to reap it via its own replace-on-remount dedup — a
+    // loop nobody re-opens would otherwise leak that thread + channel forever. Fire-and-forget:
+    // stop() must stay synchronous and must never throw, and an older backend without
+    // `unwatch_run` registered must not break the UI.
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) =>
+        invoke('unwatch_run', {
+          stateDir: this.cfg.stateDir,
+          adapter: this.cfg.adapter,
+          logFile: this.cfg.logFile,
+        }),
+      )
+      .catch(() => {});
   }
 
   async control(action: string): Promise<void> {

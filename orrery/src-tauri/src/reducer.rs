@@ -14,6 +14,12 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 const RATE_WINDOW: usize = 8;
+// PARITY PAIR (reducer.rs <-> reduce.ts COST_SERIES_CAP): cap on retained cost.series samples.
+// A weeks-long run appends one sample per cost-bearing event forever; without a cap the Vec (and
+// every O(n) scan/slice over it) grows unbounded. Past the cap we drop the OLDEST entries first —
+// the series is a rolling window, not a full history — keeping both language reducers byte-
+// identical in shape. All 8 golden fixtures are far below this, so goldens are unaffected.
+const COST_SERIES_CAP: usize = 2000;
 
 /// Format a `ts` (ms since epoch, PROTOCOL §3 — synthetic line-index×1000 in tests, caller-
 /// stamped real wall-clock otherwise) as an ISO-8601 UTC string with millisecond precision and a
@@ -157,6 +163,13 @@ impl Reducer {
             match self.state.cost.series.iter_mut().find(|s| s.t == ts && s.cum == c) {
                 Some(existing) => existing.cum = c,
                 None => self.state.cost.series.push(CostSample { t: ts, cum: c }),
+            }
+            // Cap AFTER the push (never on the upsert-in-place branch above, which never grows
+            // the Vec) — drop-oldest, so the series stays a bounded rolling window (parity pair,
+            // see COST_SERIES_CAP above / reduce.ts pushCostSample).
+            let len = self.state.cost.series.len();
+            if len > COST_SERIES_CAP {
+                self.state.cost.series.drain(0..(len - COST_SERIES_CAP));
             }
             self.recompute_rate();
         }

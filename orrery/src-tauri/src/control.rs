@@ -2,6 +2,7 @@
 //!
 //! - `load_run`  — one-shot reduce of existing files.
 //! - `watch_run` — emit a Snapshot delta immediately, then a fresh State delta per new event.
+//! - `unwatch_run` — stop the active `watch_run` watcher for a state dir (no-op if none).
 //! - `list_loops` — read `loops/<id>/loop.json`.
 
 use std::collections::HashMap;
@@ -182,6 +183,11 @@ pub fn load_run(
 // piled up forever. `WATCHERS` tracks the CURRENT watcher per watched directory; re-invoking
 // `watch_run` for the same directory now signals the previous watcher to stop (and reaps its
 // thread) before starting a new one, so there is at most one live watcher per loop.
+//
+// `unwatch_run` is the explicit counterpart: a frontend that stops observing a loop for good
+// (not switching to another loop's `watch_run`, just navigating away) can retire the watcher
+// directly instead of relying on some FUTURE `watch_run` call to reap it — which, for a loop
+// nobody re-opens, would never come.
 
 struct WatcherHandle {
     stop: Arc<AtomicBool>,
@@ -308,6 +314,38 @@ pub fn watch_run(
     // R1: replaces (and reaps) any watcher already registered for this directory — at most one
     // live watcher per loop, instead of leaking a new thread + FS watch on every remount.
     replace_watcher(watcher_registry(), watch_dir_key, stop, join);
+    Ok(())
+}
+
+/// Stop the active `watch_run` watcher for `state_dir`, if any — the explicit counterpart to
+/// `watch_run`'s implicit replace-on-remount dedup. Before this existed, the ONLY way to retire a
+/// watcher was to start another one for the same directory (`replace_watcher`'s reap path); a
+/// frontend that navigates away from a loop for good (not to another loop's view, just away) had
+/// no way to say "stop watching" — the watcher thread + FS watch + channel stayed alive until the
+/// next `watch_run` call for that same directory, which might be never. Reuses the exact
+/// signal-stop + reap mechanism `replace_watcher` uses, just removing the registry entry instead
+/// of replacing it. No-op (not an error) if no watcher is registered for `state_dir` — a caller
+/// cannot know in advance whether a watcher was ever started for a given loop.
+#[tauri::command]
+pub fn unwatch_run(
+    state_dir: String,
+    adapter: String,
+    log_file: Option<String>,
+) -> Result<(), String> {
+    let dir = PathBuf::from(&state_dir);
+    let lp = log_path(&dir, &adapter, log_file.as_deref());
+    let watch_dir_key = lp.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let prev = {
+        let mut map = watcher_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        map.remove(&watch_dir_key)
+    };
+    if let Some(prev) = prev {
+        prev.stop.store(true, Ordering::Relaxed);
+        // Bounded join (~50ms poll tick, see watcher.rs), same as replace_watcher's reap.
+        let _ = prev.join.join();
+    }
     Ok(())
 }
 
@@ -1338,6 +1376,50 @@ mod tests {
         replace_watcher(&registry, other_dir, stop3.clone(), join3);
         assert!(!stop2.load(Ordering::Relaxed), "an unrelated dir must not signal dir's watcher");
         assert_eq!(registry.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn unwatch_run_stops_and_reaps_a_registered_watcher() {
+        // Unlike replace_watcher_signals_and_reaps_the_previous_one above, `unwatch_run` is a
+        // #[tauri::command] that reaches for the real process-global WATCHERS registry (it has no
+        // registry parameter to inject a throwaway one), so this test uses a state dir unique to
+        // this test+process to guarantee it can't collide with anything else touching that static.
+        let pid = std::process::id();
+        let dir = PathBuf::from(format!("/fake/unwatch-{pid}"));
+        // `log_path(dir, "generic", None)` resolves to `dir/log.jsonl`, so the watch key
+        // `unwatch_run` computes (that log path's parent) is `dir` itself — register under it.
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+        let saw_stop = Arc::new(AtomicBool::new(false));
+        let saw_stop_thread = saw_stop.clone();
+        let join = std::thread::spawn(move || {
+            while !stop_thread.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            saw_stop_thread.store(true, Ordering::Relaxed);
+        });
+        {
+            let mut map = watcher_registry().lock().unwrap_or_else(|p| p.into_inner());
+            map.insert(dir.clone(), WatcherHandle { stop: stop.clone(), join });
+        }
+
+        unwatch_run(dir.to_string_lossy().to_string(), "generic".to_string(), None)
+            .expect("unwatch_run ok");
+
+        assert!(stop.load(Ordering::Relaxed), "unwatch_run must signal the watcher to stop");
+        assert!(saw_stop.load(Ordering::Relaxed), "unwatch_run must reap (join) the thread");
+        assert!(
+            !watcher_registry().lock().unwrap_or_else(|p| p.into_inner()).contains_key(&dir),
+            "the registry entry must be removed"
+        );
+    }
+
+    #[test]
+    fn unwatch_run_is_a_noop_when_nothing_is_registered() {
+        let pid = std::process::id();
+        let dir = format!("/fake/unwatch-noop-{pid}");
+        // No prior watch_run/registration for this dir — must succeed silently, not error.
+        unwatch_run(dir, "generic".to_string(), None).expect("unwatch_run no-op ok");
     }
 
     #[test]
