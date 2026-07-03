@@ -20,6 +20,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             control::load_run,
             control::watch_run,
+            control::unwatch_run,
             control::list_loops,
             // A5 — loop CRUD (Tuning Console write-side)
             control::create_loop,
