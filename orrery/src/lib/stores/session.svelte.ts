@@ -50,6 +50,10 @@ class SessionStore {
   observeOnly = $derived(this.wsStatus?.observeOnly ?? false);
 
   private transport: Transport | null = null;
+  // Monotonic guard against mountLoop's re-entrancy: mountLoop has two awaits, and a fast
+  // loop-switch (or unmount) can start a second call before the first resolves. Each call
+  // captures its own epoch at entry and rechecks after every await.
+  private mountEpoch = 0;
 
   // Build a LIVE loop choice from a loop's loop.json — for loops that exist on disk (and so
   // are listed by the Cosmos) but are NOT in the static seed LOOPS table (e.g. user-created
@@ -75,6 +79,9 @@ class SessionStore {
   // ── mount a loop's System view via the existing transport/replay ───────────
   async mountLoop(id: string): Promise<void> {
     if (!browser) return;
+    // Capture this call's epoch BEFORE the first await; a newer mountLoop/unmountLoop bumps
+    // `mountEpoch` and this call must notice on the other side of every await below.
+    const epoch = ++this.mountEpoch;
     this.transport?.stop();
     runStore.reset();
     logStore.clear();
@@ -84,7 +91,14 @@ class SessionStore {
     // Seed loops come from the static LOOPS table (they carry replay fixtures); any other
     // loop on disk is resolved live from its loop.json so created loops are enterable too.
     const choice = LOOPS.find((l) => l.id === id) ?? (await this.loopChoiceFromDef(id));
-    if (!choice) return;
+    if (this.mountEpoch !== epoch) return; // superseded while resolving the loop def — bail
+    if (!choice) {
+      // Stale-badge fix: don't leave `transport`/`transportKind` pointing at the transport we
+      // stopped above when the requested loop can't be resolved.
+      this.transport = null;
+      this.transportKind = null;
+      return;
+    }
     const transport = createTransport(withBase(choice), {
       onState: (s) => runStore.set(s),
       onWsStatus: (st) => (this.wsStatus = st),
@@ -99,9 +113,13 @@ class SessionStore {
       uiStore.setMode('observatory');
     }
     await transport.start();
+    // Superseded while start() was in flight: stop OUR transport (defense-in-depth alongside
+    // TauriTransport's own `stopped` flag) and leave the newer mount's store state untouched.
+    if (this.mountEpoch !== epoch) transport.stop();
   }
 
   unmountLoop(): void {
+    ++this.mountEpoch; // supersede any mountLoop still in flight
     this.transport?.stop();
     this.transport = null;
     this.transportKind = null;
