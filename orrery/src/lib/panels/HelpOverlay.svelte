@@ -95,7 +95,7 @@
 </script>
 
 <!-- scrim + dialog -->
-<div class="scrim" role="presentation" onclick={onClose}>
+<div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
   <div
     class="card floating-card"
     role="dialog"
@@ -103,7 +103,6 @@
     aria-labelledby="help-title"
     tabindex="-1"
     use:focusTrap={{ onClose }}
-    onclick={(e) => e.stopPropagation()}
   >
     <header class="hdr">
       <span class="dot" aria-hidden="true"></span>

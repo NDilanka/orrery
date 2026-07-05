@@ -419,7 +419,7 @@
 </script>
 
 <!-- scrim + dialog -->
-<div class="scrim" role="presentation" onclick={onClose}>
+<div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
   <div
     class="console floating-card"
     role="dialog"
@@ -427,7 +427,6 @@
     aria-labelledby="tc-title"
     tabindex="-1"
     use:focusTrap={{ onClose }}
-    onclick={(e) => e.stopPropagation()}
   >
     <!-- header -->
     <header class="hdr">

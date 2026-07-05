@@ -59,7 +59,7 @@
 </script>
 
 <!-- scrim + bottom-sheet -->
-<div class="scrim" role="presentation" onclick={onClose}>
+<div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
   <div
     class="sheet floating-card"
     class:reduced={uiStore.reducedMotion}
@@ -68,7 +68,6 @@
     aria-label="Answer the loop's pending decision"
     tabindex="-1"
     use:focusTrap={{ onClose, initialFocus: () => textareaEl }}
-    onclick={(e) => e.stopPropagation()}
   >
     {#if q}
       <header class="hdr">
