@@ -441,7 +441,7 @@ impl Default for Cache {
 }
 
 /// §2 engine-v3 `metrics` event — a run-quality fold of the event stream
-/// (`loop.metrics.compute_metrics`). `None` until a `metrics` event is seen;
+/// (`orrery_loop.metrics.compute_metrics`). `None` until a `metrics` event is seen;
 /// first-try-green + iters/cost-to-green replace pass@k for loops.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -15,7 +15,7 @@
 // camelCase loop.json the Rust `create_loop` persists and `list_loops` reads.
 //
 // HONESTY CONSTRAINT (wave U3 Task 1): every field this module emits under
-// `engine` is a key `engine/loop/config.py` (`EngineConfig` + its per-block
+// `engine` is a key `engine/orrery_loop/config.py` (`EngineConfig` + its per-block
 // parsers) actually reads. A2 retired `gate.greenWhen` (parsed, never
 // consulted) and made an unrecognized key print a stderr warning — so this
 // module used to hand the engine a `regression`/`decide`/`qa`/`concurrency`/
@@ -24,7 +24,7 @@
 
 import type { Model } from './types';
 
-// ─── Engine config shape (PROTOCOL §7 engine block, engine/loop/config.py) ──
+// ─── Engine config shape (PROTOCOL §7 engine block, engine/orrery_loop/config.py) ──
 // Kept structural & permissive: this is the object that lands under loop.json's
 // `engine` key. The Rust side treats it as opaque Value; the console owns it.
 // Every top-level key here (and every nested key) is one `_ENGINE_KNOWN_KEYS` /
@@ -35,7 +35,7 @@ export interface GateStageDef {
   command: string;
   passPattern?: string;
   failPattern?: string;
-  // advanced, per-stage (engine/loop/config.py GateStage) — not surfaced in the
+  // advanced, per-stage (engine/orrery_loop/config.py GateStage) — not surfaced in the
   // console's Definition-of-Done rows yet; kept so a hand-authored value round-trips.
   heldOut?: boolean;
   lockGlobs?: string[];
@@ -64,7 +64,7 @@ export interface EngineConfig {
     judgeModel: Model;
     contract: string[];
     // the switch: only when true does the engine emit the judge event + run the
-    // anti-false-green VERIFY pass (engine/loop/config.py VerifyConfig docstring).
+    // anti-false-green VERIFY pass (engine/orrery_loop/config.py VerifyConfig docstring).
     enabled: boolean;
     mutationAudit: boolean;
     mutationEvery: number;
@@ -324,7 +324,7 @@ export function composeEngine(
 ): EngineConfig {
   const derived = deriveFromDials(dials);
   // FOOT-GUN CATCH: `verify.enabled` is the switch that arms the AC-driven
-  // anti-false-green pass (engine/loop/config.py VerifyConfig docstring — a
+  // anti-false-green pass (engine/orrery_loop/config.py VerifyConfig docstring — a
   // non-empty `contract` alone does nothing without it). Typing acceptance
   // criteria into the console and having them silently do nothing would be
   // exactly the kind of foot-gun this wave exists to catch, so `enabled` tracks
@@ -535,7 +535,7 @@ export interface ValidationResult {
 }
 
 // ─── Numeric bounds (engine-consumed fields the console lets you type a raw
-// number into via drawer overrides — engine/loop/config.py just casts to
+// number into via drawer overrides — engine/orrery_loop/config.py just casts to
 // int/float and trusts it, no clamping on that side). Split into two groups
 // by inspecting how core.py actually consumes each field:
 //   POSITIVE  — a zero/negative/NaN value degenerates the run rather than
@@ -544,7 +544,7 @@ export interface ValidationResult {
 //               trips the cost gate before iteration 1's spend is even
 //               counted. These have no documented "0 = off" meaning.
 //   NONNEGATIVE — 0 is a real, engine-honored value: iter_timeout_min=0 is
-//               the DOCUMENTED disable (engine/loop/core.py: "0 = unbounded" —
+//               the DOCUMENTED disable (engine/orrery_loop/core.py: "0 = unbounded" —
 //               also the console's own "(0 = unbounded)" field hint); the
 //               stop.*Limit / memory.recallLimit counters are thresholds
 //               that are simply strictest at 0 (stop on the very first

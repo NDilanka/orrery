@@ -1,11 +1,11 @@
 // Unit tests for blueprints.ts (wave U3 Task 1 — "honest dials").
 //
 // The central claim under test: composeEngine/composeLoopDef emit ONLY keys
-// engine/loop/config.py actually reads. Before U3 this module also emitted
+// engine/orrery_loop/config.py actually reads. Before U3 this module also emitted
 // `gate.greenWhen` (retired — parsed, never consulted) and whole
 // `regression`/`decide`/`qa`/`quota`/`concurrency` blocks the engine's
 // `_ENGINE_KNOWN_KEYS` doesn't recognize at all — every one of those would
-// print an "unrecognized key" stderr warning today (loop.configkeys.warn_unknown_keys)
+// print an "unrecognized key" stderr warning today (orrery_loop.configkeys.warn_unknown_keys)
 // and be silently ignored. `assertEngineIsWarningFree` below is a standing guard
 // against that regression.
 
@@ -22,7 +22,7 @@ import {
   type EngineConfig,
 } from './blueprints';
 
-// Mirrors engine/loop/config.py: `_ENGINE_KNOWN_KEYS` + each block's own
+// Mirrors engine/orrery_loop/config.py: `_ENGINE_KNOWN_KEYS` + each block's own
 // `_*_KNOWN_KEYS` / dataclass fields (camelCase only — this module never emits
 // snake_case, though the engine accepts both).
 const KNOWN_ENGINE_KEYS = new Set([
@@ -58,7 +58,7 @@ const KNOWN_METRICS_KEYS = new Set(['emit']);
 
 function assertKnownKeys(obj: Record<string, unknown>, known: Set<string>, label: string) {
   for (const k of Object.keys(obj)) {
-    expect(known.has(k), `${label}.${k} is not a key engine/loop/config.py reads`).toBe(true);
+    expect(known.has(k), `${label}.${k} is not a key engine/orrery_loop/config.py reads`).toBe(true);
   }
 }
 
