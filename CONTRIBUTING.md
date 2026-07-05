@@ -4,6 +4,10 @@ Thanks for your interest! Orrery is an autonomous coding-**loop** engine plus a 
 **orbital visualizer**. This guide covers the layout, the one rule you must not break,
 and how to set up each component.
 
+Orrery is a best-effort personal project: issues and PRs are read and appreciated, but
+there are no response-time guarantees. See [ROADMAP.md](ROADMAP.md) for where it's headed,
+and [Discussions](https://github.com/NDilanka/orrery/discussions) for questions and ideas.
+
 ## Repository layout
 
 ```
