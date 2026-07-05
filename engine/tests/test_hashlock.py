@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from loop.hashlock import (
+from orrery_loop.hashlock import (
     compare_hash_map,
     hash_map_digest,
 )
-from loop.hashlock import test_hash as hash_digest_for
-from loop.hashlock import test_hash_map as build_hash_map
+from orrery_loop.hashlock import test_hash as hash_digest_for
+from orrery_loop.hashlock import test_hash_map as build_hash_map
 
 
 def _write(p: Path, text: str) -> None:

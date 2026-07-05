@@ -1,4 +1,4 @@
-"""Coverage for ``loop.qa.discover`` — the QA discovery orchestration.
+"""Coverage for ``orrery_loop.qa.discover`` — the QA discovery orchestration.
 
 Pure ``story_gate`` math, plus a full ``run()`` with the agent invocation injected: a fake
 invoker parses the findings path out of the prompt (testing the real contract — "write to
@@ -15,8 +15,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from conftest import REPO_ROOT
 
-from loop import lockfile
-from loop.qa.discover import (
+from orrery_loop import lockfile
+from orrery_loop.qa.discover import (
     InvokeResult,
     QaConfig,
     default_invoke,
@@ -24,7 +24,7 @@ from loop.qa.discover import (
     run,
     story_gate,
 )
-from loop.runners.base import AgentResult
+from orrery_loop.runners.base import AgentResult
 
 
 def test_story_gate_counts_only_observable():
@@ -176,7 +176,7 @@ def test_default_invoke_routes_through_claude_and_resilient_runner(monkeypatch):
                 raw="RAW", text="hi", cost_usd=0.4, usage={"input_tokens": 5, "output_tokens": 2}
             )
 
-    monkeypatch.setattr("loop.qa.discover.ClaudeRunner", lambda: FakeBase())
+    monkeypatch.setattr("orrery_loop.qa.discover.ClaudeRunner", lambda: FakeBase())
     cfg = QaConfig(
         project_root="/p", manifest_path="m", model="opus", effort="high", max_turns=99
     )
@@ -200,7 +200,7 @@ def test_default_invoke_routes_through_claude_and_resilient_runner(monkeypatch):
 
 
 def test_run_takes_the_shared_lock_and_refuses_when_live(tmp_path, monkeypatch):
-    """Task 4: loop.qa.discover.run() now acquires the SAME shared lock as loop/loop-bmad, so
+    """Task 4: orrery_loop.qa.discover.run() now acquires the SAME shared lock as loop/loop-bmad, so
     it can't race a generic/BMAD run (or another QA run) against the same state dir."""
     mpath = tmp_path / "ac-manifest.json"
     mpath.write_text(json.dumps(_manifest()), encoding="utf-8")

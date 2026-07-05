@@ -7,8 +7,8 @@ collapsed answer text (with the fallback when the model returns nothing).
 
 from __future__ import annotations
 
-from loop.bmad.decider import retro_decider, review_decider
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop.bmad.decider import retro_decider, review_decider
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 class MockRunner(AgentRunner):

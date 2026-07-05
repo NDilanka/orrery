@@ -41,7 +41,7 @@ loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examp
 **Always-on guardrails** (no flags): external exit-code gate, cumulative cost ceiling,
 max-iters + stagnation/plateau/regress stops, test-file hash-lock + count-floor,
 per-iteration git commits (rollback to best), quota survival (wait-and-resume across
-resets), cross-platform process-tree kill, and a concurrency lock (`loop.lockfile` — ONE
+resets), cross-platform process-tree kill, and a concurrency lock (`orrery_loop.lockfile` — ONE
 `lock` file shared by `loop` / `loop-bmad` / `loop-qa`, so any two of them racing the same
 state dir correctly serialize instead of silently double-running).
 
@@ -51,7 +51,7 @@ state dir correctly serialize instead of silently double-running).
 
 - **Wall-clock timeouts.** Every agent-spawning phase has a per-call timeout so a hung runner
   process can never block an overnight run forever; on expiry the process TREE is killed
-  (`loop.proc.kill_tree`) and the iteration/phase follows its normal failure path (a
+  (`orrery_loop.proc.kill_tree`) and the iteration/phase follows its normal failure path (a
   `phase-timeout` log event, then retried/halted like any other unproductive attempt).
   - Generic loop: `engine.iterTimeoutMin` (`loop.json`) / `--iter-timeout-min` (CLI). Default
     **60**, `0` disables.
@@ -63,7 +63,7 @@ state dir correctly serialize instead of silently double-running).
     cap. A run launched with `--loop-json` carries these (and every other `bmad.*` tuning knob)
     into the checkpoint's `resume` string, so a Reignite/resume restores the full config instead
     of silently reverting to defaults.
-- **No orphaned children.** `loop.proc.run_with_timeout` kills the whole child process tree on
+- **No orphaned children.** `orrery_loop.proc.run_with_timeout` kills the whole child process tree on
   ANY exception path out of `communicate()` — not just a timeout — including a
   `KeyboardInterrupt`. Every CLI entrypoint (`loop`, `loop-bmad`, `loop-qa`) catches a
   `KeyboardInterrupt` around its driver call and exits `130` cleanly instead of a raw traceback
@@ -99,7 +99,7 @@ audit, run-quality metrics, and an anti-false-green verifier.
 ### Gate commands and shells
 
 Each gate stage's `command` string (`loop.json` `engine.gate.stages[].command`) runs through
-`subprocess.run(..., shell=True)` (`loop.gate._run_command`) — i.e. **`cmd.exe` on Windows,
+`subprocess.run(..., shell=True)` (`orrery_loop.gate._run_command`) — i.e. **`cmd.exe` on Windows,
 `/bin/sh` on POSIX**. Those are different shells: `&&`/`||` chaining, quoting rules, glob
 expansion, and builtins (`export`, `set`, `[[ ]]`) are NOT portable between them, and a command
 written for one will often fail silently or parse-error on the other. Prefer a single simple
@@ -139,7 +139,7 @@ callable (a test hook) rather than a shell string, since there is no shell form 
 ## Module map
 
 ```
-loop/
+orrery_loop/
   core.py        generic fix-until-green loop (the driver)
   cli.py         loop / loop-bmad / loop-qa / loop-stop / loop-supervise entrypoints
   driver_shell.py shared driver lifecycle: lock -> body -> release; checkpoint + STOP helpers
@@ -165,13 +165,13 @@ loop/
 ## Writing a new loop driver
 
 All three shipped drivers (`loop`, `loop-bmad`, `loop-qa`) run inside the same shell —
-`loop.driver_shell.run_driver` — and a new driver should too. The full contract lives in
-`loop/driver_shell.py`'s module docstring; the short version:
+`orrery_loop.driver_shell.run_driver` — and a new driver should too. The full contract lives in
+`orrery_loop/driver_shell.py`'s module docstring; the short version:
 
 1. **Entry shape.** Parse your config, then hand your orchestration to the shell:
 
    ```python
-   from loop.driver_shell import run_driver
+   from orrery_loop.driver_shell import run_driver
 
    def run(config, *, state_dir, ...) -> int:
        def body(state: Path) -> int:
@@ -184,22 +184,22 @@ All three shipped drivers (`loop`, `loop-bmad`, `loop-qa`) run inside the same s
    held, and releases it on every exit path. A refused lock returns **exit code 2** without
    calling `body`; never return 2 yourself.
 2. **State files** (PROTOCOL §1) live in `state_dir`: append events to `log.jsonl` via
-   `loop.logio.append_event` (compact JSON, one per line; reducers ignore unknown events, so
+   `orrery_loop.logio.append_event` (compact JSON, one per line; reducers ignore unknown events, so
    adapter-specific events are fine — emit the §2 core set where your run maps onto it); write
-   `checkpoint.json` ONLY through `loop.driver_shell.write_checkpoint_now` (one shape,
+   `checkpoint.json` ONLY through `orrery_loop.driver_shell.write_checkpoint_now` (one shape,
    consistent `updatedAt`/`cumUsd` rounding, a real `resume` command string).
 3. **Cooperative stop.** Poll the `STOP` flag at your own safe boundaries with
-   `loop.driver_shell.read_stop_request(stop_path, scope)`; when it says honor, write a
+   `orrery_loop.driver_shell.read_stop_request(stop_path, scope)`; when it says honor, write a
    checkpoint, emit `cooperative-stop`, delete the flag, and return 0. Nothing kills you
    mid-step — honoring promptly is your job.
-4. **Liveness.** Wrap every long blocking agent call in `loop.heartbeat.Heartbeat`
+4. **Liveness.** Wrap every long blocking agent call in `orrery_loop.heartbeat.Heartbeat`
    (`activity.json`) so a watcher can tell working from hung.
 5. **Config.** Read your tuning from a namespaced block of the loop's `loop.json`
-   (`{"myadapter": {...}}` — see PROTOCOL §7), resolving keys with `loop.configkeys.resolve`
+   (`{"myadapter": {...}}` — see PROTOCOL §7), resolving keys with `orrery_loop.configkeys.resolve`
    (camelCase AND snake_case both accepted) and warning on unrecognized keys with
-   `loop.configkeys.warn_unknown_keys`.
+   `orrery_loop.configkeys.warn_unknown_keys`.
 6. **Keep decisions pure.** Put any go/no-go logic in pure functions with injected inputs
-   (see `loop.decide`) and inject every side effect (runner, gate, emit) so your driver is
+   (see `orrery_loop.decide`) and inject every side effect (runner, gate, emit) so your driver is
    testable with mocks — no network, no real agent.
 
 **Frontend side.** The Orrery UI (Rust `control.rs` + TS `reduce.ts`) reduces `log.jsonl` into

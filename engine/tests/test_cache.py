@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loop.cache import get_cache_usage
+from orrery_loop.cache import get_cache_usage
 
 
 def test_warm_full_usage_correct_ratio_and_flag():

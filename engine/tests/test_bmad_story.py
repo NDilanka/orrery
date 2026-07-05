@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loop.bmad.story import story_acs, story_meta
+from orrery_loop.bmad.story import story_acs, story_meta
 
 STORY = """\
 # Story 3-4: Semantic Search

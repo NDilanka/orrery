@@ -1,4 +1,4 @@
-"""Hermetic integration tests for the four engine upgrades wired into :func:`loop.core.run_loop`.
+"""Hermetic integration tests for the four engine upgrades wired into :func:`orrery_loop.core.run_loop`.
 
 Each feature is DEFAULT-OFF: a default-config run is byte-for-byte the same event sequence as
 before (the ``parity guard`` test re-asserts the green-path sequence). Every test drives the
@@ -26,8 +26,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from loop import cli
-from loop.config import (
+from orrery_loop import cli
+from orrery_loop.config import (
     CostConfig,
     EngineConfig,
     FeedbackConfig,
@@ -38,9 +38,9 @@ from loop.config import (
     StopConfig,
     VerifyConfig,
 )
-from loop.core import run_loop
-from loop.feedback import compact_feedback
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop.core import run_loop
+from orrery_loop.feedback import compact_feedback
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 # --- helpers (mirror tests/test_core.py) -----------------------------------
 
@@ -218,7 +218,7 @@ def test_compact_feedback_on_uses_compact_block_not_raw(tmp_path):
     rc = run_loop(cfg, runner=NoOpRunner(repo), state_dir=state, cwd=repo)
     assert rc == 1  # never green
 
-    from loop.gate import run_gate
+    from orrery_loop.gate import run_gate
 
     gate_result = run_gate([{"name": "test", "command": _make_gate(repo)}])
     expected = compact_feedback(gate_result)
@@ -475,7 +475,7 @@ def test_live_metrics_event_emitted_after_each_iteration(tmp_path):
 
 def test_metrics_event_builder_shape_direct():
     """Direct unit test of the engine-v3 ``metrics_event`` builder (camelCase wire shape)."""
-    from loop.events import metrics_event
+    from orrery_loop.events import metrics_event
 
     ev = metrics_event(
         first_try_green=False,

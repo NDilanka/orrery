@@ -14,14 +14,14 @@ dependencies = ["psutil>=5.9", "pyyaml>=6"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]
-loop = "loop.cli:main"
-loop-stop = "loop.cli:main_stop"
-loop-bmad = "loop.cli:main_bmad"
-loop-qa = "loop.cli:main_qa"
-loop-supervise = "loop.cli:main_supervise"
+loop = "orrery_loop.cli:main"
+loop-stop = "orrery_loop.cli:main_stop"
+loop-bmad = "orrery_loop.cli:main_bmad"
+loop-qa = "orrery_loop.cli:main_qa"
+loop-supervise = "orrery_loop.cli:main_supervise"
 
 [tool.hatch.build.targets.wheel]
-packages = ["loop"]
+packages = ["orrery_loop"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

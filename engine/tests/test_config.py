@@ -8,7 +8,7 @@ from pathlib import Path
 
 from conftest import REPO_ROOT
 
-from loop.config import EngineConfig, from_loop_json, model_for_phase
+from orrery_loop.config import EngineConfig, from_loop_json, model_for_phase
 
 # The seeded, self-contained Python loop the visualizer ships (pytest gate). Resolved off the
 # repo root (from the test file's location) so this passes from any CWD, not just the repo root.
@@ -202,8 +202,8 @@ def test_loop_json_field_default_empty():
 
 def test_green_when_removed_from_gate_config():
     """gate.greenWhen was parsed but never consulted (real green = every stage exit 0,
-    loop.gate.run_gate) — the field is gone; GateConfig has no such attribute."""
-    from loop.config import GateConfig
+    orrery_loop.gate.run_gate) — the field is gone; GateConfig has no such attribute."""
+    from orrery_loop.config import GateConfig
 
     cfg = GateConfig()
     assert not hasattr(cfg, "green_when")

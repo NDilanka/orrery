@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loop.checkpoint import get_stop_mode
+from orrery_loop.checkpoint import get_stop_mode
 
 
 def test_none_content_not_requested():

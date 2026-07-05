@@ -4,7 +4,7 @@ inbox — mirrors ``selftest-verify.ps1`` (verdict + contract) and ``selftest-fi
 
 from __future__ import annotations
 
-from loop.verdict import (
+from orrery_loop.verdict import (
     contract_criteria,
     parse_verdict,
     question_marker,

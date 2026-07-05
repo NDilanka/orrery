@@ -7,14 +7,14 @@ dict. No real process is spawned. The DevServer (real ``server_ctl``) is NOT exe
 
 from __future__ import annotations
 
-from loop.bmad import phases
-from loop.bmad.phases import (
+from orrery_loop.bmad import phases
+from orrery_loop.bmad.phases import (
     browser_smoke,
     code_review,
     create_story,
     dev_story,
 )
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 class MockRunner(AgentRunner):

@@ -1,4 +1,4 @@
-"""Coverage for :mod:`loop.supervise` — the built-in restart-on-failure supervisor (Task 6).
+"""Coverage for :mod:`orrery_loop.supervise` — the built-in restart-on-failure supervisor (Task 6).
 
 Everything effectful (spawn/sleep/clock) is injected, so the whole restart/thrash-guard/STOP
 logic runs with FAKE processes and NO real sleeps — fast and deterministic. A couple of tests
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from loop.supervise import STOP_NAME, STOP_SUPERVISOR_NAME, SupervisorConfig, supervise
+from orrery_loop.supervise import STOP_NAME, STOP_SUPERVISOR_NAME, SupervisorConfig, supervise
 
 
 class FakeProc:
@@ -148,7 +148,7 @@ def test_poll_sec_is_passed_to_the_injected_sleep(tmp_path):
 
 def test_keyboard_interrupt_while_waiting_kills_the_child_tree_then_propagates(tmp_path, monkeypatch):
     killed: list[int] = []
-    monkeypatch.setattr("loop.supervise.kill_tree", lambda pid, **kw: killed.append(pid))
+    monkeypatch.setattr("orrery_loop.supervise.kill_tree", lambda pid, **kw: killed.append(pid))
 
     class RaisingProc:
         pid = 4242
@@ -167,7 +167,7 @@ def test_keyboard_interrupt_while_waiting_kills_the_child_tree_then_propagates(t
 
 
 def test_real_child_processes_end_to_end(tmp_path):
-    """Integration: real `python -c` children, real loop.proc.spawn_tree via the default spawn.
+    """Integration: real `python -c` children, real orrery_loop.proc.spawn_tree via the default spawn.
 
     The child fails (exit 1) once, then succeeds (exit 0) — a counter file tracks how many
     times it has run, since each restart is a fresh process with no in-memory state.
@@ -191,7 +191,7 @@ def test_real_child_processes_end_to_end(tmp_path):
 
 
 def test_default_spawn_uses_proc_spawn_tree(monkeypatch, tmp_path):
-    """The DEFAULT spawn goes through loop.proc.spawn_tree (Task 6: 'via proc.py's spawn
+    """The DEFAULT spawn goes through orrery_loop.proc.spawn_tree (Task 6: 'via proc.py's spawn
     utilities so the tree is killable') — not a bare subprocess.Popen call of its own."""
     seen = {}
 
@@ -199,7 +199,7 @@ def test_default_spawn_uses_proc_spawn_tree(monkeypatch, tmp_path):
         seen["argv"] = list(argv)
         return FakeProc(pid=1, rc=0)
 
-    monkeypatch.setattr("loop.supervise.spawn_tree", fake_spawn_tree)
+    monkeypatch.setattr("orrery_loop.supervise.spawn_tree", fake_spawn_tree)
     cfg = SupervisorConfig(state_dir=str(tmp_path), command=["echo", "hi"])
     rc = supervise(cfg, sleep=lambda s: None, clock=_clock_seq())
     assert rc == 0

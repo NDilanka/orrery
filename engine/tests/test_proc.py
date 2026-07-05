@@ -1,4 +1,4 @@
-"""Cross-platform spawn + process-TREE kill coverage for :mod:`loop.proc`.
+"""Cross-platform spawn + process-TREE kill coverage for :mod:`orrery_loop.proc`.
 
 Written OS-portable (passes on Windows and POSIX). The tree-kill test spawns a REAL child
 that sleeps ~30s AND spawns its OWN grandchild sleeper, runs it with a 1s timeout, then
@@ -13,7 +13,7 @@ import time
 
 import psutil
 
-from loop.proc import ProcResult, kill_tree, run_with_timeout, spawn_tree
+from orrery_loop.proc import ProcResult, kill_tree, run_with_timeout, spawn_tree
 
 # A child program that: prints its own PID and the spawned grandchild's PID (so the test
 # can verify the WHOLE tree died), then sleeps long enough that only a kill ends it.
@@ -101,7 +101,7 @@ def test_kill_by_name_scoped_to_within_dir(monkeypatch):
     """
     import os
 
-    from loop import proc as procmod
+    from orrery_loop import proc as procmod
 
     proj = os.path.abspath(os.path.join("X", "webapp"))
     inside = os.path.join(proj, "sub")
@@ -158,7 +158,7 @@ def test_run_with_timeout_kills_tree_on_keyboard_interrupt(monkeypatch):
         pid_holder["pid"] = pid
         return real_kill_tree(pid, **kw)
 
-    monkeypatch.setattr("loop.proc.kill_tree", spying_kill_tree)
+    monkeypatch.setattr("orrery_loop.proc.kill_tree", spying_kill_tree)
 
     raised = False
     try:
@@ -174,7 +174,7 @@ def test_run_with_timeout_kills_tree_on_keyboard_interrupt(monkeypatch):
 
 
 def test_spawn_tree_returns_a_killable_detached_process():
-    """spawn_tree (used by loop.supervise) spawns without capturing output and can be
+    """spawn_tree (used by orrery_loop.supervise) spawns without capturing output and can be
     kill_tree'd like any run_with_timeout child."""
     proc = spawn_tree([sys.executable, "-c", "import time; time.sleep(30)"])
     try:

@@ -10,8 +10,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from loop import cli
-from loop.runners.base import AgentRunner
+from orrery_loop import cli
+from orrery_loop.runners.base import AgentRunner
 
 
 def _init_repo(tmp_path: Path) -> Path:
@@ -145,7 +145,7 @@ def test_loop_main_keyboard_interrupt_exits_130(tmp_path, monkeypatch):
 
 def test_loop_bmad_main_keyboard_interrupt_exits_130(tmp_path, monkeypatch):
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     def boom(*a, **kw):
         raise KeyboardInterrupt()
@@ -186,7 +186,7 @@ def test_loop_iter_timeout_min_flag_overrides_config(tmp_path, monkeypatch):
 
 def test_loop_bmad_timeout_flags_override_config(tmp_path, monkeypatch):
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     captured: dict = {}
 
@@ -214,7 +214,7 @@ def test_loop_bmad_timeout_flag_of_zero_disables_not_default(tmp_path, monkeypat
     """0 is a legitimate explicit 'disable this timeout' value — it must NOT be coerced back
     to the nonzero default (the classic `x or default` footgun)."""
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     captured: dict = {}
 
@@ -246,7 +246,7 @@ def test_loop_supervise_parses_flags_and_command_after_double_dash(tmp_path, mon
         captured["config"] = config
         return 0
 
-    monkeypatch.setattr("loop.supervise.supervise", fake_supervise)
+    monkeypatch.setattr("orrery_loop.supervise.supervise", fake_supervise)
     rc = cli.main_supervise(
         [
             "--state-dir", str(tmp_path / "state"),
@@ -273,7 +273,7 @@ def test_loop_supervise_missing_command_errors(tmp_path):
 
 
 def test_loop_qa_main_keyboard_interrupt_exits_130(tmp_path, monkeypatch):
-    from loop.qa import discover
+    from orrery_loop.qa import discover
 
     mpath = tmp_path / "ac-manifest.json"
     mpath.write_text('{"app": "x", "epics": []}', encoding="utf-8")
@@ -301,7 +301,7 @@ def test_loop_bmad_camel_case_gate_stages_honored_from_loop_json(tmp_path, monke
     """Footgun (a): BmadConfig used to accept ONLY snake_case `gate_stages` from a loop.json,
     despite camelCase being the documented wire convention. `gateStages` must be honored too."""
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     loop_json = tmp_path / "bmad.json"
     loop_json.write_text(
@@ -332,7 +332,7 @@ def test_loop_bmad_file_only_max_stories_honored(tmp_path, monkeypatch):
     config, silently discarding everything else — including `maxStories`. File config is now the
     base: a file-only `maxStories` (no CLI flag passed) must reach the driver."""
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     loop_json = tmp_path / "bmad.json"
     loop_json.write_text('{"bmad": {"maxStories": 3, "mergeBase": "main"}}', encoding="utf-8")
@@ -360,7 +360,7 @@ def test_loop_bmad_file_only_max_stories_honored(tmp_path, monkeypatch):
 def test_loop_bmad_cli_override_still_wins_over_file(tmp_path, monkeypatch):
     """An explicitly-passed CLI flag overrides the file, even though the file is now the base."""
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     loop_json = tmp_path / "bmad.json"
     loop_json.write_text('{"bmad": {"maxStories": 3}}', encoding="utf-8")
@@ -385,7 +385,7 @@ def test_loop_bmad_cli_override_still_wins_over_file(tmp_path, monkeypatch):
 
 def test_loop_bmad_unknown_loop_json_key_warns(tmp_path, monkeypatch, capsys):
     root = _init_bmad_project(tmp_path)
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     loop_json = tmp_path / "bmad.json"
     loop_json.write_text('{"bmad": {"maxStoriess": 3}}', encoding="utf-8")
@@ -404,7 +404,7 @@ def test_loop_bmad_unknown_loop_json_key_warns(tmp_path, monkeypatch, capsys):
 
 
 def test_loop_bmad_dev_server_argv_honored_from_loop_json(tmp_path):
-    from loop.bmad import driver
+    from orrery_loop.bmad import driver
 
     cfg = driver.BmadConfig.from_loop_json(
         {"bmad": {"projectRoot": "/p", "devServerArgv": ["npm", "run", "dev"]}}

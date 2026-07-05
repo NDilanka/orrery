@@ -1,7 +1,7 @@
-"""Hermetic tests for ``loop.bmad.pr.pr_state`` — the merge-verification wrapper.
+"""Hermetic tests for ``orrery_loop.bmad.pr.pr_state`` — the merge-verification wrapper.
 
-``pr_state`` shells out via :func:`loop.proc.run_with_timeout` (same indirection as
-``create_pr`` / ``merge_pr``). These tests stub ``loop.bmad.pr.proc.run_with_timeout`` with a
+``pr_state`` shells out via :func:`orrery_loop.proc.run_with_timeout` (same indirection as
+``create_pr`` / ``merge_pr``). These tests stub ``orrery_loop.bmad.pr.proc.run_with_timeout`` with a
 fake that records the argv and returns a canned result object exposing ``.stdout`` /
 ``.stderr`` / ``.returncode`` — proving NO real ``gh`` is spawned and NO network is hit.
 """
@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from loop.bmad import pr
+from orrery_loop.bmad import pr
 
 
 class _FakeResult:
-    """Minimal stand-in for ``loop.proc.ProcResult``."""
+    """Minimal stand-in for ``orrery_loop.proc.ProcResult``."""
 
     def __init__(self, *, returncode: int, stdout: str = "", stderr: str = ""):
         self.returncode = returncode

@@ -1,11 +1,11 @@
-"""Coverage for the ``.loop/`` state-file writer IO (:mod:`loop.logio`)."""
+"""Coverage for the ``.loop/`` state-file writer IO (:mod:`orrery_loop.logio`)."""
 
 from __future__ import annotations
 
 import json
 import os
 
-from loop.logio import (
+from orrery_loop.logio import (
     append_event,
     clear_stop_flag,
     consume_answer,

@@ -13,8 +13,8 @@ kill/survive accounting, survivor listing, and ``max_mutants`` cap.
 
 from __future__ import annotations
 
-from loop.gate import run_gate
-from loop.verify import (
+from orrery_loop.gate import run_gate
+from orrery_loop.verify import (
     held_out_green,
     held_out_lock_globs,
     held_out_names,

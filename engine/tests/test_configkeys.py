@@ -1,9 +1,9 @@
-"""Coverage for ``loop.configkeys`` — the shared camel/snake key resolver + unknown-key warner
+"""Coverage for ``orrery_loop.configkeys`` — the shared camel/snake key resolver + unknown-key warner
 used by every ``*_from`` / ``from_loop_json`` config parser (EngineConfig, BmadConfig, QaConfig)."""
 
 from __future__ import annotations
 
-from loop.configkeys import resolve, warn_unknown_keys
+from orrery_loop.configkeys import resolve, warn_unknown_keys
 
 
 def test_resolve_prefers_first_present_key():

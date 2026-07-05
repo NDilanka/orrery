@@ -1,6 +1,6 @@
 """Regression tests for three event-emission PARITY fixes vs ``loop.ps1`` / PROTOCOL §2.
 
-Each test drives :func:`loop.core.run_loop` hermetically (a real temp git repo + a callable
+Each test drives :func:`orrery_loop.core.run_loop` hermetically (a real temp git repo + a callable
 gate + a MockRunner — NO real claude, model, sleep, or network), the same harness style as
 ``tests/test_core.py``. They lock in:
 
@@ -18,8 +18,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from loop import core
-from loop.config import (
+from orrery_loop import core
+from orrery_loop.config import (
     CostConfig,
     EngineConfig,
     GateConfig,
@@ -27,8 +27,8 @@ from loop.config import (
     StopConfig,
     VerifyConfig,
 )
-from loop.core import run_loop
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop.core import run_loop
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 # --- helpers (mirror tests/test_core.py) -----------------------------------
 
