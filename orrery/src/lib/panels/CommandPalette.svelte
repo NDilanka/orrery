@@ -317,7 +317,7 @@
   }
 </script>
 
-<div class="scrim" role="presentation" onclick={onClose}>
+<div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
   <div
     class="palette floating-card"
     role="dialog"
@@ -325,7 +325,6 @@
     aria-label="Command palette"
     tabindex="-1"
     use:focusTrap={{ onClose, initialFocus: () => inputEl }}
-    onclick={(e) => e.stopPropagation()}
   >
     <div class="inputrow">
       <span class="prefix mono" aria-hidden="true">{kbdChip}</span>
@@ -359,6 +358,7 @@
             class:disabled={r.disabled}
             onmouseenter={() => (selectedIndex = i)}
             onclick={() => execute(r)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); execute(r); } }}
           >
             <span class="rlabel">{r.label}</span>
             {#if r.hint}<span class="rhint mono">{r.hint}</span>{/if}

@@ -27,6 +27,14 @@ also supported), and a gate command your project already has (`pytest`, `bun tes
 | `loop-stop` | cooperative safe-stop controller (request a clean stop at the next checkpoint) |
 | `loop-supervise` | restart-on-failure wrapper for any of the above (thrash-guarded; see below) |
 
+If the `loop` script name is shadowed on your `PATH` (another tool ships a `loop` binary, or
+the venv's `bin`/`Scripts` isn't first), run the generic loop via its module entry point
+instead — it's the same `main()` the console script calls:
+
+```bash
+python -m orrery_loop --help     # identical usage/behavior to `loop`
+```
+
 ```bash
 # from the repo root (the example lives at the repo-root examples/hello, not under engine/)
 # — fix the bundled example (dry-run spends nothing):
