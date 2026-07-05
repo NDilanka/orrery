@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from loop.memory import (
+from orrery_loop.memory import (
     FileMemoryStore,
     Lesson,
     MemoryStore,
     NullMemoryStore,
 )
-from loop.memory.store import score_lesson, _tokens
+from orrery_loop.memory.store import score_lesson, _tokens
 
 # A fixed reference clock so every test is deterministic.
 DAY = 24 * 3600.0

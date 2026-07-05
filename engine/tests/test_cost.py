@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loop.cost import update_cost_alert
+from orrery_loop.cost import update_cost_alert
 
 
 def test_crossing_thresholds_across_calls_fires_each_once():

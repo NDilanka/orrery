@@ -1,6 +1,6 @@
 """ClaudeRunner + registry tests.
 
-NO real ``claude`` is ever spawned: every test monkeypatches ``loop.runners.claude.proc``
+NO real ``claude`` is ever spawned: every test monkeypatches ``orrery_loop.runners.claude.proc``
 with a fake whose ``run_with_timeout`` returns a canned :class:`ProcResult`, then asserts the
 runner builds the right argv and parses the result correctly.
 """
@@ -13,14 +13,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from loop import quota
-from loop.runners import ClaudeRunner, get_runner
-from loop.runners.base import AgentRunner
+from orrery_loop import quota
+from orrery_loop.runners import ClaudeRunner, get_runner
+from orrery_loop.runners.base import AgentRunner
 
 
 @dataclass
 class FakeProcResult:
-    """Mirrors loop.proc.ProcResult for the monkeypatched proc layer."""
+    """Mirrors orrery_loop.proc.ProcResult for the monkeypatched proc layer."""
 
     returncode: int = 0
     stdout: str = ""
@@ -44,7 +44,7 @@ class FakeProc:
 
 def _patch_proc(monkeypatch, result: FakeProcResult) -> FakeProc:
     fake = FakeProc(result)
-    monkeypatch.setattr("loop.runners.claude.proc", fake)
+    monkeypatch.setattr("orrery_loop.runners.claude.proc", fake)
     return fake
 
 

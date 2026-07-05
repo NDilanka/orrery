@@ -1,6 +1,6 @@
 """Coverage for ``compute_metrics`` — run-quality metrics from the event stream.
 
-Three trajectories (built from the real :mod:`loop.events` builders where possible):
+Three trajectories (built from the real :mod:`orrery_loop.events` builders where possible):
   * green on iter 1 -> first_try_green True, iters_to_green 1,
   * green on iter 3 with one rollback -> first_try_green False, iters_to_green 3,
     rollbacks 1, regression_rate = 1/3,
@@ -11,13 +11,13 @@ Also exercises purity / tolerance of missing fields.
 
 from __future__ import annotations
 
-from loop.events import (
+from orrery_loop.events import (
     handoff_event,
     iter_event,
     rollback_event,
     stop_event,
 )
-from loop.metrics import compute_metrics
+from orrery_loop.metrics import compute_metrics
 
 
 def _iter(idx, *, cum, action="continue", pass_=0, total=0):

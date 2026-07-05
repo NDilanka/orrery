@@ -1,4 +1,4 @@
-"""Coverage for ``loop.qa.manifest`` — the AC-oracle parser.
+"""Coverage for ``orrery_loop.qa.manifest`` — the AC-oracle parser.
 
 Hermetic: synthesises a tiny story tree in ``tmp_path`` (an em-dash AC header, a
 status line, a Tasks section that must be excluded) and asserts identity + AC
@@ -7,7 +7,7 @@ extraction + epic grouping, plus that non-story files are ignored.
 
 from __future__ import annotations
 
-from loop.qa.manifest import build_manifest, parse_story_file
+from orrery_loop.qa.manifest import build_manifest, parse_story_file
 
 STORY_21 = """---
 baseline_commit: deadbeef

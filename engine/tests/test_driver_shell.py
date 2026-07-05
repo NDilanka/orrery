@@ -1,4 +1,4 @@
-"""Coverage for ``loop.driver_shell`` — the shared lock/checkpoint/STOP lifecycle every driver
+"""Coverage for ``orrery_loop.driver_shell`` — the shared lock/checkpoint/STOP lifecycle every driver
 (``loop`` / ``loop-bmad`` / ``loop-qa``) now runs inside (Task 1, wave A2)."""
 
 from __future__ import annotations
@@ -7,8 +7,8 @@ import json
 import os
 from pathlib import Path
 
-from loop import lockfile
-from loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
+from orrery_loop import lockfile
+from orrery_loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
 
 
 def test_run_driver_creates_state_dir_and_calls_body(tmp_path):

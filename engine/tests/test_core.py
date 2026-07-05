@@ -1,4 +1,4 @@
-"""Hermetic integration tests for :func:`loop.core.run_loop` — the engine WIRING proof.
+"""Hermetic integration tests for :func:`orrery_loop.core.run_loop` — the engine WIRING proof.
 
 NO real ``claude`` and NO real model: a ``MockRunner`` edits a target file in a real temp git
 repo, and the gate is a CALLABLE stage that reads that file. This proves the already-built pure
@@ -18,8 +18,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from loop import core
-from loop.config import (
+from orrery_loop import core
+from orrery_loop.config import (
     CostConfig,
     EngineConfig,
     GateConfig,
@@ -27,8 +27,8 @@ from loop.config import (
     StopConfig,
     VerifyConfig,
 )
-from loop.core import run_loop
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop.core import run_loop
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 # --- helpers ---------------------------------------------------------------
@@ -280,7 +280,7 @@ def test_concurrency_lock_refuses_second_run(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 5 — checkpoint resume-command fidelity (loop.core._resume_command)
+# Task 5 — checkpoint resume-command fidelity (orrery_loop.core._resume_command)
 # ---------------------------------------------------------------------------
 
 

@@ -1,6 +1,6 @@
 """CodexRunner tests.
 
-NO real ``codex`` is ever spawned: every test monkeypatches ``loop.runners.codex.proc`` with a
+NO real ``codex`` is ever spawned: every test monkeypatches ``orrery_loop.runners.codex.proc`` with a
 fake whose ``run_with_timeout`` returns a canned :class:`ProcResult`, then asserts the runner
 builds the right argv and normalizes Codex's text output correctly.
 """
@@ -11,13 +11,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from loop.runners import ClaudeRunner, CodexRunner, get_runner
-from loop.runners.base import AgentRunner
+from orrery_loop.runners import ClaudeRunner, CodexRunner, get_runner
+from orrery_loop.runners.base import AgentRunner
 
 
 @dataclass
 class FakeProcResult:
-    """Mirrors loop.proc.ProcResult for the monkeypatched proc layer."""
+    """Mirrors orrery_loop.proc.ProcResult for the monkeypatched proc layer."""
 
     returncode: int = 0
     stdout: str = ""
@@ -41,7 +41,7 @@ class FakeProc:
 
 def _patch_proc(monkeypatch, result: FakeProcResult) -> FakeProc:
     fake = FakeProc(result)
-    monkeypatch.setattr("loop.runners.codex.proc", fake)
+    monkeypatch.setattr("orrery_loop.runners.codex.proc", fake)
     return fake
 
 

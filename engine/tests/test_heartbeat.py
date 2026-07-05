@@ -1,4 +1,4 @@
-"""Tests for the liveness heartbeat (``loop.heartbeat``).
+"""Tests for the liveness heartbeat (``orrery_loop.heartbeat``).
 
 No real git, no real wall-clock waits where avoidable: the clock, timestamp and dirty-count are
 injected so the payload is deterministic; the thread loop is exercised with a tiny interval.
@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from loop.heartbeat import Heartbeat, write_activity
+from orrery_loop.heartbeat import Heartbeat, write_activity
 
 
 def _read(path: Path) -> dict:

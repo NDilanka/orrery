@@ -1,4 +1,4 @@
-"""Golden parity test for ``loop.events`` builders.
+"""Golden parity test for ``orrery_loop.events`` builders.
 
 Loads ``fixtures/golden_events.jsonl`` (generated from the authoritative PowerShell
 ``loopcore.ps1`` via ``gen_golden.ps1``) and, for each case, calls the matching Python
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from loop import events
+from orrery_loop import events
 
 FIXTURE = Path(__file__).parent / "fixtures" / "golden_events.jsonl"
 

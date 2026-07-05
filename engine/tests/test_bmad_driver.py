@@ -1,4 +1,4 @@
-"""Hermetic tests for the BMAD multi-story DRIVER (``loop.bmad.driver``).
+"""Hermetic tests for the BMAD multi-story DRIVER (``orrery_loop.bmad.driver``).
 
 Everything external is injected or stubbed so the orchestration runs with NO network and NO
 real ``claude``:
@@ -6,7 +6,7 @@ real ``claude``:
 - a temp git repo is the "project" (with ``_bmad-output/implementation-artifacts/
   sprint-status.yaml`` + a story ``.md``);
 - a ``MockRunner`` returns canned ``AgentResult``s and records every ``run()`` call;
-- ``loop.bmad.pr.create_pr`` / ``merge_pr`` are monkeypatched (asserting NO real ``gh``);
+- ``orrery_loop.bmad.pr.create_pr`` / ``merge_pr`` are monkeypatched (asserting NO real ``gh``);
 - the dev server is a ``FakeServer`` injected by monkeypatching ``phases.DevServer``;
 - the gate stages are CALLABLE hooks (no ``bun``);
 - the recovery git predicate is stubbed where a ``done``-but-unmerged story is exercised.
@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 from conftest import REPO_ROOT
 
-from loop import lockfile
-from loop.bmad import driver, pr, recovery
-from loop.bmad import phases as phases_mod
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop import lockfile
+from orrery_loop.bmad import driver, pr, recovery
+from orrery_loop.bmad import phases as phases_mod
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ def _patch_externals(monkeypatch, *, pr_calls: dict):
     monkeypatch.setattr(pr, "merge_pr", fake_merge)
     monkeypatch.setattr(pr, "pr_state", fake_state)
     # Neutralize the real `git push` so the temp repo (no remote) doesn't error/stall.
-    from loop.bmad import driver as drv
+    from orrery_loop.bmad import driver as drv
 
     real_git = drv.gitutil._git
 
@@ -530,7 +530,7 @@ def test_concurrency_guard_refuses_when_lock_live(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
     # a live lock owned by a DIFFERENT (live) process -> refuse with 2. The shared lockfile
-    # (loop.lockfile) uses ONE filename ("lock") for every driver now — "bmad-lock" is retired.
+    # (orrery_loop.lockfile) uses ONE filename ("lock") for every driver now — "bmad-lock" is retired.
     other_pid = __import__("os").getpid() + 1
     (state / "lock").write_text(str(other_pid), encoding="utf-8")
     monkeypatch.setattr(lockfile, "pid_alive", lambda pid: True)
@@ -585,7 +585,7 @@ class QuotaOnceRunner(AgentRunner):
         return self._real
 
     def probe_quota(self):
-        from loop.runners.base import QuotaStatus
+        from orrery_loop.runners.base import QuotaStatus
 
         self.probes += 1
         return QuotaStatus(limited=False)
@@ -970,7 +970,7 @@ def test_quota_limited_phase_completes_in_driver(tmp_path, monkeypatch):
             return self._queue.pop(0)
 
         def probe_quota(self):
-            from loop.runners.base import QuotaStatus
+            from orrery_loop.runners.base import QuotaStatus
 
             return QuotaStatus(limited=False)
 
@@ -1022,7 +1022,7 @@ def test_is_unmerged_done_true_for_clean_descendant(tmp_path):
     _git(root, "commit", "-q", "-m", "wip")
     _git(root, "checkout", "develop")
 
-    from loop.bmad.sprint import Story
+    from orrery_loop.bmad.sprint import Story
 
     story = Story(key="2-1-capture", status="done", raw_status="done", epic="2", index=0)
     assert recovery.is_unmerged_done(story, repo=root, merge_base="develop") is True
@@ -1030,7 +1030,7 @@ def test_is_unmerged_done_true_for_clean_descendant(tmp_path):
 
 def test_is_unmerged_done_false_when_no_branch(tmp_path):
     root = _init_project(tmp_path, ONE_DONE)
-    from loop.bmad.sprint import Story
+    from orrery_loop.bmad.sprint import Story
 
     story = Story(key="2-1-capture", status="done", raw_status="done", epic="2", index=0)
     assert recovery.is_unmerged_done(story, repo=root, merge_base="develop") is False
@@ -1038,7 +1038,7 @@ def test_is_unmerged_done_false_when_no_branch(tmp_path):
 
 def test_is_unmerged_done_false_for_non_done(tmp_path):
     root = _init_project(tmp_path, ONE_READY)
-    from loop.bmad.sprint import Story
+    from orrery_loop.bmad.sprint import Story
 
     story = Story(key="2-1-capture", status="ready", raw_status="ready-for-dev", epic="2", index=0)
     assert recovery.is_unmerged_done(story, repo=root, merge_base="develop") is False
@@ -1437,7 +1437,7 @@ def test_is_flaky_shape_classification():
 
 
 def _patch_run_gate(monkeypatch, results):
-    """Stub loop.gate.run_gate to yield `results` in order (repeating the last)."""
+    """Stub orrery_loop.gate.run_gate to yield `results` in order (repeating the last)."""
     calls = {"n": 0}
 
     def fake(stages, cwd, fail_fast=False):
@@ -1445,7 +1445,7 @@ def _patch_run_gate(monkeypatch, results):
         calls["n"] += 1
         return results[idx]
 
-    monkeypatch.setattr("loop.gate.run_gate", fake)
+    monkeypatch.setattr("orrery_loop.gate.run_gate", fake)
     return calls
 
 

@@ -1,8 +1,8 @@
-"""Coverage for the shared single-flight lockfile (:mod:`loop.lockfile`) — Task 4.
+"""Coverage for the shared single-flight lockfile (:mod:`orrery_loop.lockfile`) — Task 4.
 
-``loop.core`` and ``loop.bmad.driver`` used to each duplicate this pid-lockfile logic under
+``orrery_loop.core`` and ``orrery_loop.bmad.driver`` used to each duplicate this pid-lockfile logic under
 DIFFERENT filenames ("lock" vs "bmad-lock"), so the two drivers could race the same state dir
-undetected. This module is the single, shared implementation both (and ``loop.qa.discover``)
+undetected. This module is the single, shared implementation both (and ``orrery_loop.qa.discover``)
 now use.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from loop import lockfile
+from orrery_loop import lockfile
 
 
 def test_acquire_writes_own_pid_when_no_lock_exists(tmp_path):

@@ -1,4 +1,4 @@
-"""Wire-contract tests for the BMAD-adapter event builders in ``loop.events``.
+"""Wire-contract tests for the BMAD-adapter event builders in ``orrery_loop.events``.
 
 For each builder we assert:
   - the ``event`` name string,
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from loop import events
+from orrery_loop import events
 
 # Real bmad-loop.ps1 output, used to cross-check exact field shapes.
 FIXTURE = (
@@ -33,13 +33,13 @@ FIXTURE = (
 def _fixture_lines() -> list[dict]:
     """Fixture records, with the write-time ``_t`` stamp stripped.
 
-    ``_t`` (epoch ms) is stamped by ``loop.logio.append_event`` at WRITE time (PROTOCOL.md
+    ``_t`` (epoch ms) is stamped by ``orrery_loop.logio.append_event`` at WRITE time (PROTOCOL.md
     §2's real-event-time note) — it's orthogonal to the event BUILDER's own shape this file
     checks (the wire contract: field names, renames, omit-when-None). This fixture is
     shared with the Rust/TS reducer tests, which DO want a real ``_t`` on every line to
     exercise real-time honoring (`orrery/src-tauri` golden parity); stripping it here
     (Python-side only, a read-time normalization) keeps the builder-vs-fixture key-set
-    comparisons below focused on fields ``loop.events`` itself produces.
+    comparisons below focused on fields ``orrery_loop.events`` itself produces.
     """
     out: list[dict] = []
     for line in FIXTURE.read_text(encoding="utf-8").splitlines():

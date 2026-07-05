@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import textwrap
 
-from loop.bmad.sprint import (
+from orrery_loop.bmad.sprint import (
     Story,
     epic_done,
     epic_scope,

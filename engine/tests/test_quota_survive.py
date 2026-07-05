@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from loop.quota import QuotaStatus, get_quota_wait_sec, survive
+from orrery_loop.quota import QuotaStatus, get_quota_wait_sec, survive
 
 # Fixed clock so wait arithmetic is deterministic.
 NOW = datetime(2026, 6, 20, 10, 0, 0)

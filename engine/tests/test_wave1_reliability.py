@@ -17,12 +17,12 @@ import json
 import subprocess
 from pathlib import Path
 
-from loop.bmad import driver
-from loop.bmad import phases as phases_mod
-from loop.bmad.decider import retro_decider, review_decider
-from loop.bmad.driver import BmadConfig, ResilientRunner
-from loop.bmad import pr
-from loop.runners.base import AgentResult, AgentRunner, QuotaStatus
+from orrery_loop.bmad import driver
+from orrery_loop.bmad import phases as phases_mod
+from orrery_loop.bmad.decider import retro_decider, review_decider
+from orrery_loop.bmad.driver import BmadConfig, ResilientRunner
+from orrery_loop.bmad import pr
+from orrery_loop.runners.base import AgentResult, AgentRunner, QuotaStatus
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ def test_decider_timeout_round_trips_in_resume_command(tmp_path):
 def test_driver_threads_finite_decider_timeout_into_retro(monkeypatch):
     # The retro Q&A loop must hand retro_decider a FINITE timeout so a wedged decider can't hang
     # the phase. Drive one QUESTION turn and assert the decider's own run() carried the timeout.
-    from loop.bmad import driver as drv
+    from orrery_loop.bmad import driver as drv
 
     cfg = BmadConfig(project_root="/p", decider_timeout_min=4, max_retro_turns=3)
     # facilitator emits a QUESTION on turn 1, then RETRO_COMPLETE on turn 2; the decider answers
@@ -153,7 +153,7 @@ def test_code_review_decider_partial_forwards_timeout():
 
 
 def test_probe_quota_uses_finite_timeout(monkeypatch):
-    from loop.runners import claude as claude_mod
+    from orrery_loop.runners import claude as claude_mod
 
     seen: dict = {}
 
@@ -177,7 +177,7 @@ def test_probe_quota_uses_finite_timeout(monkeypatch):
 
 
 def test_probe_quota_timeout_reports_still_limited(monkeypatch):
-    from loop.runners import claude as claude_mod
+    from orrery_loop.runners import claude as claude_mod
 
     class _R:
         returncode = -1
@@ -195,7 +195,7 @@ def test_probe_quota_timeout_reports_still_limited(monkeypatch):
 
 
 def test_probe_quota_clean_response_not_limited(monkeypatch):
-    from loop.runners import claude as claude_mod
+    from orrery_loop.runners import claude as claude_mod
 
     class _R:
         returncode = 0
@@ -408,7 +408,7 @@ def _patch_externals(monkeypatch):
     monkeypatch.setattr(pr, "create_pr", lambda **k: "https://example.test/pr")
     monkeypatch.setattr(pr, "merge_pr", lambda **k: "merged")
     monkeypatch.setattr(pr, "pr_state", lambda **k: "MERGED")
-    from loop.bmad import driver as drv
+    from orrery_loop.bmad import driver as drv
 
     real_git = drv.gitutil._git
 

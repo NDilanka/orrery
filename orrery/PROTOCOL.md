@@ -34,7 +34,7 @@ Every object has a string `event`. **Core** events any loop should emit; **BMAD*
 superset the `bmad` adapter understands. Unknown events are logged but ignored by the reducer.
 All numeric costs are USD. Timestamps are ISO-8601 strings unless noted. The Python engine
 additionally stamps a numeric `_t` (ms since epoch) onto EVERY event line at write time
-(`loop.logio.append_event`, unless the caller already set one) — the real-time wire convention
+(`orrery_loop.logio.append_event`, unless the caller already set one) — the real-time wire convention
 both reducers honor per rule 4 in §4; this is what gives a LIVE run its real "running 2h" /
 "5m ago" durations instead of synthesized `index × 1000` time.
 
@@ -70,7 +70,7 @@ fully backward-compatible.
 { "event": "metrics", "firstTryGreen": bool, "itersToGreen": int|null, "costToGreen": float|null,
   "rollbacks": int, "regressionRate": float, "totalIters": int, "totalCost": float, "finalGreen": bool }
 // emitted ONCE at stop when engine.metrics.emit is on; a run-quality fold of the event stream
-// (loop.metrics.compute_metrics). first-try-green + iters/cost-to-green replace pass@k for loops.
+// (orrery_loop.metrics.compute_metrics). first-try-green + iters/cost-to-green replace pass@k for loops.
 // Idempotent (last write wins) — safe even if an engine emits it repeatedly (e.g. every iter)
 // instead of once at stop: each event is a full recomputed snapshot, never a partial merge.
 
@@ -398,7 +398,7 @@ should fold the block into `loop.json`.
 **Key casing.** The wire convention is `camelCase`, and every engine config parser also accepts
 the `snake_case` equivalent of each key (`gateStages`/`gate_stages`, `maxIters`/`max_iters`, …) —
 both spellings are first-class. An UNRECOGNIZED key in an engine block is not silently dropped:
-the parser prints a stderr warning naming it (`loop.configkeys.warn_unknown_keys`), so typos are
+the parser prints a stderr warning naming it (`orrery_loop.configkeys.warn_unknown_keys`), so typos are
 loud instead of invisible.
 
 **Gate semantics (and the removed `greenWhen`).** A stage passes when its command exits `0`; the

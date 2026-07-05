@@ -11,8 +11,8 @@ prove a skipped stage's command was never launched.
 
 from __future__ import annotations
 
-from loop.config import GateConfig, from_loop_json
-from loop.gate import run_gate
+from orrery_loop.config import GateConfig, from_loop_json
+from orrery_loop.gate import run_gate
 
 
 def _counting_stage(name: str, exit_code: int, ran: list[str], text: str = ""):
@@ -136,7 +136,7 @@ def test_skipped_test_stage_does_not_feed_floor_or_flaky_logic():
     """A skipped ``test`` stage contributes NO counts: gate fail/total stay 0 (zero-safe for the
     core count-drop floor), and BMAD's _is_flaky_shape reads fail==0 -> NOT flaky (no wasted
     retries; the red gate is reported at once because the real failure was ``lint``)."""
-    from loop.bmad.driver import _is_flaky_shape
+    from orrery_loop.bmad.driver import _is_flaky_shape
 
     ran: list[str] = []
     stages = [

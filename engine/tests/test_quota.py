@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from loop.quota import (
+from orrery_loop.quota import (
     get_quota_wait_sec,
     resolve_quota_status,
     test_quota_limited_text as is_quota_limited_text,

@@ -19,15 +19,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from loop import core
-from loop.bmad import driver
-from loop.bmad.sprint import Story
-from loop.config import CostConfig, EngineConfig, GateConfig, GateStage, StopConfig, from_loop_json
-from loop.core import run_loop
-from loop.qa.discover import QaConfig
-from loop.resilient import ResilientRunner
-from loop.runners import get_runner
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop import core
+from orrery_loop.bmad import driver
+from orrery_loop.bmad.sprint import Story
+from orrery_loop.config import CostConfig, EngineConfig, GateConfig, GateStage, StopConfig, from_loop_json
+from orrery_loop.core import run_loop
+from orrery_loop.qa.discover import QaConfig
+from orrery_loop.resilient import ResilientRunner
+from orrery_loop.runners import get_runner
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ class FakeProc:
 
 def _patch_proc(monkeypatch, result: FakeProcResult) -> FakeProc:
     fake = FakeProc(result)
-    monkeypatch.setattr("loop.runners.claude.proc", fake)
+    monkeypatch.setattr("orrery_loop.runners.claude.proc", fake)
     return fake
 
 
@@ -124,7 +124,7 @@ def test_claude_argv_omits_fallback_model_when_empty(monkeypatch):
 def test_aider_and_codex_accept_and_ignore_fallback_model(monkeypatch):
     for name in ("aider", "codex"):
         fake = FakeProc(FakeProcResult(stdout="done", returncode=0))
-        monkeypatch.setattr(f"loop.runners.{name}.proc", fake)
+        monkeypatch.setattr(f"orrery_loop.runners.{name}.proc", fake)
         # Must not raise; the flag never appears in the (non-claude) argv.
         res = get_runner(name).run(
             prompt="P", model="sonnet", allowed_tools=[], permission_mode="plan",

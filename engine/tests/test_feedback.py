@@ -1,4 +1,4 @@
-"""Coverage for compact failure-feedback extraction (``loop.feedback``).
+"""Coverage for compact failure-feedback extraction (``orrery_loop.feedback``).
 
 The SWE-agent / Self-Debug insight under test: from a noisy multi-line runner log, pull only
 the FIRST failure — its test/symbol, its assertion message, and a ``file:line`` — bounded to
@@ -11,7 +11,7 @@ slices the FIRST failing stage's section and stays silent when the gate is green
 
 from __future__ import annotations
 
-from loop.feedback import compact_feedback, extract_first_failure
+from orrery_loop.feedback import compact_feedback, extract_first_failure
 
 # ---- captured-ish runner outputs -----------------------------------------------------
 

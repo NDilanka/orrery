@@ -13,8 +13,8 @@ Each capability can be enabled two ways:
 - a **`loop.json`** `engine.*` key (camelCase on the wire — see PROTOCOL §7), or
 - a **CLI flag** on `loop` (the flag overrides the JSON).
 
-The flag surface lives in `engine/loop/cli.py`; the config keys in
-`engine/loop/config.py`.
+The flag surface lives in `engine/orrery_loop/cli.py`; the config keys in
+`engine/orrery_loop/config.py`.
 
 ---
 
@@ -46,7 +46,7 @@ checks. A held-out suite removes the surface to overfit to.
 ```
 
 No dedicated CLI flag — it is a property of the gate stage (`heldOut` /
-`held_out`). Implemented in `engine/loop/verify.py` (`held_out_green`,
+`held_out`). Implemented in `engine/orrery_loop/verify.py` (`held_out_green`,
 `visible_feedback_raw`, `held_out_lock_globs`).
 
 ---
@@ -74,7 +74,7 @@ noise.
 loop --compact-feedback ...
 ```
 
-Implemented in `engine/loop/feedback.py` (`extract_first_failure`,
+Implemented in `engine/orrery_loop/feedback.py` (`extract_first_failure`,
 `compact_feedback`; dialects: pytest, bun test, vitest, jest, go test).
 
 ---
@@ -105,7 +105,7 @@ totals; counts come from the last stage that reports any.
 }
 ```
 
-Implemented in `engine/loop/gate.py` (multi-stage `run_gate`; exit-code-is-truth).
+Implemented in `engine/orrery_loop/gate.py` (multi-stage `run_gate`; exit-code-is-truth).
 
 ---
 
@@ -134,7 +134,7 @@ loop --memory                 # enable, default path <state-dir>/memory.jsonl
 loop --memory path/to.jsonl   # enable with an explicit path
 ```
 
-Implemented in `engine/loop/memory/store.py` (`FileMemoryStore`,
+Implemented in `engine/orrery_loop/memory/store.py` (`FileMemoryStore`,
 `NullMemoryStore`, `Lesson`).
 
 ---
@@ -164,7 +164,7 @@ loop --mutation-audit ...
 
 `mutationEvery` throttles it (run only every Nth green iteration; `0`/`1` = every
 green iter). Emits an additive `mutation` event with the score. Implemented in
-`engine/loop/verify.py` (`mutation_audit`).
+`engine/orrery_loop/verify.py` (`mutation_audit`).
 
 > Related (separate flag): the **anti-false-green verifier** — a second,
 > independent cheap-tier judge that sees only the diff + a frozen
@@ -201,7 +201,7 @@ loop --emit-metrics ...
 
 Emits a single `metrics` event at stop with `firstTryGreen`, `itersToGreen`,
 `costToGreen`, `rollbacks`, `regressionRate`, `totalIters`, `totalCost`,
-`finalGreen` (PROTOCOL §2). Implemented in `engine/loop/metrics.py`
+`finalGreen` (PROTOCOL §2). Implemented in `engine/orrery_loop/metrics.py`
 (`compute_metrics`).
 
 ---

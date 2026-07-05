@@ -7,7 +7,7 @@ and the consecutive-fail reset/recover/handoff transitions).
 
 from __future__ import annotations
 
-from loop.decide import decide, floor_breach, update_consecutive_fail
+from orrery_loop.decide import decide, floor_breach, update_consecutive_fail
 
 
 def D(**over):
@@ -168,7 +168,7 @@ def test_recover_and_handoff_mutually_exclusive():
 
 
 # ---------------------------------------------------------------------------
-# floor_breach — the shared regression-floor decision (Task 2, loop.bmad.driver's
+# floor_breach — the shared regression-floor decision (Task 2, orrery_loop.bmad.driver's
 # dev-gate / post-review / post-smoke boundaries all call this ONE pure function now).
 # ---------------------------------------------------------------------------
 

@@ -21,11 +21,11 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from loop import cli
-from loop.bmad import driver, pr
-from loop.bmad import phases as phases_mod
-from loop.bmad.sprint import Story
-from loop.runners.base import AgentResult, AgentRunner
+from orrery_loop import cli
+from orrery_loop.bmad import driver, pr
+from orrery_loop.bmad import phases as phases_mod
+from orrery_loop.bmad.sprint import Story
+from orrery_loop.runners.base import AgentResult, AgentRunner
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import sys
 
-from loop.gate import parse_counts, run_gate, strip_ansi
+from orrery_loop.gate import parse_counts, run_gate, strip_ansi
 
 # ---- captured sample outputs from real runners (from selftest-gate.ps1) -------------
 
@@ -128,7 +128,7 @@ def test_default_gate_pattern_reads_passed_count_when_a_test_fails():
     vitest reorders its summary to "<f> failed | <p> passed". The old strict
     ``Tests\\s+(\\d+)\\s+passed`` read 0 here and turned one flaky test into a false
     "812->0 regression" halt (real-project story 6-2, 2026-06-25)."""
-    from loop.bmad.driver import DEFAULT_GATE_STAGES
+    from orrery_loop.bmad.driver import DEFAULT_GATE_STAGES
 
     test_stage = next(s for s in DEFAULT_GATE_STAGES if s["name"] == "test")
     r = parse_counts(
