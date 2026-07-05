@@ -45,6 +45,15 @@ orrery/loops/**/HANDOFF.md
 
 # Local screenshot dumps from the orrery UI harness
 orrery/shots-*/
+orrery/timelapse-*/
+
+# Local BMAD method scaffolding + artifacts (dogfood runs drive THIS repo with
+# loop-bmad; the driver commits with `git add -A`, so run-local files must be
+# ignored or they'd land in story PRs)
+/_bmad/
+/_bmad-output/
+/.claude/
+orrery/loops/self/
 
 # Playwright (orrery e2e) artifacts
 test-results/
