@@ -6,6 +6,31 @@ changes between minor versions.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-05
+
+### Added — you no longer build from source
+- **Prebuilt binaries**: pushing a `v*` tag builds Tauri bundles for Windows
+  (`.msi` + `-setup.exe`), macOS (`.dmg`, arm64 + x64), and Linux
+  (`.AppImage` / `.deb` / `.rpm`) and attaches them to a draft GitHub release
+  (`.github/workflows/release.yml`). macOS builds are unsigned — right-click →
+  Open, or `xattr -cr /Applications/orrery.app`.
+- **Engine on PyPI**: `pip install orrery-loop` installs the engine standalone
+  (headless loops, no desktop app). Published via OIDC trusted publishing on
+  `engine-v*` tags (`.github/workflows/publish-pypi.yml`) — no stored token.
+
+### Changed — Python import package renamed `loop` → `orrery_loop`
+- Collision-proofs the PyPI distribution; ~200 imports, module-string refs
+  (monkeypatch targets, entry points), and docs rewritten. **Console-script
+  names are unchanged** (`loop`, `loop-stop`, `loop-bmad`, `loop-qa`,
+  `loop-supervise`) — existing seeds and orrery's engine resolution keep
+  working with zero changes. Filenames like `loop.json` are untouched.
+
+### Added — community floor
+- `ROADMAP.md`, `.github/CODEOWNERS`, GitHub Discussions enabled, a
+  support-posture note in CONTRIBUTING (best-effort personal project), branch
+  protection on `main` (CI required, linear history), and a first batch of
+  `good first issue`s (#10–#17).
+
 ## [0.2.0] — 2026-07-03
 
 ### Changed — open-source restructure
@@ -179,4 +204,6 @@ First public release: a cross-platform Python loop engine plus the Orrery visual
 - Cross-run lessons-memory is not yet surfaced in the visualizer (needs a new protocol event).
 - No published benchmark yet (e.g. SWE-bench) — roadmap.
 
+[0.3.0]: https://github.com/NDilanka/orrery/releases/tag/v0.3.0
+[0.2.0]: https://github.com/NDilanka/orrery/releases/tag/v0.2.0
 [0.1.0]: https://github.com/NDilanka/orrery/releases/tag/v0.1.0
