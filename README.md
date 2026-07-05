@@ -67,6 +67,9 @@ Requires a [Rust toolchain](https://rustup.rs) (the Tauri CLI ships as a devDepe
 
 ### The engine, standalone
 
+For a terminal-only path that does not start the desktop app, see
+[`docs/headless-quickstart.md`](docs/headless-quickstart.md).
+
 ```bash
 pip install orrery-loop           # from PyPI (Python ≥ 3.10; deps are just psutil + pyyaml)
 # …or, working from a checkout:
