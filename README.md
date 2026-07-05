@@ -19,6 +19,29 @@ Orrery is a desktop app (Tauri v2 + Svelte 5 + PixiJS) for running coding agents
 | ![Observatory view: one loop's instruments, gate state, and cost horizon](docs/assets/observatory.png) | ![Cosmos view: every loop as a star system](docs/assets/cosmos.png) |
 | ![Tuning Console: author a loop.json in the app](docs/assets/tuning-console.png) | ![Cosmos on a phone via the LAN server](docs/assets/cosmos-mobile.png) |
 
+## Install
+
+Prebuilt bundles ship with every release — grab one from the
+[latest release](https://github.com/NDilanka/orrery/releases/latest) (currently v0.3.0):
+
+| OS | Download |
+|---|---|
+| **Windows** | `orrery_0.3.0_x64_en-US.msi` (or `orrery_0.3.0_x64-setup.exe`) |
+| **macOS** | `orrery_0.3.0_aarch64.dmg` (Apple Silicon) · `orrery_0.3.0_x64.dmg` (Intel) |
+| **Linux** | `orrery_0.3.0_amd64.AppImage` (portable) · `.deb` · `.rpm` |
+
+> **macOS:** the builds are unsigned, so Gatekeeper will balk the first time.
+> Right-click the app → **Open** (once), or clear the quarantine flag:
+> `xattr -cr /Applications/orrery.app`
+
+The installed app replays bundled fixtures with no further setup. To **ignite real
+loops** from it, also install the engine so the `loop-*` commands are findable
+(the app checks a `.venv` near your loops directory, then your PATH):
+
+```bash
+pip install orrery-loop
+```
+
 ## Try it in 30 seconds
 
 No Rust, no Python, no API cost — the browser build replays recorded runs:
@@ -45,7 +68,9 @@ Requires a [Rust toolchain](https://rustup.rs) (the Tauri CLI ships as a devDepe
 ### The engine, standalone
 
 ```bash
-pip install -e "./engine[dev]"    # Python ≥ 3.10; deps are just psutil + pyyaml ([dev] adds pytest, which the example's gate runs)
+pip install orrery-loop           # from PyPI (Python ≥ 3.10; deps are just psutil + pyyaml)
+# …or, working from a checkout:
+pip install -e "./engine[dev]"    # [dev] adds pytest, which the example's gate runs
 
 # dry-run the bundled example — runs the gate once, calls no agent, spends nothing:
 loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examples/hello/.loop --dry-run
