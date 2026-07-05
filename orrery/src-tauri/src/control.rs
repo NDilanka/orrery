@@ -634,7 +634,7 @@ fn guard_tokens(def: &LoopDef) -> Vec<String> {
     // both pass this scan) for never producing a false-positive block — and the false-negative is
     // caught downstream anyway: the Python engine holds its own authoritative pid lockfile in the
     // state dir and exits with code 2 when another instance already holds it
-    // (engine/loop/core.py `_acquire_lock`; the BMAD driver does the equivalent), so a duplicate
+    // (engine/orrery_loop/core.py `_acquire_lock`; the BMAD driver does the equivalent), so a duplicate
     // spawn fails fast there. A false-positive "AlreadyRunning" here has no such downstream
     // recovery — it just silently blocks the user, which is the historically worse failure mode.
     // The per-loop-id lock in `start_with_spec` (`loop_lock`/`LOOP_LOCKS`) separately closes the

@@ -173,7 +173,7 @@ export interface CacheState {
 }
 
 // §2 engine-v3 `metrics` event — a run-quality fold of the event stream
-// (loop.metrics.compute_metrics). camelCase on the wire; null until a metrics
+// (orrery_loop.metrics.compute_metrics). camelCase on the wire; null until a metrics
 // event is seen. first-try-green + iters/cost-to-green replace pass@k for loops.
 export interface Metrics {
   firstTryGreen: boolean;
