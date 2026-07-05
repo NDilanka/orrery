@@ -583,21 +583,38 @@ fn checkpoint_file_path(def: &LoopDef, base_dir: &Path) -> PathBuf {
 /// All loops here share one stateDir, so stateDir alone can't disambiguate — we key on
 /// the start script's basename plus any `-TaskFile`/`-File` discriminators in its args.
 /// Returns the tokens that MUST all be present for a command line to count as this loop.
-fn guard_tokens(def: &LoopDef) -> Vec<String> {
-    let mut tokens: Vec<String> = Vec::new();
+/// Discriminators for "does this OS process belong to this loop?".
+///
+/// `program_stem` is matched against the candidate's argv[0] executable stem by EQUALITY —
+/// never as a substring of the whole command line. A generic program name like `loop` is a
+/// substring of every path under a directory named `loop/` (this very repo), so the old
+/// substring match made the guard see the dev app, vite, node — any bystander with the repo
+/// path on its command line — as "AlreadyRunning" and silently block Ignite.
+///
+/// `arg_tokens` (script/task-file basenames, `--state-dir`/`--loop-json` values) are still
+/// substring-matched against the full command line, but only AFTER the argv[0] gate passes,
+/// so they disambiguate two loops that share one program (e.g. two generic `loop` runs)
+/// without re-opening the bystander over-match.
+struct GuardSpec {
+    program_stem: Option<String>,
+    arg_tokens: Vec<String>,
+}
+
+/// Lowercased, separator-normalized executable stem of an argv[0] ("D:\\x\\loop.exe" → "loop").
+fn argv0_stem(argv0: &str) -> Option<String> {
+    let norm = argv0.replace('\\', "/");
+    Path::new(&norm)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
+fn guard_spec(def: &LoopDef) -> GuardSpec {
+    let mut program_stem: Option<String> = None;
+    let mut arg_tokens: Vec<String> = Vec::new();
     if let Some(start) = &def.start {
-        // The orchestrator's PROGRAM basename is the key discriminator: it appears in the REAL loop
-        // process's command line but NOT in a bystander that merely references the state dir (a
-        // `tail -f .loop/log.jsonl`, an editor with the log open, a file manager). Without it, a
-        // loop whose args carry no -File/-TaskFile — e.g. the bmad loop's `loop-bmad --state-dir
-        // <path> ...` — fell through to the bare state-dir fallback below, so ANY such bystander
-        // tripped the "AlreadyRunning" guard and silently blocked start/reignite.
-        if let Some(stem) = Path::new(&start.program).file_stem().and_then(|s| s.to_str()) {
-            let s = stem.to_lowercase();
-            if !s.is_empty() {
-                tokens.push(s);
-            }
-        }
+        program_stem = argv0_stem(&start.program);
         let args = &start.args;
         for (i, a) in args.iter().enumerate() {
             let lower = a.to_lowercase();
@@ -605,7 +622,7 @@ fn guard_tokens(def: &LoopDef) -> Vec<String> {
             if lower == "-file" || lower == "-c" || lower == "-command" {
                 if let Some(next) = args.get(i + 1) {
                     if let Some(base) = Path::new(next).file_name().and_then(|s| s.to_str()) {
-                        tokens.push(base.to_lowercase());
+                        arg_tokens.push(base.to_lowercase());
                     }
                 }
             }
@@ -613,68 +630,80 @@ fn guard_tokens(def: &LoopDef) -> Vec<String> {
             if lower == "-taskfile" {
                 if let Some(next) = args.get(i + 1) {
                     if let Some(base) = Path::new(next).file_name().and_then(|s| s.to_str()) {
-                        tokens.push(base.to_lowercase());
+                        arg_tokens.push(base.to_lowercase());
                     } else {
-                        tokens.push(next.to_lowercase());
+                        arg_tokens.push(next.to_lowercase());
+                    }
+                }
+            }
+            // Python-engine loops share program names (`loop`, `loop-bmad`); their state-dir /
+            // loop-json values are the discriminator between two concurrent runs. The token is
+            // derived from the SAME args the loop is spawned with, so the real process's command
+            // line always contains it verbatim.
+            if lower == "--state-dir" || lower == "--loop-json" {
+                if let Some(next) = args.get(i + 1) {
+                    let v = next.to_lowercase().replace('\\', "/");
+                    if !v.is_empty() {
+                        arg_tokens.push(v);
                     }
                 }
             }
         }
     }
-    // No usable tokens could be derived from the start spec (no program stem, no
-    // -File/-TaskFile/-Command args). We used to fall back to substring-matching the raw
-    // `stateDir` against every process cmdline — but that over-matched: ANY bystander process
-    // whose command line merely REFERENCES the state dir (a `tail -f .loop/log.jsonl`, an editor
-    // with the log open, a file manager) tripped "AlreadyRunning" and silently blocked
-    // Start/Reignite. That was a real bug we hit (see `guard_tokens_key_on_program_...` above).
-    //
-    // We now return NO tokens instead. `cmdline_matches` treats an empty token list as "no
-    // match", so `find_running_pid` returns `None` and the scan-based guard allows the spawn.
-    // This trades a rare false-negative (two near-simultaneous starts for a tokenless loop could
-    // both pass this scan) for never producing a false-positive block — and the false-negative is
-    // caught downstream anyway: the Python engine holds its own authoritative pid lockfile in the
-    // state dir and exits with code 2 when another instance already holds it
-    // (engine/orrery_loop/core.py `_acquire_lock`; the BMAD driver does the equivalent), so a duplicate
-    // spawn fails fast there. A false-positive "AlreadyRunning" here has no such downstream
-    // recovery — it just silently blocks the user, which is the historically worse failure mode.
+    // No usable discriminators (no start spec / empty program, no recognized args): the spec
+    // matches NOTHING. We deliberately never fall back to substring-matching the raw stateDir —
+    // that over-matched bystanders (a `tail -f .loop/log.jsonl`, an editor with the log open)
+    // and silently blocked Start/Reignite. A false-negative here (duplicate spawn) is caught
+    // downstream by the engine's own pid lockfile (engine/orrery_loop/core.py `_acquire_lock`,
+    // exit 2); a false-positive block has no such recovery, so it is the worse failure mode.
     // The per-loop-id lock in `start_with_spec` (`loop_lock`/`LOOP_LOCKS`) separately closes the
     // check-then-spawn race for same-process near-simultaneous calls, independent of this scan.
-    tokens
+    GuardSpec {
+        program_stem,
+        arg_tokens,
+    }
 }
 
-/// Does a candidate process command line belong to this loop? True iff every guard token
-/// appears in the (lowercased, path-normalized) command line. Tested in isolation.
-fn cmdline_matches(tokens: &[String], cmdline: &str) -> bool {
-    if tokens.is_empty() {
+/// Does a candidate process belong to this loop? The program stem must EQUAL the candidate's
+/// argv[0] executable stem (when the spec has one), and every arg token must appear in the
+/// (lowercased, path-normalized) command line. An empty spec matches nothing. Tested in
+/// isolation.
+fn cmdline_matches(spec: &GuardSpec, argv0: &str, cmdline: &str) -> bool {
+    if spec.program_stem.is_none() && spec.arg_tokens.is_empty() {
         return false;
     }
-    // Normalize backslashes so a token basename matches regardless of path separators.
+    if let Some(stem) = &spec.program_stem {
+        match argv0_stem(argv0) {
+            Some(s) if &s == stem => {}
+            _ => return false,
+        }
+    }
+    // Normalize backslashes so a token matches regardless of path separators.
     let hay = cmdline.to_lowercase().replace('\\', "/");
-    tokens.iter().all(|t| {
-        let needle = t.replace('\\', "/");
-        hay.contains(&needle)
-    })
+    spec.arg_tokens.iter().all(|t| hay.contains(t.as_str()))
 }
 
-/// Scan live processes (sysinfo) for one whose command line matches this loop. Returns its
-/// PID if found. Mirrors the engine's "another orchestrator is already running" guard.
-fn find_running_pid(tokens: &[String]) -> Option<u32> {
+/// Scan live processes (sysinfo) for one whose executable + command line match this loop.
+/// Returns its PID if found. Mirrors the engine's "another orchestrator is already running"
+/// guard.
+fn find_running_pid(spec: &GuardSpec) -> Option<u32> {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
     // new_with_specifics performs the initial process refresh for us.
     let sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
     );
     for proc in sys.processes().values() {
-        let cmd: String = proc
+        let argv: Vec<String> = proc
             .cmd()
             .iter()
-            .map(|s| s.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ");
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        let Some(argv0) = argv.first() else { continue };
+        let cmd = argv.join(" ");
         if cmd.is_empty() {
             continue;
         }
-        if cmdline_matches(tokens, &cmd) {
+        if cmdline_matches(spec, argv0, &cmd) {
             return Some(proc.pid().as_u32());
         }
     }
@@ -795,8 +824,8 @@ fn start_with_spec(
     let lock = loop_lock(loop_id);
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let tokens = guard_tokens(def);
-    if let Some(_existing) = find_running_pid(&tokens) {
+    let guard = guard_spec(def);
+    if let Some(_existing) = find_running_pid(&guard) {
         return Err("AlreadyRunning".to_string());
     }
     let state_dir = state_dir_of(def, base_dir);
@@ -1046,10 +1075,10 @@ pub fn guard_status(
     let loops = PathBuf::from(&loops_dir);
     let def = load_loop_def(&loops, &loop_id)?;
     let base_dir = loop_base_dir(&loops, &loop_id);
-    let tokens = guard_tokens(&def);
+    let spec = guard_spec(&def);
 
     // running via sysinfo match OR a live tracked PID.
-    let scanned = find_running_pid(&tokens);
+    let scanned = find_running_pid(&spec);
     let tracked = pids
         .0
         .lock()
@@ -1756,33 +1785,38 @@ mod tests {
         let roman = def_with_state_dir("roman", sd, vec!["-NoProfile", "-File", "loop.ps1", "-TaskFile", "TASK.md"]);
         let calc = def_with_state_dir("calc", sd, vec!["-NoProfile", "-File", "loop.ps1", "-TaskFile", "TASK.calc.md"]);
 
-        let t_bmad = guard_tokens(&bmad);
-        let t_roman = guard_tokens(&roman);
-        let t_calc = guard_tokens(&calc);
+        let t_bmad = guard_spec(&bmad);
+        let t_roman = guard_spec(&roman);
+        let t_calc = guard_spec(&calc);
 
-        assert!(t_bmad.contains(&"bmad-loop.ps1".to_string()), "{t_bmad:?}");
-        assert!(t_roman.contains(&"loop.ps1".to_string()) && t_roman.contains(&"task.md".to_string()), "{t_roman:?}");
-        assert!(t_calc.contains(&"loop.ps1".to_string()) && t_calc.contains(&"task.calc.md".to_string()), "{t_calc:?}");
+        assert!(t_bmad.arg_tokens.contains(&"bmad-loop.ps1".to_string()), "{:?}", t_bmad.arg_tokens);
+        assert!(t_roman.arg_tokens.contains(&"loop.ps1".to_string()) && t_roman.arg_tokens.contains(&"task.md".to_string()), "{:?}", t_roman.arg_tokens);
+        assert!(t_calc.arg_tokens.contains(&"loop.ps1".to_string()) && t_calc.arg_tokens.contains(&"task.calc.md".to_string()), "{:?}", t_calc.arg_tokens);
 
         // A real bmad command line matches bmad, not roman/calc.
         let bmad_cmd = "pwsh -NoProfile -File bmad-loop.ps1";
-        assert!(cmdline_matches(&t_bmad, bmad_cmd));
-        assert!(!cmdline_matches(&t_roman, bmad_cmd));
-        assert!(!cmdline_matches(&t_calc, bmad_cmd));
+        assert!(cmdline_matches(&t_bmad, "pwsh", bmad_cmd));
+        assert!(!cmdline_matches(&t_roman, "pwsh", bmad_cmd));
+        assert!(!cmdline_matches(&t_calc, "pwsh", bmad_cmd));
 
         // The roman command line matches roman but NOT calc (TASK.md vs TASK.calc.md),
         // even though both reference loop.ps1 — the task file is the discriminator.
         let roman_cmd = "pwsh -NoProfile -File loop.ps1 -TaskFile TASK.md";
-        assert!(cmdline_matches(&t_roman, roman_cmd));
-        assert!(!cmdline_matches(&t_calc, roman_cmd), "calc must not match roman's cmd");
-        assert!(!cmdline_matches(&t_bmad, roman_cmd));
+        assert!(cmdline_matches(&t_roman, "pwsh", roman_cmd));
+        assert!(!cmdline_matches(&t_calc, "pwsh", roman_cmd), "calc must not match roman's cmd");
+        assert!(!cmdline_matches(&t_bmad, "pwsh", roman_cmd));
 
         // calc's own command line matches calc (TASK.calc.md contains 'task.md'? no — 'task.calc.md').
         let calc_cmd = "pwsh -NoProfile -File loop.ps1 -TaskFile TASK.calc.md";
-        assert!(cmdline_matches(&t_calc, calc_cmd));
+        assert!(cmdline_matches(&t_calc, "pwsh", calc_cmd));
         // NOTE: roman's tokens (loop.ps1 + task.md) would substring-match 'task.calc.md'
         // because "task.calc.md" contains "task" then ".md" but not the contiguous "task.md".
-        assert!(!cmdline_matches(&t_roman, calc_cmd), "roman must not match calc's cmd");
+        assert!(!cmdline_matches(&t_roman, "pwsh", calc_cmd), "roman must not match calc's cmd");
+
+        // A full-path argv0 still satisfies the program gate (stem equality, not string equality).
+        assert!(cmdline_matches(&t_bmad, "C:\\Program Files\\PowerShell\\7\\pwsh.exe", bmad_cmd));
+        // A different executable does NOT, even with an identical-looking command line.
+        assert!(!cmdline_matches(&t_bmad, "code.exe", bmad_cmd));
     }
 
     #[test]
@@ -1809,22 +1843,73 @@ mod tests {
             }),
             engine: None,
         };
-        let tokens = guard_tokens(&def);
-        assert!(tokens.contains(&"loop-bmad".to_string()), "must key on program: {tokens:?}");
-        // The state-dir path is NOT a standalone token (it would over-match); the program is.
-        assert!(!tokens.contains(&"d:/dev/loop/orrery/loops/bmad/.loop".to_string()), "{tokens:?}");
+        let spec = guard_spec(&def);
+        assert_eq!(spec.program_stem.as_deref(), Some("loop-bmad"), "must key on program");
+        // The state-dir ARG VALUE is a secondary token (post-argv0-gate disambiguator) — but the
+        // guard can only fire for a process whose executable IS loop-bmad, never a bystander.
+        assert!(spec.arg_tokens.contains(&"d:/dev/loop/orrery/loops/bmad/.loop".to_string()), "{:?}", spec.arg_tokens);
 
         // the REAL orchestrator (resolved exe + state-dir on its cmdline) matches → guard works
+        let real_argv0 = "d:/dev/loop/.venv/scripts/loop-bmad.exe";
         let real = "d:/dev/loop/.venv/scripts/loop-bmad.exe --project-root d:/dev/example-app \
                     --state-dir d:/dev/loop/orrery/loops/bmad/.loop --no-smoke";
-        assert!(cmdline_matches(&tokens, real), "real loop-bmad must still match");
+        assert!(cmdline_matches(&spec, real_argv0, real), "real loop-bmad must still match");
 
         // bystanders that only reference the state dir must NOT match (the fix)
         let tail = "c:/program files/git/usr/bin/tail.exe -n0 -f \
                     d:/dev/loop/orrery/loops/bmad/.loop/log.jsonl";
-        assert!(!cmdline_matches(&tokens, tail), "a log tail must NOT trip the guard");
+        assert!(!cmdline_matches(&spec, "c:/program files/git/usr/bin/tail.exe", tail), "a log tail must NOT trip the guard");
         let editor = "code.exe d:/dev/loop/orrery/loops/bmad/.loop/log.jsonl";
-        assert!(!cmdline_matches(&tokens, editor), "an editor must NOT trip the guard");
+        assert!(!cmdline_matches(&spec, "code.exe", editor), "an editor must NOT trip the guard");
+    }
+
+    #[test]
+    fn guard_argv0_gate_stops_generic_program_name_overmatch() {
+        // A generic loop whose program is literally `loop` (the Python engine's console script)
+        // living in a repo whose PATH SEGMENTS also contain "loop" (d:/dev/loop/...). With the
+        // old substring match, EVERY process referencing the repo path — the Tauri dev app,
+        // vite, node — "contained" the program token and tripped AlreadyRunning, blocking
+        // Ignite entirely (the v0.3.0 dogfood-run bug). The argv[0] equality gate fixes it.
+        let def = LoopDef {
+            id: "self".into(),
+            name: "self".into(),
+            theme: None,
+            kind: Some("generic".into()),
+            state_dir: "D:/loops/orrery-self".into(),
+            adapter: "generic".into(),
+            log_file: Some("log.jsonl".into()),
+            stop_flag: None,
+            checkpoint: None,
+            start: Some(StartSpec {
+                program: "loop".into(),
+                args: ["--loop-json", "D:/dev/loop/orrery/loops/self/loop.json",
+                       "--cwd", "D:/dev/loop", "--state-dir", "D:/loops/orrery-self"]
+                    .into_iter().map(|s| s.to_string()).collect(),
+            }),
+            engine: None,
+        };
+        let spec = guard_spec(&def);
+        assert_eq!(spec.program_stem.as_deref(), Some("loop"));
+
+        // Bystanders whose command lines are saturated with the substring "loop" via repo paths:
+        let dev_app = "d:/dev/loop/orrery/src-tauri/target/debug/orrery.exe";
+        assert!(!cmdline_matches(&spec, dev_app, dev_app), "the dev app must not trip the guard");
+        let vite = "node.exe d:/dev/loop/orrery/node_modules/vite/bin/vite.js dev";
+        assert!(!cmdline_matches(&spec, "node.exe", vite), "vite/node must not trip the guard");
+        let shell = "bash.exe -c \"cd d:/dev/loop && git status\"";
+        assert!(!cmdline_matches(&spec, "bash.exe", shell), "a shell in the repo must not trip the guard");
+
+        // The REAL engine process (argv0 IS loop.exe, args carry the state dir) still matches.
+        let real_argv0 = "d:/dev/loop/.venv/scripts/loop.exe";
+        let real = "d:/dev/loop/.venv/scripts/loop.exe --loop-json d:/dev/loop/orrery/loops/self/loop.json \
+                    --cwd d:/dev/loop --state-dir d:/loops/orrery-self";
+        assert!(cmdline_matches(&spec, real_argv0, real), "the real engine must match");
+
+        // A DIFFERENT generic loop (same program, different state dir/loop.json) must NOT match —
+        // the arg tokens disambiguate two concurrent `loop` runs.
+        let other = "d:/dev/loop/.venv/scripts/loop.exe --loop-json d:/other/loops/hello/loop.json \
+                     --cwd d:/other --state-dir d:/other/loops/hello/.loop";
+        assert!(!cmdline_matches(&spec, real_argv0, other), "another loop run must not match this spec");
     }
 
     #[test]
@@ -1847,16 +1932,16 @@ mod tests {
             start: None, // no start spec -> nothing to derive tokens from
             engine: None,
         };
-        let tokens = guard_tokens(&def);
-        assert!(tokens.is_empty(), "tokenless spec must yield NO tokens: {tokens:?}");
+        let spec = guard_spec(&def);
+        assert!(spec.program_stem.is_none() && spec.arg_tokens.is_empty(), "tokenless spec must yield NO discriminators");
 
         // A bystander whose cmdline merely references the state dir must NOT match — the exact
         // over-match this removal fixes (a log tail, an editor with the log open, etc).
         let bystander = "tail -f d:/dev/loop/orrery/loops/tokenless/.loop/log.jsonl";
-        assert!(!cmdline_matches(&tokens, bystander), "empty tokens must never match anything");
+        assert!(!cmdline_matches(&spec, "tail", bystander), "empty spec must never match anything");
         // Even a cmdline containing the exact stateDir string verbatim must not match — proves
         // the old "key on stateDir" fallback is really gone, not just weakened.
-        assert!(!cmdline_matches(&tokens, &def.state_dir.to_lowercase()));
+        assert!(!cmdline_matches(&spec, "x", &def.state_dir.to_lowercase()));
 
         // A start spec whose program has no derivable stem (e.g. empty) and no discriminating
         // args also yields no tokens — same no-match behavior, not a stateDir fallback.
@@ -1864,7 +1949,8 @@ mod tests {
             start: Some(StartSpec { program: String::new(), args: vec![] }),
             ..def
         };
-        assert!(guard_tokens(&def2).is_empty());
+        let spec2 = guard_spec(&def2);
+        assert!(spec2.program_stem.is_none() && spec2.arg_tokens.is_empty());
     }
 
     #[test]
