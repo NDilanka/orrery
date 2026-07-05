@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: bundle (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin
+            tauri-args: --target aarch64-apple-darwin
+          - name: macos-x64
+            os: macos-latest
+            rust-targets: x86_64-apple-darwin
+            tauri-args: --target x86_64-apple-darwin
+          - name: linux-x64
+            os: ubuntu-latest
+            rust-targets: ""
+            tauri-args: ""
+          - name: windows-x64
+            os: windows-latest
+            rust-targets: ""
+            tauri-args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: orrery/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: orrery/src-tauri
+
+      - name: Install Tauri system deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev \
+            libayatana-appindicator3-dev patchelf
+
+      - name: Install JS deps
+        working-directory: orrery
+        run: npm ci
+
+      - name: Build and attach bundles to draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: orrery
+          tagName: ${{ github.ref_name }}
+          releaseName: "orrery ${{ github.ref_name }}"
+          releaseBody: |
+            See CHANGELOG.md for details.
+
+            > macOS builds are unsigned: after installing, run
+            > `xattr -cr /Applications/orrery.app` or right-click → Open to bypass Gatekeeper.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: ${{ matrix.tauri-args }}
