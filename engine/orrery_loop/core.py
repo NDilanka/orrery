@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 
 from orrery_loop import gitutil
-from orrery_loop.cache import get_cache_usage
+from orrery_loop.cache import get_cache_usage, total_tokens
 from orrery_loop.config import INFRA_LOCK_GLOBS, EngineConfig
 from orrery_loop.cost import update_cost_alert
 from orrery_loop.decide import decide, update_consecutive_fail
@@ -360,6 +360,7 @@ def _run_loop_body(
     # Per-iter wall-clock cap (config.iter_timeout_min, minutes; 0 = disabled/unbounded).
     iter_timeout_sec = config.iter_timeout_min * 60 if config.iter_timeout_min > 0 else 0
     cum = 0.0
+    cum_tokens = 0  # cumulative tokens (input+output+cache) for the optional token ceiling
     stale = 0
     plateau = 0
     regress_count = 0
@@ -481,6 +482,9 @@ def _run_loop_body(
         # 4. cost accounting + 50/80/100% alerts, then cache telemetry.
         iter_cost = float(result.cost_usd) if result else 0.0
         cum += iter_cost
+        # Tokens accumulate alongside dollars (0 when there's no usage block) so an optional
+        # token ceiling can bound a subscription run where the dollar figure is ~meaningless.
+        cum_tokens += total_tokens(result.usage) if result is not None else 0
         alert = update_cost_alert(cum, config.cost.ceiling_usd, config.cost.alert_pct, fired)
         fired = alert.fired
         for pct in alert.newly:
@@ -585,6 +589,8 @@ def _run_loop_body(
             iter=it,
             max_iters=max_iters,
             verifier_refuted=verifier_refuted,
+            cum_tokens=cum_tokens,
+            token_ceiling=config.stop.token_ceiling,
         )
         action = dec.action
         green = dec.green

@@ -38,7 +38,8 @@ loop --loop-json examples/hello/loop.json --cwd examples/hello --state-dir examp
 
 ## What's in the box
 
-**Always-on guardrails** (no flags): external exit-code gate, cumulative cost ceiling,
+**Always-on guardrails** (no flags): external exit-code gate, cumulative cost ceiling
+(plus an opt-in `stop.tokenCeiling` for subscription runs where dollars don't bind),
 max-iters + stagnation/plateau/regress stops, test-file hash-lock + count-floor,
 per-iteration git commits (rollback to best), quota survival (wait-and-resume across
 resets), cross-platform process-tree kill, and a concurrency lock (`orrery_loop.lockfile` — ONE

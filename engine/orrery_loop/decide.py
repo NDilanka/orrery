@@ -37,16 +37,23 @@ def decide(
     iter: int,
     max_iters: int,
     verifier_refuted: bool = False,
+    cum_tokens: int = 0,
+    token_ceiling: int = 0,
 ) -> Decision:
     """Verbatim port of ``Get-LoopDecision`` (loopcore.ps1 ~lines 331-383).
 
     Priority order matters — integrity checks beat success; success beats spend:
     tamper -> count-dropped -> (green AND NOT verifier_refuted) -> blocked ->
-    cost-ceiling -> regression (rollback, or handoff at regress_limit) -> stagnation ->
-    plateau -> max-iters -> continue.
+    cost-ceiling -> token-ceiling -> regression (rollback, or handoff at regress_limit) ->
+    stagnation -> plateau -> max-iters -> continue.
 
     ``verifier_refuted`` defaults False so default behavior is unchanged: a gate-green the
     independent verifier refuted is NOT a real stop-green.
+
+    ``token_ceiling`` defaults 0 (disabled) so behavior is unchanged: only a positive ceiling
+    can stop a run, and only once ``cum_tokens`` reaches it. It sits right beside the USD ceiling
+    — the same "out of budget" stop, measured in tokens for flat-rate/subscription runs where the
+    dollar figure is ~meaningless.
     """
     # Integrity checks beat success; success beats spend.
     if tampered:
@@ -61,6 +68,8 @@ def decide(
         return Decision("stop", False, "agent reported BLOCKED")
     if cum >= ceiling:
         return Decision("stop", False, f"cost ceiling ${ceiling} reached")
+    if token_ceiling > 0 and cum_tokens >= token_ceiling:
+        return Decision("stop", False, f"token ceiling {token_ceiling} reached")
 
     if pass_ < best_pass:  # regression = silent drift
         if (regress_count + 1) >= regress_limit:

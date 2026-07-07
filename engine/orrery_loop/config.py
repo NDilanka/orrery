@@ -156,6 +156,11 @@ class StopConfig:
     plateau_limit: int = _DEFAULT_PLATEAU_LIMIT
     regress_limit: int = _DEFAULT_REGRESS_LIMIT
     graceful_at_phase: bool = _DEFAULT_GRACEFUL_AT_PHASE
+    # Opt-in cumulative TOKEN budget (input+output+cache tokens summed across iterations). 0 =
+    # disabled (parity). The subscription-era companion to ``cost.ceiling_usd``: on a flat-rate
+    # plan the CLI's dollar figure is ~meaningless, so a token cap is the real spend backstop.
+    # A run stops (not-green) the first iteration cumulative tokens reach this ceiling.
+    token_ceiling: int = 0
 
 
 @dataclass
@@ -321,6 +326,7 @@ def _stop_from(d: dict[str, Any]) -> StopConfig:
         graceful_at_phase=bool(
             resolve(d, "gracefulAtPhase", "graceful_at_phase", default=_DEFAULT_GRACEFUL_AT_PHASE)
         ),
+        token_ceiling=int(resolve(d, "tokenCeiling", "token_ceiling", default=0)),
     )
 
 
