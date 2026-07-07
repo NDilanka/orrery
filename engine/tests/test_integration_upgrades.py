@@ -405,6 +405,38 @@ def test_lock_infra_off_ignores_test_config_edit(tmp_path):
     assert stops and stops[-1]["green"] is True
 
 
+def test_lock_infra_traps_a_newly_created_infra_file(tmp_path):
+    """A1 (documented sharp edge): ``lock_infra`` locks the curated globs at ANY depth, so a
+    conftest.py CREATED mid-run (absent at baseline) trips tamper via the ``added`` branch — the
+    ``collect_ignore`` attack works by adding a new conftest, not only by editing one. This also
+    means a legitimately new fixture file trips it; documented in docs/capabilities.md §7."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    # NOTE: no conftest.py at baseline — the runner creates one mid-run.
+    stages = [GateStage(name="visible", command=_make_gate(repo))]
+    cfg = _config(repo, stages, max_iters=3, lock_infra=True)
+
+    class InfraCreateRunner(AgentRunner):
+        name = "mock-infra-create"
+
+        def __init__(self, repo):
+            self.repo = repo
+
+        def run(self, **kwargs):
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")  # green the gate
+            # brand-new nested conftest that neuters collection — matched by rglob at depth
+            sub = self.repo / "pkg" / "tests"
+            sub.mkdir(parents=True, exist_ok=True)
+            (sub / "conftest.py").write_text("collect_ignore_glob = ['*']\n", encoding="utf-8")
+            return AgentResult(raw="{}", text="t", cost_usd=0.01)
+
+    rc = run_loop(cfg, runner=InfraCreateRunner(repo), state_dir=state, cwd=repo)
+    assert rc == 1, "a newly-created locked infra file must trip tamper (added)"
+    stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
+    assert stops and stops[-1]["green"] is False
+    assert "added" in stops[-1]["reason"]  # surfaced as an 'added' locked file
+
+
 def test_token_ceiling_stops_a_red_run(tmp_path):
     """A2: cumulative tokens crossing ``stop.tokenCeiling`` stops the loop not-green while the
     gate is still red — the token ceiling sits beside the USD ceiling in decide(), above the
@@ -498,6 +530,65 @@ def test_verify_judge_prompt_includes_gate_evidence(tmp_path):
     assert "1 pass / 0 fail / 1 total" in vp  # real counts from the gate, not just the diff
     assert "GIT DIFF:" in vp  # the diff is still provided
     assert "FROZEN ACCEPTANCE CRITERIA:" in vp
+
+
+def test_verify_judge_prompt_never_leaks_held_out_output(tmp_path):
+    """A3 leak-safety (the load-bearing claim): the verifier's reply is appended to progress.md,
+    which the ACTOR reads — so a held-out stage's OUTPUT must never reach the judge prompt. With a
+    held-out stage carrying a distinctive marker in its output, the marker must be absent from both
+    the judge prompt and progress.md, while the aggregate GATE RESULT counts + diff still reach the
+    judge. Guards :func:`orrery_loop.core._verify_gate_block`'s ``visible_feedback_raw`` strip."""
+    secret = "SECRET_HELDOUT_TESTNAME_zzz"
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+
+    def _visible():
+        body = (repo / "target.txt").read_text(encoding="utf-8")
+        return ("1 pass 0 fail", 0) if "FIXED" in body else ("0 pass 1 fail", 1)
+
+    def _hidden():
+        # the hidden suite passes, but its output carries a marker that must be stripped
+        return (f"{secret} 3 pass 0 fail", 0)
+
+    stages = [
+        GateStage(name="visible", command=_visible, pass_pattern=r"(\d+) pass",
+                  fail_pattern=r"(\d+) fail"),
+        GateStage(name="hidden", command=_hidden, pass_pattern=r"(\d+) pass",
+                  held_out=True, lock_globs=["*.hidden"]),
+    ]
+    cfg = _config(
+        repo, stages, max_iters=3,
+        verify=VerifyConfig(enabled=True, contract=["target.txt must contain FIXED"]),
+    )
+
+    class GreenThenVerifyRunner(AgentRunner):
+        name = "mock-green-verify-heldout"
+
+        def __init__(self, repo):
+            self.repo = repo
+            self.prompts: list[str] = []
+
+        def run(self, **kwargs):
+            prompt = kwargs.get("prompt", "")
+            self.prompts.append(prompt)
+            if "VERIFIER" in prompt:
+                ok = '{"pass": true, "failingCriteria": [], "evidence": "ok", "nextAction": ""}'
+                return AgentResult(raw=ok, text=ok, cost_usd=0.0)
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")  # green both stages
+            return AgentResult(raw="{}", text="t", cost_usd=0.01)
+
+    runner = GreenThenVerifyRunner(repo)
+    rc = run_loop(cfg, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0
+
+    vps = [p for p in runner.prompts if "VERIFIER" in p]
+    assert vps, "verify pass should have run on the green held-out iteration"
+    vp = vps[0]
+    assert secret not in vp, "held-out stage output leaked into the judge prompt"
+    assert "GATE RESULT:" in vp and "GIT DIFF:" in vp  # aggregate evidence still reaches the judge
+    prog = state / "progress.md"
+    prog_text = prog.read_text(encoding="utf-8") if prog.exists() else ""
+    assert secret not in prog_text, "held-out stage output leaked into progress.md (actor channel)"
 
 
 # ===========================================================================

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from conftest import REPO_ROOT
 
 from orrery_loop.config import EngineConfig, from_loop_json, model_for_phase
@@ -246,6 +247,44 @@ def test_unknown_top_level_engine_key_warns(capsys):
 def test_known_engine_keys_produce_no_warning(capsys):
     from_loop_json(HELLO)
     assert capsys.readouterr().err == ""
+
+
+def test_misspelled_stop_key_warns_not_silently_dropped(capsys):
+    """A2 safety: a typo'd ``stop.tokenCeiling`` must be LOUD — otherwise the budget backstop
+    silently stays disabled (0) and the run is unbounded when the user believed they capped it."""
+    cfg = from_loop_json({"engine": {"stop": {"tokenCeilng": 1500000}}})
+    err = capsys.readouterr().err
+    assert "tokenCeilng" in err
+    assert "unrecognized" in err
+    assert cfg.stop.token_ceiling == 0  # the typo did NOT set the ceiling
+
+
+def test_valid_stop_keys_produce_no_warning(capsys):
+    """Every real ``stop.*`` spelling (incl. tokenCeiling/token_ceiling) is known -> silent."""
+    from_loop_json({"engine": {"stop": {"maxIters": 5, "tokenCeiling": 10, "token_ceiling": 10}}})
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "block, valid, bogus",
+    [
+        ("cost", {"ceilingUsd": 1.0, "alertPct": [50]}, "ceilingUds"),
+        ("verify", {"enabled": True, "judgeModel": "haiku", "mutationEvery": 1}, "judgemodel"),
+        ("feedback", {"compact": True}, "compakt"),
+        ("memory", {"enabled": True, "recallLimit": 3}, "recalLimit"),
+        ("metrics", {"emit": True}, "emmit"),
+    ],
+)
+def test_every_engine_subblock_validates_its_keys(capsys, block, valid, bogus):
+    """No sub-block silently swallows a typo: a valid key set is silent, a bogus key warns and
+    names both the block and the offending key (parity across gate/stop/cost/verify/
+    feedback/memory/metrics)."""
+    from_loop_json({"engine": {block: valid}})
+    assert capsys.readouterr().err == "", f"valid {block} keys should not warn"
+
+    from_loop_json({"engine": {block: {**valid, bogus: 1}}})
+    err = capsys.readouterr().err
+    assert f"engine.{block}" in err and bogus in err and "unrecognized" in err
 
 
 # =====================================================================
