@@ -451,6 +451,55 @@ def test_token_ceiling_off_by_default_runs_to_max_iters(tmp_path):
     assert stops and "max iterations" in stops[-1]["reason"]
 
 
+def test_verify_judge_prompt_includes_gate_evidence(tmp_path):
+    """A3: the anti-false-green VERIFY judge sees the gate's REAL pass/fail/total counts (not just
+    the diff), so it judges the contract against evidence rather than the diff's plausibility."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    stages = [
+        GateStage(
+            name="visible",
+            command=_make_gate(repo),
+            pass_pattern=r"(\d+) pass",
+            fail_pattern=r"(\d+) fail",
+        )
+    ]
+    cfg = _config(
+        repo,
+        stages,
+        max_iters=3,
+        verify=VerifyConfig(enabled=True, contract=["target.txt must contain FIXED"]),
+    )
+
+    class GreenThenVerifyRunner(AgentRunner):
+        name = "mock-green-verify"
+
+        def __init__(self, repo):
+            self.repo = repo
+            self.prompts: list[str] = []
+
+        def run(self, **kwargs):
+            prompt = kwargs.get("prompt", "")
+            self.prompts.append(prompt)
+            if "VERIFIER" in prompt:  # the verify call — certify green
+                ok = '{"pass": true, "failingCriteria": [], "evidence": "ok", "nextAction": ""}'
+                return AgentResult(raw=ok, text=ok, cost_usd=0.0)
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")  # green the gate
+            return AgentResult(raw="{}", text="t", cost_usd=0.01)
+
+    runner = GreenThenVerifyRunner(repo)
+    rc = run_loop(cfg, runner=runner, state_dir=state, cwd=repo)
+    assert rc == 0, "verify certified green -> clean green stop"
+
+    verifier_prompts = [p for p in runner.prompts if "VERIFIER" in p]
+    assert verifier_prompts, "verify pass should have run on the green iteration"
+    vp = verifier_prompts[0]
+    assert "GATE RESULT:" in vp
+    assert "1 pass / 0 fail / 1 total" in vp  # real counts from the gate, not just the diff
+    assert "GIT DIFF:" in vp  # the diff is still provided
+    assert "FROZEN ACCEPTANCE CRITERIA:" in vp
+
+
 # ===========================================================================
 # mutation audit
 # ===========================================================================

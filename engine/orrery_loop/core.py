@@ -540,7 +540,8 @@ def _run_loop_body(
             and not count_dropped
         ):
             verifier_refuted = _run_verify(
-                runner, config, contract, judge_model, work, use_git, progress_path, it, emit
+                runner, config, contract, judge_model, work, use_git, progress_path, it, emit,
+                gate_result=g, hidden_names=hidden_names, has_held_out=has_held_out,
             )
 
         # 7b. optional MUTATION AUDIT (advisory) — only when enabled AND the gate is green,
@@ -837,22 +838,64 @@ def _resolve_question(it: int, result_text: str, progress_path: Path, answer_pat
         )
 
 
-def _run_verify(runner, config, contract, judge_model, work, use_git, progress_path, it, emit) -> bool:
+def _verify_gate_block(gate_result: dict | None, hidden_names, has_held_out: bool) -> str:
+    """The GATE-EVIDENCE block for the VERIFY judge: the real pass/fail/total counts plus a
+    bounded tail of the VISIBLE gate output.
+
+    Held-out sections are stripped FIRST (via :func:`orrery_loop.verify.visible_feedback_raw`) because
+    the verifier's reply is appended to ``progress.md`` — which the ACTOR reads — so quoting a
+    hidden stage's output here would leak the hidden suite. Counts are safe to surface (they don't
+    reveal which tests are hidden). No gate result -> a terse "(unavailable)" so the call still runs.
+    """
+    if not gate_result:
+        return "GATE RESULT: (unavailable)"
+    summary = (
+        f"GATE RESULT: {gate_result.get('pass', 0)} pass / {gate_result.get('fail', 0)} fail / "
+        f"{gate_result.get('total', 0)} total (green={gate_result.get('green')})"
+    )
+    raw = (
+        visible_feedback_raw(gate_result, hidden_names or [])
+        if has_held_out
+        else (gate_result.get("raw") or "")
+    )
+    tail = (raw or "").strip()[-1200:]
+    return f"{summary}\nGATE OUTPUT (tail):\n{tail}" if tail else summary
+
+
+def _run_verify(
+    runner,
+    config,
+    contract,
+    judge_model,
+    work,
+    use_git,
+    progress_path,
+    it,
+    emit,
+    gate_result: dict | None = None,
+    hidden_names=None,
+    has_held_out: bool = False,
+) -> bool:
     """Optional anti-false-green VERIFY pass; returns True when the verifier REFUTED green.
 
-    A SECOND, independent judge (cheap tier) sees ONLY the diff + the frozen contract and tries
-    to refute "done". Parsed via :func:`orrery_loop.verdict.parse_verdict`; a fail suppresses the
-    green-stop and feeds the failing criteria back through progress.md.
+    A SECOND, independent judge (cheap tier) sees the gate's REAL test result, the diff, and the
+    frozen contract, and tries to refute "done" against that evidence (not just the diff's
+    plausibility — "demand evidence, not claims"). Parsed via
+    :func:`orrery_loop.verdict.parse_verdict`; a fail suppresses the green-stop and feeds the failing
+    criteria back through progress.md. ``gate_result`` defaults None so older/direct callers still
+    work (the block degrades to "(unavailable)").
     """
     diff = ""
     if use_git:
         r = gitutil._git(["diff", "HEAD"], work)
         diff = r.stdout or ""
     contract_text = "\n".join(f"- {c}" for c in contract)
+    gate_block = _verify_gate_block(gate_result, hidden_names, has_held_out)
     judge_prompt = (
-        "You are an independent VERIFIER. REFUTE the claim that the work is done. You see "
-        "ONLY a git diff and a FROZEN acceptance-criteria contract.\n\n"
-        f"FROZEN ACCEPTANCE CRITERIA:\n{contract_text}\n\nGIT DIFF:\n{diff}\n\n"
+        "You are an independent VERIFIER. REFUTE the claim that the work is done. You see the "
+        "gate's REAL test result, a git diff, and a FROZEN acceptance-criteria contract — judge "
+        "the contract against that evidence, not the diff's plausibility.\n\n"
+        f"FROZEN ACCEPTANCE CRITERIA:\n{contract_text}\n\n{gate_block}\n\nGIT DIFF:\n{diff}\n\n"
         'Respond with ONLY JSON: {"pass": <bool>, "failingCriteria": [..], '
         '"evidence": "..", "nextAction": ".."}'
     )
