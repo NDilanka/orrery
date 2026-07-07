@@ -304,14 +304,34 @@ def _gate_from(d: dict[str, Any]) -> GateConfig:
     )
 
 
+# Per-block known-key sets (both spellings) — a typo in any sub-block warns instead of silently
+# vanishing, matching `_gate_from`/`_stop_from`. Keep in sync with the fields each parser reads.
+_COST_KNOWN_KEYS = {"ceilingUsd", "ceiling_usd", "alertPct", "alert_pct"}
+
+
 def _cost_from(d: dict[str, Any]) -> CostConfig:
+    warn_unknown_keys(d, _COST_KNOWN_KEYS, "engine.cost")
     return CostConfig(
         ceiling_usd=float(resolve(d, "ceilingUsd", "ceiling_usd", default=_DEFAULT_CEILING_USD)),
         alert_pct=list(resolve(d, "alertPct", "alert_pct", default=list(_DEFAULT_ALERT_PCT))),
     )
 
 
+# Keys `_stop_from` actually reads (both spellings) — anything else warns, so a typo like
+# `tokenCeilng` is LOUD instead of silently disabling the budget backstop (parity with
+# `_gate_from`'s `_GATE_KNOWN_KEYS` check).
+_STOP_KNOWN_KEYS = {
+    "maxIters", "max_iters",
+    "stagnationLimit", "stagnation_limit",
+    "plateauLimit", "plateau_limit",
+    "regressLimit", "regress_limit",
+    "gracefulAtPhase", "graceful_at_phase",
+    "tokenCeiling", "token_ceiling",
+}
+
+
 def _stop_from(d: dict[str, Any]) -> StopConfig:
+    warn_unknown_keys(d, _STOP_KNOWN_KEYS, "engine.stop")
     return StopConfig(
         max_iters=int(resolve(d, "maxIters", "max_iters", default=_DEFAULT_MAX_ITERS)),
         stagnation_limit=int(
@@ -330,7 +350,17 @@ def _stop_from(d: dict[str, Any]) -> StopConfig:
     )
 
 
+_VERIFY_KNOWN_KEYS = {
+    "judgeModel", "judge_model",
+    "contract",
+    "enabled",
+    "mutationAudit", "mutation_audit",
+    "mutationEvery", "mutation_every",
+}
+
+
 def _verify_from(d: dict[str, Any]) -> VerifyConfig:
+    warn_unknown_keys(d, _VERIFY_KNOWN_KEYS, "engine.verify")
     return VerifyConfig(
         judge_model=resolve(d, "judgeModel", "judge_model", default=_DEFAULT_JUDGE_MODEL),
         contract=list(resolve(d, "contract", default=[])),
@@ -340,11 +370,19 @@ def _verify_from(d: dict[str, Any]) -> VerifyConfig:
     )
 
 
+_FEEDBACK_KNOWN_KEYS = {"compact"}
+
+
 def _feedback_from(d: dict[str, Any]) -> FeedbackConfig:
+    warn_unknown_keys(d, _FEEDBACK_KNOWN_KEYS, "engine.feedback")
     return FeedbackConfig(compact=bool(resolve(d, "compact", default=False)))
 
 
+_MEMORY_KNOWN_KEYS = {"enabled", "path", "recallLimit", "recall_limit"}
+
+
 def _memory_from(d: dict[str, Any]) -> MemoryConfig:
+    warn_unknown_keys(d, _MEMORY_KNOWN_KEYS, "engine.memory")
     return MemoryConfig(
         enabled=bool(resolve(d, "enabled", default=False)),
         path=resolve(d, "path", default=None),
@@ -352,7 +390,11 @@ def _memory_from(d: dict[str, Any]) -> MemoryConfig:
     )
 
 
+_METRICS_KNOWN_KEYS = {"emit"}
+
+
 def _metrics_from(d: dict[str, Any]) -> MetricsConfig:
+    warn_unknown_keys(d, _METRICS_KNOWN_KEYS, "engine.metrics")
     return MetricsConfig(emit=bool(resolve(d, "emit", default=False)))
 
 

@@ -226,6 +226,17 @@ hold real dependencies/scripts — locking those would false-trip on a legitimat
 edit. A project that keeps its test config in one of those should add that
 specific file to `gate.lockGlobs` by hand.
 
+The curated globs are matched **recursively, at any directory depth** (e.g. every
+`conftest.py` in the tree, not just the root one — the same `rglob` semantics the
+test-file lock uses). Tampering is detected on modify, delete, **and add**: a
+locked infra file *created* mid-run (one that wasn't in the baseline hash map)
+trips `tampered` too — because the `collect_ignore`/config-swap attack often works
+by *adding* a new `conftest.py`, not only editing one. The trade-off: legitimately
+introducing a brand-new fixture `conftest.py` during a `lockInfra` run reads as
+tamper — which is the intended "the harness changed, re-baseline deliberately"
+signal, not a bug. Land such infra scaffolding before the run, or leave `lockInfra`
+off while it's still moving.
+
 **Grounded in.** Same spec-gaming concern as the held-out split — Krakovna et
 al., *Specification Gaming* (DeepMind, 2020) and METR's reward-hacking findings
 (2024–2025): if a check can be satisfied by editing the harness instead of the
@@ -249,16 +260,27 @@ Implemented in `engine/orrery_loop/core.py` (`_lock_glob_set`) over the existing
 **Idea.** The always-on `cost.ceilingUsd` bounds a run in **dollars** — but on a
 flat-rate / subscription plan the CLI's dollar figure is ~meaningless, so a
 dollar cap can't actually stop a runaway loop there. `stop.tokenCeiling` adds a
-cumulative **token** budget (input + output + cache tokens, summed across
-iterations). The moment cumulative tokens reach the ceiling the loop stops
-not-green — the token-denominated twin of the cost ceiling, sitting right beside
-it in the decision order (integrity → success → **budget** → drift → caps).
+cumulative **token** budget (input + output + cache-read + cache-creation tokens,
+summed across iterations). The moment cumulative tokens reach the ceiling the loop
+stops not-green — the token-denominated twin of the cost ceiling, sitting right
+beside it in the decision order (integrity → success → **budget** → drift → caps).
 `0` (default) disables it, so a run with no ceiling behaves exactly as before.
+
+> **Calibration note.** The sum counts EVERY token the model saw, at par — this
+> is the deliberate *conservative, fail-safe* reading (it can only ever stop a run
+> *sooner*, never later). Because the loop cold-starts each iteration and re-reads a
+> largely-cached prompt prefix, **`cache_read` tokens dominate the running total**.
+> Those tokens are far cheaper against a real subscription window than fresh input
+> (see the `token-usage` rationale in `events.py`), so `cumTokens` runs well *ahead*
+> of true budget draw — set `tokenCeiling` generously (a backstop, not a precise
+> meter). If you need a spend-proportional cap, weight or drop `cache_read` in a
+> local fork of `total_tokens`.
 
 **Grounded in.** The Claude Agent SDK's `max_budget_usd` guidance — *"setting a
 budget is a good default for production agents"* — generalized to the unit that
-actually binds a subscription run. (The engine already logs per-call token
-telemetry in `token-usage` events; this turns that signal into a stop.)
+actually binds a subscription run. Token counts are read tolerantly from each
+run's `usage` block (the same object the always-on cache-telemetry event reads);
+this turns that signal into a stop.
 
 **Enable.**
 
