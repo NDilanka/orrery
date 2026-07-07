@@ -94,7 +94,10 @@ state dir correctly serialize instead of silently double-running).
 when off; each has a `loop.json` `engine.*` key and a CLI flag. See
 [`../docs/capabilities.md`](../docs/capabilities.md): held-out/hidden test split, compact
 first-failure feedback, lint/type pre-gate, cross-run lessons memory, mutation strength
-audit, run-quality metrics, and an anti-false-green verifier.
+audit, run-quality metrics, an anti-false-green verifier, and a
+test-infrastructure lock (`gate.lockInfra` — extend the hash-lock over
+`conftest.py`/`vitest.config`/etc. so the suite can't be neutered from outside
+the test files).
 
 ### Gate commands and shells
 
