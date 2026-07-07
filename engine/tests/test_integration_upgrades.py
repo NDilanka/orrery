@@ -87,12 +87,14 @@ def _config(
     metrics: MetricsConfig | None = None,
     verify: VerifyConfig | None = None,
     lock_globs=None,
+    lock_infra: bool = False,
 ) -> EngineConfig:
     return EngineConfig(
         task="TASK.md",
         gate=GateConfig(
             stages=stages,
             lock_globs=lock_globs if lock_globs is not None else ["*.locked"],
+            lock_infra=lock_infra,
         ),
         cost=CostConfig(ceiling_usd=100.0),
         stop=StopConfig(max_iters=max_iters, stagnation_limit=99, plateau_limit=99, regress_limit=99),
@@ -329,6 +331,71 @@ def test_held_out_lock_globs_merged_into_tamper_set(tmp_path):
     stops = [e for e in events if e["event"] == "stop"]
     assert stops and stops[-1]["green"] is False
     assert "locked test file" in stops[-1]["reason"]
+
+
+def test_lock_infra_traps_test_config_edit(tmp_path):
+    """A1: with ``gate.lock_infra`` ON, editing a test-INFRASTRUCTURE file (conftest.py) to gut
+    collection trips the tamper detector even though it is not a ``*.test.*`` file and the visible
+    gate is green -> the loop stops NOT green (an actor can't neuter the suite via config)."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+
+    # a pytest-collection file present at baseline (so it is part of the hash-lock baseline)
+    (repo / "conftest.py").write_text("# fixtures\n", encoding="utf-8")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "conftest"], repo)
+
+    stages = [GateStage(name="visible", command=_make_gate(repo))]
+    cfg = _config(repo, stages, max_iters=3, lock_infra=True)
+
+    class InfraTamperRunner(AgentRunner):
+        name = "mock-infra-tamper"
+
+        def __init__(self, repo):
+            self.repo = repo
+
+        def run(self, **kwargs):
+            # green the visible gate BUT also gut test collection via conftest.py
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")
+            (self.repo / "conftest.py").write_text(
+                "collect_ignore_glob = ['*']\n", encoding="utf-8"
+            )
+            return AgentResult(raw="{}", text="t", cost_usd=0.01)
+
+    rc = run_loop(cfg, runner=InfraTamperRunner(repo), state_dir=state, cwd=repo)
+    assert rc == 1, "editing a locked infra file must trip tamper -> not green"
+    stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
+    assert stops and stops[-1]["green"] is False
+    assert "locked test file" in stops[-1]["reason"]
+
+
+def test_lock_infra_off_ignores_test_config_edit(tmp_path):
+    """A1 parity: with ``gate.lock_infra`` OFF (default) the same conftest.py edit is NOT in the
+    hash-lock set, so the run greens exactly as before — the feature is strictly opt-in."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    (repo / "conftest.py").write_text("# fixtures\n", encoding="utf-8")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "conftest"], repo)
+
+    stages = [GateStage(name="visible", command=_make_gate(repo))]
+    cfg = _config(repo, stages, max_iters=3, lock_infra=False)
+
+    class InfraEditRunner(AgentRunner):
+        name = "mock-infra-edit"
+
+        def __init__(self, repo):
+            self.repo = repo
+
+        def run(self, **kwargs):
+            (self.repo / "target.txt").write_text("FIXED\n", encoding="utf-8")
+            (self.repo / "conftest.py").write_text("# edited but not locked\n", encoding="utf-8")
+            return AgentResult(raw="{}", text="t", cost_usd=0.01)
+
+    rc = run_loop(cfg, runner=InfraEditRunner(repo), state_dir=state, cwd=repo)
+    assert rc == 0, "with lock_infra off, editing conftest.py must not trip tamper"
+    stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
+    assert stops and stops[-1]["green"] is True
 
 
 # ===========================================================================

@@ -121,6 +121,16 @@ def test_empty_engine_uses_loop_ps1_defaults():
     assert cfg.gate.stages[0].command == "bun test"
     assert not hasattr(cfg.gate, "green_when")  # removed (Task 5) — gate green is exit==0, always
     assert cfg.gate.lock_globs == ["*.test.ts"]
+    assert cfg.gate.fail_fast is False
+    assert cfg.gate.lock_infra is False  # A1: infra-lock is strictly opt-in
+
+
+def test_lock_infra_parsed_both_spellings():
+    """A1: ``gate.lockInfra`` / ``lock_infra`` toggles the curated infra-file hash-lock."""
+    assert from_loop_json({"engine": {"gate": {"lockInfra": True}}}).gate.lock_infra is True
+    assert from_loop_json({"engine": {"gate": {"lock_infra": True}}}).gate.lock_infra is True
+    # absent -> default off (parity)
+    assert from_loop_json({"engine": {"gate": {}}}).gate.lock_infra is False
 
 
 def test_accepts_engine_block_directly():

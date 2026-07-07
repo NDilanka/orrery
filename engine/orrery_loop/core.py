@@ -33,7 +33,7 @@ from pathlib import Path
 
 from orrery_loop import gitutil
 from orrery_loop.cache import get_cache_usage
-from orrery_loop.config import EngineConfig
+from orrery_loop.config import INFRA_LOCK_GLOBS, EngineConfig
 from orrery_loop.cost import update_cost_alert
 from orrery_loop.decide import decide, update_consecutive_fail
 from orrery_loop.driver_shell import read_stop_request, run_driver, write_checkpoint_now
@@ -113,6 +113,12 @@ def _lock_glob_set(config: EngineConfig, stages: list[dict]) -> list[str]:
     for g in held_out_lock_globs(stages):
         if g not in out:
             out.append(g)
+    # Opt-in: also lock the curated test-infrastructure files so the actor can't neuter the suite
+    # via collection/config instead of the (already-locked) test files. Default OFF -> unchanged.
+    if config.gate.lock_infra:
+        for g in INFRA_LOCK_GLOBS:
+            if g not in out:
+                out.append(g)
     return out
 
 

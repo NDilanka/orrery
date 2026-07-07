@@ -42,6 +42,26 @@ _DEFAULT_PERMISSION_MODE = "acceptEdits"
 _DEFAULT_ALLOWED_TOOLS = ["Read", "Edit", "Write", "Bash(bun test)", "Bash(bun test:*)"]
 _DEFAULT_GRACEFUL_AT_PHASE = True
 _DEFAULT_LOCK_GLOBS = ["*.test.ts"]
+# Curated *pure* test-infrastructure files whose only job is test collection/config. When
+# ``gate.lock_infra`` is on, these globs are merged into the hash-lock set
+# (:func:`orrery_loop.core._lock_glob_set`) so an actor cannot neuter the suite by editing
+# collection/config (e.g. skipping tests in ``conftest.py`` or a ``vitest.config``) instead of the
+# already-locked test files. Deliberately EXCLUDES dual-purpose files (``pyproject.toml``,
+# ``package.json``, ``setup.cfg``): those hold real dependencies/scripts too, so locking them would
+# trip a false tamper on a legitimate edit — a project that keeps its test config there should add
+# the specific file to ``gate.lockGlobs`` explicitly.
+INFRA_LOCK_GLOBS = [
+    "conftest.py",
+    "pytest.ini",
+    "tox.ini",
+    "bunfig.toml",
+    "jest.config.*",
+    "vitest.config.*",
+    "playwright.config.*",
+    "cypress.config.*",
+    "karma.conf.*",
+    ".mocharc.*",
+]
 _DEFAULT_JUDGE_MODEL = "haiku"
 _DEFAULT_GATE_STAGES = [
     {
@@ -112,6 +132,11 @@ class GateConfig:
     # stages still appear in the result — see :func:`orrery_loop.gate.run_gate`). Default OFF so the gate
     # runs every stage exactly as before (parity).
     fail_fast: bool = False
+    # Opt-in: also hash-lock the curated test-INFRASTRUCTURE files (:data:`INFRA_LOCK_GLOBS`) so an
+    # actor can't neuter the suite by editing collection/config (conftest.py, pytest.ini, a
+    # jest/vitest/playwright config, …) instead of the already-locked test files. Default OFF so
+    # the hash-lock set is byte-identical to before (parity).
+    lock_infra: bool = False
 
 
 @dataclass
@@ -237,7 +262,15 @@ class EngineConfig:
 # `green_when` are RETIRED (Task 5): the field was parsed but the gate has always hardcoded
 # "green = every stage exit 0" (orrery_loop.gate.run_gate); old configs that still carry it get a
 # gentler "retired" notice instead of "unrecognized key".
-_GATE_KNOWN_KEYS = {"stages", "lockGlobs", "lock_globs", "failFast", "fail_fast"}
+_GATE_KNOWN_KEYS = {
+    "stages",
+    "lockGlobs",
+    "lock_globs",
+    "failFast",
+    "fail_fast",
+    "lockInfra",
+    "lock_infra",
+}
 _GATE_RETIRED_KEYS = {"greenWhen", "green_when"}
 
 
@@ -262,6 +295,7 @@ def _gate_from(d: dict[str, Any]) -> GateConfig:
         stages=stages,
         lock_globs=list(resolve(d, "lockGlobs", "lock_globs", default=list(_DEFAULT_LOCK_GLOBS))),
         fail_fast=bool(resolve(d, "failFast", "fail_fast", default=False)),
+        lock_infra=bool(resolve(d, "lockInfra", "lock_infra", default=False)),
     )
 
 

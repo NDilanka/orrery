@@ -206,6 +206,41 @@ Emits a single `metrics` event at stop with `firstTryGreen`, `itersToGreen`,
 
 ---
 
+## 7. Test-infrastructure lock
+
+**Idea.** The always-on hash-lock freezes the *test files* (`gate.lockGlobs`,
+default `*.test.ts`) so the agent can't weaken assertions. But a suite can also
+be neutered from *outside* the test files — skip collection in `conftest.py`,
+change a `vitest.config`/`jest.config`, point the runner at an empty dir. Turning
+`lockInfra` on extends the same tamper detector over a curated set of **pure
+test-infrastructure files**, so editing them mid-run trips `tampered` (a forced
+not-green stop) exactly like editing a locked test file. The curated set
+(`INFRA_LOCK_GLOBS` in `config.py`): `conftest.py`, `pytest.ini`, `tox.ini`,
+`bunfig.toml`, `jest.config.*`, `vitest.config.*`, `playwright.config.*`,
+`cypress.config.*`, `karma.conf.*`, `.mocharc.*`. It deliberately **excludes**
+dual-purpose files (`pyproject.toml`, `package.json`, `setup.cfg`) that also
+hold real dependencies/scripts — locking those would false-trip on a legitimate
+edit. A project that keeps its test config in one of those should add that
+specific file to `gate.lockGlobs` by hand.
+
+**Grounded in.** Same spec-gaming concern as the held-out split — Krakovna et
+al., *Specification Gaming* (DeepMind, 2020) and METR's reward-hacking findings
+(2024–2025): if a check can be satisfied by editing the harness instead of the
+code, an unattended agent eventually will. Freezing the harness removes that
+surface.
+
+**Enable.**
+
+```jsonc
+"gate": { "lockInfra": true, "lockGlobs": ["**/test_*.py"] }
+```
+
+No dedicated CLI flag — it is a property of the `gate` block (like `heldOut`).
+Implemented in `engine/orrery_loop/core.py` (`_lock_glob_set`) over the existing
+`engine/orrery_loop/hashlock.py` tamper detector.
+
+---
+
 ## Parity guarantee
 
 With **no** flags set and **no** non-default gate stages, the loop emits exactly
