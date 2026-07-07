@@ -241,6 +241,35 @@ Implemented in `engine/orrery_loop/core.py` (`_lock_glob_set`) over the existing
 
 ---
 
+## 8. Token-budget ceiling
+
+**Idea.** The always-on `cost.ceilingUsd` bounds a run in **dollars** — but on a
+flat-rate / subscription plan the CLI's dollar figure is ~meaningless, so a
+dollar cap can't actually stop a runaway loop there. `stop.tokenCeiling` adds a
+cumulative **token** budget (input + output + cache tokens, summed across
+iterations). The moment cumulative tokens reach the ceiling the loop stops
+not-green — the token-denominated twin of the cost ceiling, sitting right beside
+it in the decision order (integrity → success → **budget** → drift → caps).
+`0` (default) disables it, so a run with no ceiling behaves exactly as before.
+
+**Grounded in.** The Claude Agent SDK's `max_budget_usd` guidance — *"setting a
+budget is a good default for production agents"* — generalized to the unit that
+actually binds a subscription run. (The engine already logs per-call token
+telemetry in `token-usage` events; this turns that signal into a stop.)
+
+**Enable.**
+
+```jsonc
+"stop": { "tokenCeiling": 2000000 }
+```
+
+No dedicated CLI flag (it is a `stop.*` knob, like `maxIters`). Token totals are
+read tolerantly from each run's `usage` block via
+`engine/orrery_loop/cache.py` (`total_tokens`); the stop itself is decided in
+`engine/orrery_loop/decide.py` (`token ceiling <N> reached`).
+
+---
+
 ## Parity guarantee
 
 With **no** flags set and **no** non-default gate stages, the loop emits exactly

@@ -88,6 +88,7 @@ def _config(
     verify: VerifyConfig | None = None,
     lock_globs=None,
     lock_infra: bool = False,
+    token_ceiling: int = 0,
 ) -> EngineConfig:
     return EngineConfig(
         task="TASK.md",
@@ -97,7 +98,13 @@ def _config(
             lock_infra=lock_infra,
         ),
         cost=CostConfig(ceiling_usd=100.0),
-        stop=StopConfig(max_iters=max_iters, stagnation_limit=99, plateau_limit=99, regress_limit=99),
+        stop=StopConfig(
+            max_iters=max_iters,
+            stagnation_limit=99,
+            plateau_limit=99,
+            regress_limit=99,
+            token_ceiling=token_ceiling,
+        ),
         verify=verify or VerifyConfig(),
         feedback=feedback or FeedbackConfig(),
         memory=memory or MemoryConfig(),
@@ -396,6 +403,52 @@ def test_lock_infra_off_ignores_test_config_edit(tmp_path):
     assert rc == 0, "with lock_infra off, editing conftest.py must not trip tamper"
     stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
     assert stops and stops[-1]["green"] is True
+
+
+def test_token_ceiling_stops_a_red_run(tmp_path):
+    """A2: cumulative tokens crossing ``stop.tokenCeiling`` stops the loop not-green while the
+    gate is still red — the token ceiling sits beside the USD ceiling in decide(), above the
+    stagnation/plateau/max-iters stops."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    stages = [GateStage(name="visible", command=_make_gate(repo))]  # stays red (never FIXED)
+    cfg = _config(repo, stages, max_iters=10, token_ceiling=1000)
+
+    class TokenBurner(AgentRunner):
+        name = "mock-token-burner"
+
+        def run(self, **kwargs):
+            # no repo change (gate stays red) but report 500 tokens/iteration
+            return AgentResult(raw="{}", text="t", cost_usd=0.0, usage={"output_tokens": 500})
+
+    rc = run_loop(cfg, runner=TokenBurner(), state_dir=state, cwd=repo)
+    assert rc == 1, "token ceiling must stop the run"
+    stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
+    assert stops and stops[-1]["green"] is False
+    assert stops[-1]["reason"] == "token ceiling 1000 reached"
+    # crossed the 1000 ceiling at iteration 2 (500 + 500), not later
+    iters = [e for e in _events(state / "log.jsonl") if e["event"] == "iter"]
+    assert len(iters) == 2
+
+
+def test_token_ceiling_off_by_default_runs_to_max_iters(tmp_path):
+    """A2 parity: with tokenCeiling 0 (default) a red run is bounded only by max_iters, exactly
+    as before — the ceiling is strictly opt-in."""
+    repo = _init_repo(tmp_path)
+    state = tmp_path / "state"
+    stages = [GateStage(name="visible", command=_make_gate(repo))]
+    cfg = _config(repo, stages, max_iters=3, token_ceiling=0)
+
+    class TokenBurner(AgentRunner):
+        name = "mock-token-burner-off"
+
+        def run(self, **kwargs):
+            return AgentResult(raw="{}", text="t", cost_usd=0.0, usage={"output_tokens": 999999})
+
+    rc = run_loop(cfg, runner=TokenBurner(), state_dir=state, cwd=repo)
+    assert rc == 1
+    stops = [e for e in _events(state / "log.jsonl") if e["event"] == "stop"]
+    assert stops and "max iterations" in stops[-1]["reason"]
 
 
 # ===========================================================================

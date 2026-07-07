@@ -90,3 +90,31 @@ def get_cache_usage(usage: Any) -> CacheUsage:
         hit_ratio=hit_ratio,
         warm=warm,
     )
+
+
+def total_tokens(usage: Any) -> int:
+    """Total tokens a single agent run processed: input + output + cache_read + cache_creation.
+
+    Same tolerant parsing as :func:`get_cache_usage` (dict / raw JSON string / a full result
+    object with a nested ``usage``; snake_case or camelCase; a missing counter -> 0). Used by
+    the generic loop's optional token-budget ceiling (``stop.tokenCeiling``) — the subscription-era
+    analogue of the USD cost ceiling, since on a flat-rate plan the binding constraint is tokens,
+    not dollars. Counts EVERY token the model saw (the conservative, spend-soonest reading);
+    a run with no ``usage`` block yields 0. No I/O, no claude.
+    """
+    u = usage
+    if isinstance(u, str):
+        try:
+            u = json.loads(u)
+        except (ValueError, TypeError):
+            u = None
+    if isinstance(u, dict) and u.get("usage"):
+        u = u["usage"]
+    elif u is not None and not isinstance(u, dict) and getattr(u, "usage", None):
+        u = u.usage
+    return (
+        _get(u, ("input_tokens", "inputTokens"))
+        + _get(u, ("output_tokens", "outputTokens"))
+        + _get(u, ("cache_read_input_tokens", "cacheReadInputTokens"))
+        + _get(u, ("cache_creation_input_tokens", "cacheCreationInputTokens"))
+    )

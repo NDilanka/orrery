@@ -67,6 +67,25 @@ def test_cost_ceiling_beats_regress():
     assert d.reason == "cost ceiling $3.0 reached"
 
 
+def test_token_ceiling_stops_when_reached():
+    # A2: cumulative tokens at/over a positive ceiling stops (not-green), beside the cost ceiling.
+    d = D(cum_tokens=1000, token_ceiling=1000, pass_=1, best_pass=5)
+    assert d.action == "stop"
+    assert d.green is False
+    assert d.reason == "token ceiling 1000 reached"
+
+
+def test_token_ceiling_disabled_by_default():
+    # A2 parity: ceiling 0 (default) never fires no matter how many tokens accrued.
+    d = D(cum_tokens=10_000_000, token_ceiling=0)
+    assert d.reason == "advance" and d.action == "continue"
+
+
+def test_token_ceiling_below_threshold_does_not_stop():
+    d = D(cum_tokens=999, token_ceiling=1000)
+    assert d.action == "continue" and d.reason == "advance"
+
+
 def test_regression_rollback():
     d = D(pass_=3, best_pass=5)
     assert d.action == "rollback"

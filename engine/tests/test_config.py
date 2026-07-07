@@ -114,6 +114,7 @@ def test_empty_engine_uses_loop_ps1_defaults():
     assert cfg.stop.plateau_limit == 3
     assert cfg.stop.regress_limit == 3
     assert cfg.stop.graceful_at_phase is True
+    assert cfg.stop.token_ceiling == 0  # A2: token ceiling is opt-in (disabled by default)
     assert cfg.verify.judge_model == "haiku"
     assert cfg.verify.contract == []
     # default gate stage is the single bun-test stage from loopcore.ps1
@@ -131,6 +132,14 @@ def test_lock_infra_parsed_both_spellings():
     assert from_loop_json({"engine": {"gate": {"lock_infra": True}}}).gate.lock_infra is True
     # absent -> default off (parity)
     assert from_loop_json({"engine": {"gate": {}}}).gate.lock_infra is False
+
+
+def test_token_ceiling_parsed_both_spellings():
+    """A2: ``stop.tokenCeiling`` / ``token_ceiling`` sets the cumulative token budget."""
+    assert from_loop_json({"engine": {"stop": {"tokenCeiling": 50000}}}).stop.token_ceiling == 50000
+    assert from_loop_json({"engine": {"stop": {"token_ceiling": 42}}}).stop.token_ceiling == 42
+    # absent -> default 0 (disabled)
+    assert from_loop_json({"engine": {"stop": {}}}).stop.token_ceiling == 0
 
 
 def test_accepts_engine_block_directly():
