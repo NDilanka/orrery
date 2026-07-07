@@ -167,11 +167,14 @@ green iter). Emits an additive `mutation` event with the score. Implemented in
 `engine/orrery_loop/verify.py` (`mutation_audit`).
 
 > Related (separate flag): the **anti-false-green verifier** — a second,
-> independent cheap-tier judge that sees only the diff + a frozen
-> acceptance-criteria contract and tries to *refute* "done". Enable with
-> `"verify": { "enabled": true }` / `loop --verify`. Grounded in the same
-> spec-gaming concern (Krakovna et al., 2020); a tool-running gate plus an
-> independent judge beats a single self-assessment.
+> independent cheap-tier judge that sees the gate's **real test result** (the
+> pass/fail/total counts plus a bounded, held-out-stripped tail of the gate
+> output), the diff, and a frozen acceptance-criteria contract, and tries to
+> *refute* "done" against that evidence. Enable with `"verify": { "enabled":
+> true }` / `loop --verify`. Grounded in the same spec-gaming concern (Krakovna
+> et al., 2020) plus "demand evidence, not claims"; a tool-running gate plus an
+> independent judge that reads the gate's evidence beats a single
+> self-assessment.
 
 ---
 
