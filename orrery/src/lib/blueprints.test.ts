@@ -194,6 +194,28 @@ describe('composeLoopDef', () => {
     expect(def.start.program).toBe('loop');
     assertEngineIsWarningFree(def.engine);
   });
+
+  it('passes a supplied cwd through to start.args (--cwd <cwd>), defaulting to "."', () => {
+    const bp = BLUEPRINTS.grind;
+    const base = {
+      id: 'c',
+      name: 'c',
+      blueprint: bp,
+      dials: bp.dials,
+      destination: bp.destination,
+      stateDir: '.loop',
+      task: 'TASK.md',
+    };
+
+    const withCwd = composeLoopDef({ ...base, cwd: 'D:/dev/app' });
+    const i = withCwd.start.args.indexOf('--cwd');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(withCwd.start.args[i + 1]).toBe('D:/dev/app');
+
+    const noCwd = composeLoopDef(base);
+    const j = noCwd.start.args.indexOf('--cwd');
+    expect(noCwd.start.args[j + 1]).toBe('.');
+  });
 });
 
 describe('validateDraft', () => {

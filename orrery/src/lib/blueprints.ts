@@ -420,6 +420,9 @@ export interface ConsoleInput {
   destination: { acceptanceCriteria: string[]; gateStages: GateStageDef[] };
   stateDir: string;
   task: string;
+  // the working dir the generic loop runs its gate/git/agent in; empty = its
+  // own loops/<id>/ folder (the '.' the Rust side resolves against the loop dir).
+  cwd?: string;
   // drawer overrides: a partial EngineConfig deep-merged over the composed one.
   engineOverrides?: Partial<EngineConfig>;
 }
@@ -450,7 +453,7 @@ export function composeLoopDef(input: ConsoleInput): LoopDefDraft {
     // `loop.json` land in the right place regardless of the app's own cwd.
     start: {
       program: 'loop',
-      args: ['--loop-json', 'loop.json', '--cwd', '.', '--state-dir', input.stateDir],
+      args: ['--loop-json', 'loop.json', '--cwd', input.cwd?.trim() || '.', '--state-dir', input.stateDir],
     },
     engine,
   };
