@@ -30,6 +30,7 @@
   import { browser } from '$app/environment';
   import { cosmosStore, type LoopSummary } from '../stores/cosmos.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
   import { fmtRelative } from '../timefmt';
   import { restColor, stateKey, stateGlyph, stateLabel } from '../palette';
   import { initTheme, FALLBACK } from '../theme';
@@ -98,6 +99,17 @@
     // M5.1 — canvas-only scene hues (atmosphere tint, runCore); see SCENE_FALLBACK above.
     scene: FALLBACK.scene ?? SCENE_FALLBACK,
   };
+
+  // WS-C (full light theme): re-tint the whole Pixi scene when the app theme flips
+  // (dark ⇄ light). `retintScene` is assigned once Pixi is up (inside onMount); this effect
+  // watches the sanctioned reactive source (settingsStore.resolvedTheme). The re-tint ALSO
+  // runs off a MutationObserver on <html data-theme> inside onMount, so a raw attribute
+  // toggle re-tints too — both paths converge on one guarded function, so a double-fire is a
+  // cheap no-op. Dark is the default and untouched: with data-theme=dark this never re-tints.
+  let retintScene: (() => void) | null = null;
+  $effect(() => {
+    if (settingsStore.resolvedTheme) retintScene?.();
+  });
 
   function fmtUsd(n: number): string {
     return '$' + n.toFixed(2);
@@ -240,13 +252,25 @@
       // regenerated on resize; the per-frame twinkle/drift redraw lives in tick(). ──
       let starData: ReturnType<typeof makeStarfieldLayers>;
       // M5: far layer leans cooler/tealer (was starlight/frost) — the atmosphere aurora cast
-      // reaches the starfield itself, not just the wash below.
-      const farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
+      // reaches the starfield itself, not just the wash below. WS-C: now `let` so the theme
+      // flip (applyThemeToScene) can recompute it from the light-tuned starlight/atmo.
+      let farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
+
+      // WS-C: the scene follows the LIVE <html data-theme> attribute (not the store) so both
+      // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
+      const currentTheme = () =>
+        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 
       // ── M2.9: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
       function rebuildVignette(vw: number, vh: number) {
-        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh);
+        // Dark path is byte-identical to before (default black, cornerAlpha 0.7). Light gets a
+        // gentle dark-slate corner at low alpha so a light void still frames with a little
+        // depth instead of heavy black corners.
+        const tex =
+          currentTheme() === 'light'
+            ? makeVignetteTexture(PIXI, app.renderer, vw, vh, { color: 0x2a2f3e, cornerAlpha: 0.16 })
+            : makeVignetteTexture(PIXI, app.renderer, vw, vh);
         if (vignetteSprite) {
           const old = vignetteSprite.texture;
           vignetteSprite.texture = tex;
@@ -264,6 +288,50 @@
       starData = makeStarfieldLayers(w, h);
       rebuildVignette(w, h);
       resizeAurora(w, h);
+
+      // ── WS-C: theme flip (dark ⇄ light) re-tint ──────────────────────────────
+      // Re-probe the now-overridden CSS vars (theme.ts), rebuild the palette, flip the
+      // renderer background, re-tint the aurora, recompute the starfield tint, and regenerate
+      // the baked vignette texture for the new theme. The rAF tick reads C/farTint fresh every
+      // frame and eases each glyph color via restColor(theme()) — so the glyph discs/glows
+      // cross-fade to the new scene hues on their own; no per-glyph texture is baked. Guarded
+      // on the live attribute so both the store effect and the observer below are idempotent.
+      let appliedSceneTheme = currentTheme();
+      function applyThemeToScene() {
+        const th = currentTheme();
+        if (th === appliedSceneTheme) return;
+        appliedSceneTheme = th;
+        const t = initTheme();
+        C = {
+          void: t.void,
+          brass: t.brass,
+          starlight: t.starlight,
+          ember: t.ember,
+          cyan: t.cyan,
+          amber: t.amber,
+          green: t.green,
+          crimson: t.crimson,
+          auditor: t.auditor,
+          horizonRose: t.horizonRose,
+          frost: t.frost,
+          em: t.em ?? FALLBACK.em,
+          scene: t.scene ?? FALLBACK.scene ?? SCENE_FALLBACK,
+        };
+        try {
+          app.renderer.background.color = C.void;
+        } catch {
+          /* ignore — older/newer Pixi background API shape */
+        }
+        aurora.tint = C.scene.atmo;
+        farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
+        rebuildVignette(w, h);
+      }
+      retintScene = applyThemeToScene;
+      const themeObserver = new MutationObserver(() => applyThemeToScene());
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
 
       // ── layout: a balanced, CENTRED constellation that reflows on resize ──
       // Cell size is CAPPED so a couple of loops cluster together in the middle
@@ -351,6 +419,8 @@
       app.canvas.addEventListener('click', onClick);
       cleanup = () => {
         ro.disconnect();
+        themeObserver.disconnect();
+        retintScene = null;
         app.canvas.removeEventListener('mousemove', onMove);
         app.canvas.removeEventListener('click', onClick);
         // explicit texture teardown — app.destroy(true, { children: true }) below tears down

@@ -21,6 +21,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+# WS-D: settings persistence (tauri-plugin-store), native file dialogs (tauri-plugin-dialog).
+tauri-plugin-store = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Loop Protocol watching + parsing
@@ -35,4 +38,16 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs"] }
 getrandom = "0.2"
+
+# WS-D: OS keychain for BYOK secrets (keyring v3). The native backend is selected
+# per-platform so a Windows build never pulls the Linux secret-service / macOS
+# Security stack (and vice-versa). Secrets go through OUR OWN keychain_* commands.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
 

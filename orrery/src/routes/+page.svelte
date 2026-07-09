@@ -38,12 +38,14 @@
   import ShareButton from '$lib/panels/ShareButton.svelte';
   import AlertBanner from '$lib/panels/AlertBanner.svelte';
   import CommandPalette from '$lib/panels/CommandPalette.svelte';
+  import SettingsOverlay from '$lib/panels/settings/SettingsOverlay.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import { sessionStore } from '$lib/stores/session.svelte';
   import { alertStore } from '$lib/stores/alerts.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { hasTauri, hasWsServer, LOOPS } from '$lib/transport';
 
   type View = 'cosmos' | 'system' | 'body';
@@ -53,6 +55,7 @@
   let bodyKey = $state<string | null>(null);
   let showHelp = $state(false); // the keyboard-shortcut legend overlay
   let showPalette = $state(false); // M3.1 command palette (Ctrl/Cmd+K)
+  let showSettings = $state(false); // app settings modal (Ctrl/Cmd+,)
   let mode = $state<'live' | 'replay'>('replay');
   // The kind of the transport that ACTUALLY mounted for the active System (single source of
   // truth for the badge, tracked by sessionStore) — vs `mode`, which is only the environment's
@@ -166,12 +169,28 @@
     )
       return;
     if (cosmosStore.console) return; // the Tuning Console owns its own keys while open
+    // The settings modal owns all keys while open (its focusTrap handles Tab; here we only
+    // handle its close chords) so no app shortcut leaks to the shell beneath it.
+    if (showSettings) {
+      if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.key === ',')) {
+        showSettings = false;
+        e.preventDefault();
+      }
+      return;
+    }
     // Ctrl/Cmd+K — the command palette. Simplest correct behavior (M3.1): ignored while
     // another modal (Help) or the palette itself is already open, rather than trying to
     // stack/z-fight above them.
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-      if (showHelp || showPalette) return;
+      if (showHelp || showPalette || showSettings) return;
       showPalette = true;
+      e.preventDefault();
+      return;
+    }
+    // Ctrl/Cmd+, — the settings modal (the macOS convention). Ignored while another modal is up.
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      if (showHelp || showPalette) return;
+      showSettings = true;
       e.preventDefault();
       return;
     }
@@ -216,7 +235,7 @@
   }
   $effect(() => {
     if (!cosmosShouldPoll()) return;
-    const id = setInterval(refreshCosmosIfDue, COSMOS_POLL_MS);
+    const id = setInterval(refreshCosmosIfDue, settingsStore.data.general.cosmosPollMs || COSMOS_POLL_MS);
     return () => clearInterval(id);
   });
   // also catch up the instant the window regains focus (e.g. after being away)
@@ -249,10 +268,16 @@
   onMount(() => {
     mode = hasTauri() || hasWsServer() ? 'live' : 'replay';
     const teardownUi = uiStore.init(); // viewport + reduced-motion + phone default
+    // App settings: load persisted prefs, start the config-file watcher, apply the theme.
+    let teardownSettings: (() => void) | undefined;
+    void settingsStore.init().then((fn) => {
+      teardownSettings = fn;
+    });
     void cosmosStore.load();
     window.addEventListener('keydown', onKeydown);
     return () => {
       teardownUi();
+      teardownSettings?.();
       sessionStore.unmountLoop();
       window.removeEventListener('keydown', onKeydown);
     };
@@ -281,7 +306,9 @@
         <Cosmos onEnter={enterSystem} />
         <!-- M2.3 grain (CSS part): static, full-bleed over the Cosmos canvas only — this
              layer IS the canvas at this altitude, no rails to avoid. -->
-        <div class="grain" aria-hidden="true"></div>
+        {#if settingsStore.data.appearance.grain}
+          <div class="grain" aria-hidden="true"></div>
+        {/if}
       {/if}
     </div>
 
@@ -302,7 +329,9 @@
         </div>
         <!-- M2.3 grain: now viewport-sized (stage level, below the chrome) instead of
              bounded to the old canvas grid cell. -->
-        <div class="grain" aria-hidden="true"></div>
+        {#if settingsStore.data.appearance.grain}
+          <div class="grain" aria-hidden="true"></div>
+        {/if}
 
         <!-- wave U2 Task 1 (M4.3: topbar row removed — merged into the one top rail
              below) — a CSS grid dock places the floating chrome (rails/dock/strip) over
@@ -475,6 +504,15 @@
           aria-label="Open command palette"
           onclick={() => (showPalette = true)}>{kbdChip}</button
         >
+        <!-- app settings (Ctrl/Cmd+,) — a calm ghost gear beside the palette hint. -->
+        <button
+          class="nbtn settings-gear"
+          title="Settings"
+          aria-label="Open settings"
+          onclick={() => (showSettings = true)}
+        >
+          <span aria-hidden="true">⚙</span>
+        </button>
       </div>
     </nav>
 
@@ -509,7 +547,16 @@
         onBackToSystem={backToSystem}
         onBackToCosmos={backToCosmos}
         onOpenHelp={() => (showHelp = true)}
+        onOpenSettings={() => {
+          showPalette = false;
+          showSettings = true;
+        }}
       />
+    {/if}
+
+    <!-- app settings modal (gear / Ctrl/Cmd+,) — mirrors HelpOverlay; +page owns mount. -->
+    {#if showSettings}
+      <SettingsOverlay onClose={() => (showSettings = false)} />
     {/if}
 
     <!-- A5: the Tuning Console (create / edit a loop) -->

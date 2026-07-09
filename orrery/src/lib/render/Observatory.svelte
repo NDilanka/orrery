@@ -32,6 +32,7 @@
   import { browser } from '$app/environment';
   import { runStore, STAR_R0, STAR_K, RING_BASE } from '../stores/run.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
   import { restColor } from '../palette';
   import { initTheme, FALLBACK, type EmTiers } from '../theme';
   import {
@@ -134,6 +135,17 @@
   // ThemeColors/`typeof FALLBACK` (theme.ts's compat note for hand-written partials) — this
   // way every read below is non-nullable without a chain of `!`/`?.` at every call site.
   let emC: EmTiers = FALLBACK.em as EmTiers;
+
+  // WS-C (full light theme): re-tint the whole Pixi scene when the app theme flips
+  // (dark ⇄ light). `retintScene` is assigned once Pixi is up (inside onMount); this effect
+  // watches the sanctioned reactive source (settingsStore.resolvedTheme). The re-tint ALSO
+  // runs off a MutationObserver on <html data-theme> inside onMount, so a raw attribute toggle
+  // re-tints too — both converge on one guarded function, so a double-fire is a cheap no-op.
+  // Dark is the default and untouched: with data-theme=dark this never re-tints.
+  let retintScene: (() => void) | null = null;
+  $effect(() => {
+    if (settingsStore.resolvedTheme) retintScene?.();
+  });
 
   function modelColor(m: string): number {
     if (m === 'haiku') return C.haiku;
@@ -445,9 +457,17 @@
       // pre-existing frost mix — kept faint (0.22 of the way) so it reads as atmosphere, not a
       // hue swap. A subset of the NEAR layer is tinted the same way below (every 9th star) for
       // a "the sky itself has color" read without recoloring the whole field.
-      const sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
-      const farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
-      const nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
+      // WS-C: `let` (was const) so applyThemeToScene can recompute all three from the
+      // light-tuned starlight/frost/atmo when the theme flips — the starfield tick reads them
+      // fresh each frame, so it re-tints immediately after a flip.
+      let sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
+      let farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
+      let nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
+
+      // WS-C: the scene follows the LIVE <html data-theme> attribute (not the store) so both
+      // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
+      const currentTheme = () =>
+        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 
       // ── M2.3: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
@@ -468,7 +488,12 @@
         // independent of the color-mute constants above. Scoped down hard for Observatory's
         // own call only (fx.ts's exported default is untouched — Cosmos unaffected) so the
         // new scene hues + corona actually have room to read.
-        const tex = makeVignetteTexture(PIXI, app.renderer, vw, vh, { cornerAlpha: 0.2 });
+        // WS-C: dark path unchanged (cornerAlpha 0.2, default black). Light gets a gentler
+        // dark-slate corner so a light void keeps a touch of framing depth without heavy black.
+        const tex =
+          currentTheme() === 'light'
+            ? makeVignetteTexture(PIXI, app.renderer, vw, vh, { color: 0x2a2f3e, cornerAlpha: 0.1 })
+            : makeVignetteTexture(PIXI, app.renderer, vw, vh, { cornerAlpha: 0.2 });
         if (vignetteSprite) {
           const old = vignetteSprite.texture;
           vignetteSprite.texture = tex;
@@ -592,6 +617,60 @@
         vis.cy = c0.y;
       }
 
+      // ── WS-C: theme flip (dark ⇄ light) re-tint ──────────────────────────────
+      // Re-probe the now-overridden CSS vars (theme.ts), rebuild the palette + emphasis tiers,
+      // flip the renderer background, recompute the starfield tints, and regenerate the baked
+      // vignette textures (black + aurora) for the new theme. The eased star/corona/emit colors
+      // self-correct in tick() (they lerp toward restColor(theme())/modelColor() each frame), so
+      // the star and planets cross-fade to the new scene hues on their own — no per-body texture
+      // is baked (the glow/particle textures are WHITE and tinted at runtime). Guarded on the
+      // live attribute so both the store effect and the observer below stay idempotent.
+      let appliedSceneTheme = currentTheme();
+      function applyThemeToScene() {
+        const th = currentTheme();
+        if (th === appliedSceneTheme) return;
+        appliedSceneTheme = th;
+        const t = initTheme();
+        C = {
+          void: t.void,
+          brass: t.brass,
+          starlight: t.starlight,
+          ember: t.ember,
+          cyan: t.cyan,
+          amber: t.amber,
+          green: t.green,
+          crimson: t.crimson,
+          indigo: t.indigo,
+          auditor: t.auditor,
+          ghostBrass: t.ghostBrass,
+          cacheTeal: t.cacheTeal,
+          horizonRose: t.horizonRose,
+          frost: t.frost,
+          haiku: t.haiku,
+          sonnet: t.sonnet,
+          opus: t.opus,
+          hairline: t.hairline,
+          status: t.status,
+          scene: t.scene,
+        };
+        emC = t.em as EmTiers;
+        try {
+          app.renderer.background.color = C.void;
+        } catch {
+          /* ignore — older/newer Pixi background API shape */
+        }
+        sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
+        farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
+        nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
+        rebuildVignette(w, h);
+      }
+      retintScene = applyThemeToScene;
+      const themeObserver = new MutationObserver(() => applyThemeToScene());
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+
       const onResize = () => {
         w = host.clientWidth || 800;
         h = host.clientHeight || 600;
@@ -641,6 +720,8 @@
       app.canvas.addEventListener('mouseleave', onLeave);
       cleanupResize = () => {
         ro.disconnect();
+        themeObserver.disconnect();
+        retintScene = null;
         app.canvas.removeEventListener('click', onClick);
         app.canvas.removeEventListener('pointerdown', onPointerDown);
         app.canvas.removeEventListener('mousemove', onMove);

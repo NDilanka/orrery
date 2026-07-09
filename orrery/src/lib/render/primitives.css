@@ -313,3 +313,48 @@
 .slider:focus-visible::-moz-range-thumb {
   box-shadow: 0 0 0 2px var(--n1), 0 0 0 4px var(--em-hi);
 }
+
+/* ══ .input / .field — shared form-field primitives (Settings, WS-B) ═══════════════════
+   Lifted from TuningConsole's local .inp/.field/.flab so every settings control shares one
+   text/number/select input treatment. Monochrome only (chrome): --surface-void fill,
+   --hairline border, --em-* text, the same hover/focus border tint TuningConsole/QAConsole/
+   DecisionSheet use. The visible keyboard focus ring is the global :focus-visible white
+   double-ring (tokens.css) — these rules only tint the resting/hover/invalid border, never a
+   scene hue. `.input.invalid` borrows the sanctioned alert red for a genuine validation error.
+   TuningConsole keeps its own local .inp/.field/.flab for now (additive — not refactored). */
+.input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-void);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--em-hi);
+  font-family: var(--font-grotesk);
+  font-size: var(--text-sm);
+  padding: 7px 9px;
+  transition: border-color var(--dur-feedback) var(--ease-standard);
+}
+.input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--em-mid) 30%, var(--hairline));
+}
+.input:focus {
+  border-color: color-mix(in srgb, var(--em-mid) 50%, transparent);
+}
+.input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.input.invalid {
+  border-color: var(--status-err-core);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.field-label {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--em-low);
+}

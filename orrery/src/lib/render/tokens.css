@@ -226,6 +226,89 @@
   --floating-card-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   LIGHT THEME (WS-C) — FULL light: chrome AND canvas. Applies only under
+   <html data-theme="light">, which settingsStore mirrors from appearance.theme
+   (and app.html's FOUC script sets before first paint). The dark :root above is
+   the DEFAULT and is left byte-for-byte untouched — every rule below is an
+   OVERRIDE that wins purely on the [data-theme='light'] attribute's higher
+   specificity, so removing/ignoring it returns the exact dark app.
+
+   The Pixi canvases re-tint because theme.ts re-probes these live vars on a
+   theme flip (Cosmos/Observatory re-run initTheme() and rebuild their palettes)
+   — nothing here is baked into a texture. Honest limitation: screen-blended
+   glow/corona bloom is inherently weak over a light void, so on light the
+   saturated NORMAL-blend discs/marks (not the halos) carry state identity. */
+:root[data-theme='light'] {
+  /* ── emphasis ramp inverts to dark-ink-on-light (chrome reads --em-* directly
+     everywhere; monochrome hierarchy is still lightness alone). Tuned for the
+     4.5:1 (label) / 3:1 (decorative) bars against the light surfaces below. ── */
+  --em-hi: oklch(0.22 0.01 265); /* primary values / headings */
+  --em-mid: oklch(0.4 0.01 265); /* body */
+  --em-low: oklch(0.47 0.01 265); /* labels — ≥4.5:1 on --n2 */
+  --em-faint: oklch(0.55 0.01 265); /* meta/decorative — ≥3:1 on --n2 */
+
+  /* separators / overlays flip dark-on-light */
+  --hairline: oklch(0 0 0 / 12%);
+  --panel-edge: rgba(0, 0, 0, 0.14);
+  --scrim: rgba(20, 22, 30, 0.42); /* modal backdrop dims the light scene behind */
+  --panel: rgba(238, 240, 246, 0.86);
+
+  /* alerts KEEP their hue; -core darkened for AA on a light surface. -base tiers
+     (large muted fills/halos) stay as the dark-theme mid tones — they read as
+     muted marks on light too. */
+  --status-warn-core: oklch(0.55 0.15 85);
+  --status-err-core: oklch(0.52 0.19 20);
+
+  /* neutral ramp — --surface-* alias these, so overriding n1..4 flips every
+     semantic surface (void/panel/raised/hover) in one place. */
+  --n1: oklch(0.975 0.004 265); /* app void */
+  --n2: oklch(0.945 0.006 265); /* panel */
+  --n3: oklch(0.915 0.008 265); /* raised */
+  --n4: oklch(0.875 0.01 265); /* hover */
+
+  /* literal light-neutral surfaces (elevation ramp + the derived voids panels
+     read directly). --void also flips the html/body + Pixi canvas background. */
+  --void: #f6f7fb;
+  --void-2: #eef0f6;
+  --void-3: #e6e9f2;
+  --surface-1: #eef0f6;
+  --surface-2: #e6e9f2;
+  --surface-3: #dde1ec;
+  --surface-4: #d3d8e6;
+  --indigo-night: oklch(0.86 0.035 250); /* quota polar-night wash base — light cool */
+
+  /* the canvas light source / primary text → a dark ink (inverted from starlight) */
+  --starlight: #1a1d29;
+  --auditor-white: oklch(0.42 0.03 250); /* verifier beam / audit pulse — dark on light */
+
+  /* retired-hue neutrals that were near-white on dark must darken to read on light */
+  --brass: oklch(0.52 0.055 85); /* certification/id accent — muted dark gold */
+  --frost: oklch(0.5 0.045 265); /* quota crystal / rewind frame — dark cool */
+  --plasma-cyan: oklch(0.55 0.02 265);
+  --cache-teal: oklch(0.55 0.02 200);
+  --spectral-haiku: oklch(0.62 0.02 265); /* model heat: identity by brightness, */
+  --spectral-sonnet: oklch(0.52 0.02 265); /* re-ordered so opus is darkest (most */
+  --spectral-opus: oklch(0.42 0.02 265); /* emphasis) on light — mirrors dark's read */
+
+  /* ── CANVAS scene palette, re-tuned for a LIGHT void. Dark's vivid jewel tones
+     glowed over near-black; here each drops to a mid lightness (L 0.60–0.76) with
+     high chroma so it reads as a saturated mark clearly DARKER than the light
+     void. --scene-needs/-fail stay aliased to the (now light-tuned) alert cores. ── */
+  --scene-run-core: oklch(0.7 0.15 85); /* gold burn core */
+  --scene-run: oklch(0.76 0.15 85); /* gold corona */
+  --scene-done: oklch(0.6 0.15 163); /* emerald seal */
+  --scene-paused: oklch(0.64 0.16 47); /* banked ember orange */
+  --scene-quota: oklch(0.6 0.13 263); /* ice / cold blue */
+  --scene-atmo: oklch(0.66 0.13 182); /* aurora teal */
+  --scene-needs: var(--status-warn-core); /* same amber as the chrome alert */
+  --scene-fail: var(--status-err-core); /* same red as the chrome alert */
+
+  /* floating-card surface — light gradient + a soft light-mode shadow */
+  --floating-card-grad: linear-gradient(180deg, rgba(238, 240, 246, 0.96), rgba(246, 247, 251, 0.98));
+  --floating-card-shadow: 0 24px 80px rgba(20, 22, 40, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
 /* base obsidian theme */
 html,
 body {

@@ -305,3 +305,14 @@ export function initTheme(): ThemeColors {
 export function theme(): ThemeColors {
   return resolved ?? FALLBACK;
 }
+
+/**
+ * Re-resolve the live CSS custom properties and return the fresh table — used by the two
+ * Pixi canvases (Cosmos/Observatory) when `data-theme` flips (dark ⇄ light), since the
+ * cascade now resolves every --token to its light override. A thin alias over initTheme()
+ * (which is already idempotent/re-callable) that names the intent at the call site; the
+ * new table also becomes what theme() returns, so palette.ts's restColor() re-tints too.
+ */
+export function reinitTheme(): ThemeColors {
+  return initTheme();
+}
