@@ -518,13 +518,19 @@
         mode={cosmosStore.console.mode}
         editId={cosmosStore.console.editId}
         onClose={() => cosmosStore.dismissIgnite()}
-        onCreated={(id, ctx) => {
+        onCreated={async (id, ctx) => {
           void cosmosStore.load();
           // Follow through ONLY for a NEW loop that was actually persisted: fly into its System,
           // where the run is started with ✦ Start (disambiguating "create a loop" from "start a
           // run"). A SAVE (edit) or a dev-mode no-op create stays at the Cosmos rather than
           // dead-mounting a transport-less System.
-          if (id && ctx.mode === 'create' && ctx.persisted) void enterSystem(id);
+          if (id && ctx.mode === 'create' && ctx.persisted) {
+            await enterSystem(id);
+            // ✦ Create & start: enterSystem has mounted the transport, so fire the very same
+            // start control ✦ Start uses. Plain ✦ Create loop leaves startAfterCreate false and
+            // stops here — the deliberate create≠start split for the default path is preserved.
+            if (ctx.startAfterCreate) void sessionStore.control('start');
+          }
         }}
       />
     {/if}
