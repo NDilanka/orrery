@@ -737,10 +737,18 @@ fn resolve_program(program: &str, base_dir: &Path) -> String {
 /// Spawn `program` + `args` as a DETACHED child, redirecting stdout+stderr to
 /// `<stateDir>/run.out` so the existing tailer can read the transcript. We do NOT wait on
 /// the child. Returns its PID.
+///
+/// `env` is the BYOK inject list (from `settings::byok_env`) applied to the child; `scrub` is the
+/// list of inherited env keys to REMOVE. Scrub is applied first, then inject, so an injected key
+/// always wins (the matrix keeps the two sets disjoint anyway). An empty `env`+`scrub` means the
+/// child inherits our environment unchanged — today's behavior when no BYOK default is set. The
+/// secret VALUES ride in `env`; this function never logs them.
 fn spawn_detached(
     state_dir: &Path,
     program: &str,
     args: &[String],
+    env: &[(String, String)],
+    scrub: &[String],
 ) -> Result<u32, String> {
     std::fs::create_dir_all(state_dir)
         .map_err(|e| format!("create stateDir {state_dir:?}: {e}"))?;
@@ -752,6 +760,14 @@ fn spawn_detached(
         .map_err(|e| format!("clone run.out handle: {e}"))?;
 
     let mut cmd = std::process::Command::new(program);
+    // BYOK env seam: remove the inherited keys the chosen provider must not leak through, then
+    // inject the provider's own vars (secret / base URL / region / cloud flags). Never logged.
+    for k in scrub {
+        cmd.env_remove(k);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     cmd.args(args)
         .current_dir(spawn_cwd(state_dir))
         .stdin(std::process::Stdio::null())
@@ -832,7 +848,12 @@ fn start_with_spec(
     // Resolve the engine to the bundled venv when invoked by bare name, so the spawn works
     // regardless of whether the app was launched with `.venv/Scripts` on PATH.
     let program = resolve_program(&spec.program, base_dir);
-    let pid = spawn_detached(&state_dir, &program, &spec.args)?;
+    // BYOK: resolve the inject/scrub env from settings.json's default provider instance. Reads the
+    // config-dir OnceLock (no AppHandle), so this fires for BOTH the desktop commands and the LAN
+    // control routes — every start/resume funnels through here. Empty/empty when no default is set
+    // (inherit env = today's behavior). Secret values are never logged.
+    let (byok_inject, byok_scrub) = crate::settings::byok_env();
+    let pid = spawn_detached(&state_dir, &program, &spec.args, &byok_inject, &byok_scrub)?;
     // The spawn SUCCEEDED — only now clear any leftover brake. A fresh start/resume must not
     // inherit a STOP flag from a previous run (it would make the engine cooperative-stop at its
     // first checkpoint, reading as "the loop won't start"), but a FAILED spawn (above, via `?`)
@@ -2224,6 +2245,8 @@ mod tests {
                 "-Command".to_string(),
                 "Write-Output 'ORRERY_SPAWN_OK'; exit 0".to_string(),
             ],
+            &[],
+            &[],
         )
         .expect("spawn no-op pwsh");
         assert!(pid > 0, "captured a real PID");

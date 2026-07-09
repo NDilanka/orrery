@@ -36,6 +36,7 @@
     onBackToSystem,
     onBackToCosmos,
     onOpenHelp,
+    onOpenSettings,
     kbdChip = '⌘K',
   }: {
     onClose: () => void;
@@ -46,6 +47,7 @@
     onBackToSystem: () => void;
     onBackToCosmos: () => void;
     onOpenHelp: () => void;
+    onOpenSettings: () => void;
     /** platform-aware chip text for the palette's own trigger ("⌘K" mac / "Ctrl K" else) —
      * computed once by +page.svelte (the only place `navigator` is read) and threaded
      * through so this component needs no platform-detection of its own. */
@@ -171,6 +173,13 @@
       group: 'actions',
       hint: '?',
       run: onOpenHelp,
+    });
+    rows.push({
+      id: 'settings',
+      label: 'Open Settings',
+      group: 'actions',
+      hint: ',',
+      run: onOpenSettings,
     });
 
     // ── Cosmos-altitude-only chrome (ShareButton / ignite-fab's own gating) ──
