@@ -25,12 +25,26 @@ const browser = await chromium.launch();
   await settle(page, 2500);
   await shot(page, '01-cosmos-desktop.png');
 
-  // ignite-new (Tuning Console)
+  // ignite-new (Tuning Console) — redesigned adaptive create flow
   const fab = page.locator('.ignite-fab');
   if (await fab.count()) {
     await fab.click();
-    await settle(page, 1200);
-    await shot(page, '02-tuning-console.png');
+    await settle(page, 1000);
+    await shot(page, '02-tuning-console.png'); // step 1: recipe gallery
+    // pick a recipe → the Quick create lane
+    const recipe = page.locator('.recipe').first();
+    if (await recipe.count()) {
+      await recipe.click();
+      await settle(page, 700);
+      await shot(page, '02b-tuning-quick.png');
+      // opt into the guided walk-through
+      const guided = page.locator('.tc-lane .seg-item', { hasText: /walk me through/i });
+      if (await guided.count()) {
+        await guided.click();
+        await settle(page, 600);
+        await shot(page, '02c-tuning-guided.png');
+      }
+    }
     // close it
     await page.keyboard.press('Escape').catch(()=>{});
     await page.locator('button', { hasText: /close|cancel|✕|×/i }).first().click().catch(()=>{});
