@@ -16,6 +16,9 @@ import {
   composeEngine,
   composeLoopDef,
   deriveFromDials,
+  PRESETS,
+  PRESET_ORDER,
+  presetFromDials,
   validateDraft,
   validateNumericBounds,
   type DialState,
@@ -314,5 +317,56 @@ describe('validateNumericBounds', () => {
   it('only checks the keys supplied (partial input)', () => {
     expect(validateNumericBounds({ maxIters: 0 })).toHaveLength(1);
     expect(validateNumericBounds({})).toEqual([]);
+  });
+});
+
+describe('guardrail presets', () => {
+  it('every preset round-trips through presetFromDials', () => {
+    for (const name of PRESET_ORDER) {
+      expect(presetFromDials(PRESETS[name])).toBe(name);
+    }
+  });
+
+  it('a dial nudged off a preset snaps to null (Custom)', () => {
+    // shift a single dial well past the snap threshold
+    const nudged: DialState = { ...PRESETS.balanced, ambition: PRESETS.balanced.ambition + 0.2 };
+    expect(presetFromDials(nudged)).toBeNull();
+  });
+
+  it('presets are well-separated — each snaps only to itself', () => {
+    // if two presets collapsed to the same snap, at least one would fail to
+    // round-trip; assert every preset resolves to its own name and no other.
+    const snaps = PRESET_ORDER.map((name) => presetFromDials(PRESETS[name]));
+    expect(snaps).toEqual([...PRESET_ORDER]);
+    expect(new Set(snaps).size).toBe(PRESET_ORDER.length);
+  });
+
+  it('careful is cheaper and shorter than fast (monotonic through deriveFromDials)', () => {
+    const careful = deriveFromDials(PRESETS.careful);
+    const fast = deriveFromDials(PRESETS.fast);
+    expect(careful.cost.ceilingUsd).toBeLessThan(fast.cost.ceilingUsd);
+    expect(careful.stop.maxIters).toBeLessThan(fast.stop.maxIters);
+  });
+
+  it('careful audits strictly; fast turns the extra audit off', () => {
+    expect(deriveFromDials(PRESETS.careful).verify.mutationAudit).toBe(true);
+    expect(deriveFromDials(PRESETS.fast).verify.mutationAudit).toBe(false);
+  });
+
+  it('overnight is the most autonomous (bypasses permission prompts)', () => {
+    expect(deriveFromDials(PRESETS.overnight).permissionMode).toBe('bypassPermissions');
+    expect(deriveFromDials(PRESETS.careful).permissionMode).toBe('acceptEdits');
+  });
+
+  it('every preset composes a warning-free engine', () => {
+    for (const name of PRESET_ORDER) {
+      const engine = composeEngine(
+        BLUEPRINTS.custom,
+        PRESETS[name],
+        BLUEPRINTS.custom.destination,
+        'TASK.md',
+      );
+      assertEngineIsWarningFree(engine);
+    }
   });
 });

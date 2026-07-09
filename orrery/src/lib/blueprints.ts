@@ -208,6 +208,53 @@ export function deriveFromDials(d: DialState): DialDerived {
   };
 }
 
+// ─── Guardrail presets (one-click dial bundles) ─────────────────────────────
+// Named intents — Careful / Balanced / Fast / Overnight — that set all three
+// dials at once. A preset is JUST a DialState, so it flows through
+// deriveFromDials → composeEngine exactly like a hand-set dial: nothing new is
+// emitted into the engine (the honesty constraint holds). The UI offers these
+// as "pick an intent, not three sliders"; nudging any dial snaps back to
+// `null` (→ Custom).
+
+export type PresetName = 'careful' | 'balanced' | 'fast' | 'overnight';
+
+export const PRESET_ORDER: PresetName[] = ['careful', 'balanced', 'fast', 'overnight'];
+
+export const PRESETS: Record<PresetName, DialState> = {
+  // strict + cheap + attended
+  careful: { ambition: 0.22, patience: 0.18, autonomy: 0.28 },
+  // the recommended middle
+  balanced: { ambition: 0.45, patience: 0.45, autonomy: 0.55 },
+  // ambitious + lenient + hands-off
+  fast: { ambition: 0.85, patience: 0.8, autonomy: 0.85 },
+  // long + unattended (moderate models, very autonomous)
+  overnight: { ambition: 0.6, patience: 0.55, autonomy: 0.92 },
+};
+
+/**
+ * Snap a dial position to the nearest preset, or `null` once it's been nudged
+ * off every preset (the UI shows that as "Custom"). Distance is the summed L1
+ * gap across the three dials; the tight default threshold means a deliberate
+ * drag of even one dial leaves the preset, while `presetFromDials(PRESETS[x])`
+ * round-trips to `x`.
+ */
+export function presetFromDials(d: DialState, threshold = 0.06): PresetName | null {
+  let best: PresetName | null = null;
+  let bestDist = Infinity;
+  for (const name of PRESET_ORDER) {
+    const p = PRESETS[name];
+    const dist =
+      Math.abs(p.ambition - d.ambition) +
+      Math.abs(p.patience - d.patience) +
+      Math.abs(p.autonomy - d.autonomy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = name;
+    }
+  }
+  return bestDist <= threshold ? best : null;
+}
+
 // ─── Blueprint definitions (smart defaults for the full engine) ─────────────
 
 const COMMON_TOOLS = ['Read', 'Edit', 'Write', 'Bash(bun test)', 'Bash(bun test:*)'];
@@ -241,7 +288,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
     name: 'Sprint',
     glyph: '◫',
     theme: 'gold',
-    tagline: 'work-queue + PRs + retros — the BMAD pattern',
+    tagline: 'multi-stage gate — build, then lint, then test',
     dials: { ambition: 0.6, patience: 0.55, autonomy: 0.55 },
     base: {
       allowedTools: [...COMMON_TOOLS, 'Bash(bun lint)', 'Bash(git:*)'],
@@ -255,7 +302,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
       },
     },
     destination: {
-      acceptanceCriteria: ['Story acceptance criteria met', 'Tests green', 'PR opened to develop'],
+      acceptanceCriteria: ['The build succeeds', 'Lint is clean', 'All tests pass'],
       gateStages: [
         { name: 'codegen', command: 'bun run build', passPattern: '', failPattern: 'error' },
         { name: 'lint', command: 'bun lint', passPattern: '', failPattern: '(\\d+)\\s+error' },

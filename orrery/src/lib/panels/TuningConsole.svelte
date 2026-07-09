@@ -31,12 +31,16 @@
     previewNight,
     validateDraft,
     isSafeLoopId,
+    PRESETS,
+    PRESET_ORDER,
+    presetFromDials,
     type BlueprintId,
     type Blueprint,
     type DialState,
     type EngineConfig,
     type GateStageDef,
     type ConsoleInput,
+    type PresetName,
   } from '../blueprints';
   import { cosmosStore, type ProbeResult } from '../stores/cosmos.svelte';
   import { focusTrap } from '../actions/focusTrap';
@@ -390,9 +394,6 @@
   const autonomyText = $derived(
     `Autonomy: ${finalEngine.permissionMode}, ${finalEngine.maxTurns} turns/phase, ${finalEngine.iterTimeoutMin}m/iter`,
   );
-  // caption-only label (not an emitted config field) — a plain-language read of the
-  // autonomy dial itself, echoing what the bundle amounts to in practice.
-  const autonomyLabel = $derived(dials.autonomy < 0.45 ? 'human-in-loop' : 'overnight-auto');
 
   const DRAWERS: { key: keyof EngineConfig | 'models' | 'tools'; label: string }[] = [
     { key: 'models', label: 'Models' },
@@ -416,6 +417,153 @@
     if (p >= 0.5) return 'var(--amber)';
     return 'var(--plasma-green)';
   }
+
+  // ══ REDESIGN (adaptive sequence) — flow/lane/step state layered over the draft ══
+  // create opens on the recipe gallery; edit skips straight to the config surface
+  // (there is nothing to pick — the loaded engine is already the "recipe"). The
+  // gallery only ever renders in create mode (see the template guard), so this can
+  // start 'gallery' unconditionally without reading the `mode` prop here.
+  let flow = $state<'gallery' | 'config'>('gallery');
+  let lane = $state<'quick' | 'guided'>('quick');
+  let step = $state(0);
+  let reached = $state(0);
+  let advOpen = $state(false);
+  // the loop id is the folder name; we auto-slugify it from the name so the user
+  // only thinks about the name — unless they deliberately edit the id.
+  let idTouched = $state(false);
+
+  // which named guardrail preset the current dials sit on (null = Custom)
+  const preset = $derived<PresetName | null>(presetFromDials(dials));
+
+  // recipe = blueprint, re-presented in plain language for the gallery. Honest copy
+  // only (see blueprints.ts — Sprint no longer claims BMAD; it's a build→lint→test gate).
+  const RECIPE_META: Record<BlueprintId, { title: string; blurb: string; recommended?: boolean }> = {
+    grind: {
+      title: 'Fix until green',
+      blurb: 'Keeps editing and re-running your tests until they pass — cheap, hash-locked, rolls back mistakes.',
+      recommended: true,
+    },
+    sprint: {
+      title: 'Build + verify',
+      blurb: 'A multi-stage gate — build, then lint, then test. Every stage must pass to be done.',
+    },
+    explore: {
+      title: 'Explore with me',
+      blurb: 'Attended and careful — asks before it edits and keeps a human in the loop.',
+    },
+    custom: {
+      title: 'Blank',
+      blurb: 'A bare instrument — set the goal, the test, and the guardrails yourself.',
+    },
+  };
+
+  const PRESET_META: Record<PresetName, { label: string; sub: string }> = {
+    careful: { label: 'Careful', sub: 'strict · cheap' },
+    balanced: { label: 'Balanced', sub: 'recommended' },
+    fast: { label: 'Fast', sub: 'looser · pricier' },
+    overnight: { label: 'Overnight', sub: 'long · unattended' },
+  };
+
+  const STEP_DEFS = [
+    { key: 'Goal', sub: 'name + spec' },
+    { key: 'Done when', sub: 'criteria + gate' },
+    { key: 'Guardrails', sub: 'budget + autonomy' },
+    { key: 'Review', sub: 'confirm + create' },
+  ];
+
+  // plain-language reads for the live summary (every value is a real engine field)
+  const autonomyPlain = $derived(
+    dials.autonomy > 0.8 ? 'unattended' : dials.autonomy > 0.5 ? 'semi-attended' : 'attended',
+  );
+  const permPlain = $derived(
+    finalEngine.permissionMode === 'bypassPermissions'
+      ? 'acts without asking'
+      : finalEngine.permissionMode === 'plan'
+        ? 'plans before acting'
+        : finalEngine.permissionMode === 'default'
+          ? 'asks before acting'
+          : 'applies edits, asks for the rest',
+  );
+  const critCount = $derived(acceptanceCriteria.filter((a) => a.trim()).length);
+  const gateTested = $derived(
+    Object.values(probeState).some((p) => p.result?.exitCode === 0),
+  );
+
+  function slugify(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
+  }
+  function uniqueSlug(name: string): string {
+    const base = slugify(name);
+    if (!base) return friendlyDefaultId();
+    const taken = new Set(cosmosStore.existingIds.filter((x) => x !== editId));
+    if (!taken.has(base)) return base;
+    for (let n = 2; n < 1000; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+    return `${base}-${Date.now().toString(36)}`;
+  }
+  function onNameInput() {
+    markTouched();
+    if (mode === 'create' && !idTouched) loopId = uniqueSlug(loopName);
+  }
+  function onIdInput() {
+    idTouched = true;
+    markTouched();
+  }
+  function pickRecipe(id: BlueprintId) {
+    selectBlueprint(id);
+    if (mode === 'create' && !loopName.trim()) {
+      loopName = RECIPE_META[id].title;
+      if (!idTouched) loopId = uniqueSlug(loopName);
+    }
+    flow = 'config';
+  }
+  function applyPreset(name: PresetName) {
+    dials = { ...PRESETS[name] };
+  }
+
+  // per-step validity — a slice of the same guards validateDraft enforces overall,
+  // so a step can't advance into an invalid state (and the final CTA still runs the
+  // full validateDraft).
+  function stepValid(i: number): boolean {
+    if (i === 0) {
+      const id = loopId.trim();
+      return (
+        !!loopName.trim() &&
+        !!id &&
+        isSafeLoopId(id) &&
+        !cosmosStore.existingIds.filter((x) => x !== editId).includes(id)
+      );
+    }
+    if (i === 1) {
+      return (
+        acceptanceCriteria.some((a) => a.trim()) &&
+        gateStages.some((s) => s.command.trim() || s.name.trim())
+      );
+    }
+    return true;
+  }
+  function stepHint(i: number): string {
+    if (i === 0) return 'name it to continue';
+    if (i === 1) return 'add a criterion and a test command';
+    return '';
+  }
+  function nextStep() {
+    if (!stepValid(step)) {
+      touched = true;
+      return;
+    }
+    step = Math.min(STEP_DEFS.length - 1, step + 1);
+    reached = Math.max(reached, step);
+  }
+  function prevStep() {
+    step = Math.max(0, step - 1);
+  }
+  function goStep(i: number) {
+    if (i <= reached) step = i;
+  }
 </script>
 
 <!-- scrim + dialog -->
@@ -431,280 +579,380 @@
     <!-- header -->
     <header class="hdr">
       <div id="tc-title" class="title mono">{mode === 'edit' ? '✦ LOOP SETTINGS' : '✦ NEW LOOP'}</div>
-      <div class="sub mono">{mode === 'edit' ? `recalibrating ${editId}` : 'author a loop.json'}</div>
+      <div class="sub mono">
+        {flow === 'gallery'
+          ? 'pick a starting point'
+          : mode === 'edit'
+            ? `recalibrating ${editId}`
+            : lane === 'quick'
+              ? 'confirm the essentials'
+              : 'one decision at a time'}
+      </div>
       <button class="x" aria-label="close" onclick={onClose}>✕</button>
     </header>
 
-    <!-- identity row -->
-    <div class="idrow">
+    {#if mode === 'create' && flow === 'gallery'}
+      {@render recipeGallery()}
+    {:else}
+      <!-- topbar: recipe (or edit) chip + adaptive lane toggle -->
+      <div class="tc-topbar">
+        {#if mode === 'edit'}
+          <span class="tc-chip mono"><span class="tc-chip-glyph">✎</span> editing {editId}</span>
+        {:else}
+          <span class="tc-chip mono">
+            <span class="tc-chip-glyph">{blueprint.glyph}</span>{RECIPE_META[blueprintId].title}
+            <button class="tc-chip-change mono" onclick={() => (flow = 'gallery')}>change</button>
+          </span>
+        {/if}
+        <div class="seg tc-lane" role="group" aria-label="how to fill this in">
+          <button
+            class="seg-item {lane === 'quick' ? 'selected' : ''}"
+            aria-pressed={lane === 'quick'}
+            onclick={() => (lane = 'quick')}
+          >⚡ Quick create</button>
+          <button
+            class="seg-item {lane === 'guided' ? 'selected' : ''}"
+            aria-pressed={lane === 'guided'}
+            onclick={() => {
+              lane = 'guided';
+              reached = Math.max(reached, step);
+            }}
+          >🧭 Walk me through it</button>
+        </div>
+      </div>
+
+      <!-- U3 Task 2: TASK.md scaffold feedback. Create mode shows a transient confirmation
+           (set by ignite() just before it closes); edit mode offers an explicit, opt-in
+           regenerate control that never clobbers a hand-authored file without confirming. -->
+      {#if mode === 'edit' && (task.trim() || 'TASK.md') === 'TASK.md'}
+        <div class="taskfile mono">
+          {#if taskFileState === 'idle'}
+            <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId)}>
+              ✎ regenerate TASK.md from these settings
+            </button>
+          {:else if taskFileState === 'writing'}
+            <span class="taskfile-status">writing TASK.md…</span>
+          {:else if taskFileState === 'created'}
+            <span class="taskfile-status ok">✓ TASK.md created</span>
+          {:else if taskFileState === 'exists'}
+            <span class="taskfile-status warn">TASK.md already has content —</span>
+            <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId, true)}>
+              overwrite it
+            </button>
+          {:else if taskFileState === 'error'}
+            <span class="taskfile-status bad">✕ {taskFileError}</span>
+          {/if}
+        </div>
+      {:else if taskFileState === 'writing' || taskFileState === 'created' || taskFileState === 'error'}
+        <div class="taskfile mono">
+          {#if taskFileState === 'writing'}
+            <span class="taskfile-status">writing TASK.md…</span>
+          {:else if taskFileState === 'created'}
+            <span class="taskfile-status ok">✓ TASK.md created</span>
+          {:else}
+            <span class="taskfile-status bad">✕ TASK.md not written: {taskFileError}</span>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- config surface: main column + persistent live summary -->
+      <div class="tc-2col">
+        <div class="tc-main">
+          {#if lane === 'quick'}
+            {@render nameField()}
+            {@render doneWhen()}
+            {@render advancedBody()}
+            {@render quickFooter()}
+          {:else}
+            {@render stepRail()}
+            <div class="tc-step">
+              {#if step === 0}
+                <div class="step-h">
+                  <span class="sk mono">Step 1 of 4 · Goal</span>
+                  <h3>What should this loop do?</h3>
+                  <p>Give it a name, and — if you like — a spec file it reads each pass.</p>
+                </div>
+                {@render nameField()}
+                <label class="field">
+                  <span class="flab mono">SPEC FILE <em class="opt">optional · defaults to TASK.md</em></span>
+                  <input class="inp mono" bind:value={task} placeholder="TASK.md" />
+                  <span class="fhelp">We scaffold this from your answers if it doesn't exist yet.</span>
+                </label>
+              {:else if step === 1}
+                <div class="step-h">
+                  <span class="sk mono">Step 2 of 4 · Done when</span>
+                  <h3>How will it know it's finished?</h3>
+                  <p>
+                    List what must be true, and give the one command that decides “green”. Test it
+                    now so a broken gate never costs you a run.
+                  </p>
+                </div>
+                {@render doneWhen()}
+              {:else if step === 2}
+                <div class="step-h">
+                  <span class="sk mono">Step 3 of 4 · Guardrails</span>
+                  <h3>How ambitious, careful, and hands-off?</h3>
+                  <p>Pick a preset, or nudge the three dials. Each shows exactly what it sets — nothing hidden.</p>
+                </div>
+                {@render guardrailsBody()}
+                {@render advancedBody()}
+              {:else}
+                <div class="step-h">
+                  <span class="sk mono">Step 4 of 4 · Review</span>
+                  <h3>Here's what this loop will do</h3>
+                  <p>Check it, change anything, then create.</p>
+                </div>
+                {@render reviewBody()}
+              {/if}
+            </div>
+            {@render stepNav()}
+          {/if}
+        </div>
+        {@render summaryAside()}
+      </div>
+    {/if}
+
+    {#snippet recipeGallery()}
+      <p class="gallery-lead mono">Step 1 · Pick a starting point</p>
+      <div class="recipes">
+        {#each BLUEPRINT_ORDER as id (id)}
+          {@const bp = BLUEPRINTS[id]}
+          {@const meta = RECIPE_META[id]}
+          <button class="recipe {blueprintId === id ? 'sel' : ''}" onclick={() => pickRecipe(id)}>
+            {#if meta.recommended}<span class="recipe-tag mono">recommended</span>{/if}
+            <span class="recipe-glyph">{bp.glyph}</span>
+            <span class="recipe-name">{meta.title}</span>
+            <span class="recipe-blurb">{meta.blurb}</span>
+            <span class="recipe-meta mono">{bp.tagline}</span>
+          </button>
+        {/each}
+      </div>
+    {/snippet}
+
+    {#snippet nameField()}
       <label class="field">
-        <span class="flab mono">ID</span>
-        <input
-          class="inp mono"
-          placeholder="my-loop"
-          bind:value={loopId}
-          oninput={markTouched}
-          disabled={mode === 'edit'}
-        />
-      </label>
-      <label class="field grow">
-        <span class="flab mono">NAME</span>
+        <span class="flab mono">NAME <em class="req">required</em></span>
         <input
           class="inp"
           placeholder="Describe the mission…"
           bind:value={loopName}
-          oninput={markTouched}
+          oninput={onNameInput}
         />
       </label>
-      <label class="field">
-        <span class="flab mono">TASK</span>
-        <input class="inp mono" bind:value={task} />
+      <label class="field id-field">
+        <span class="flab mono">LOOP ID <em class="opt">folder name · auto from the name</em></span>
+        <input
+          class="inp mono"
+          placeholder="my-loop"
+          bind:value={loopId}
+          oninput={onIdInput}
+          disabled={mode === 'edit'}
+        />
       </label>
-    </div>
+    {/snippet}
 
-    <!-- U3 Task 2: TASK.md scaffold feedback. Create mode shows a transient confirmation
-         (set by ignite() just before it closes); edit mode offers an explicit, opt-in
-         regenerate control that never clobbers a hand-authored file without confirming. -->
-    {#if mode === 'edit' && (task.trim() || 'TASK.md') === 'TASK.md'}
-      <div class="taskfile mono">
-        {#if taskFileState === 'idle'}
-          <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId)}>
-            ✎ regenerate TASK.md from these settings
-          </button>
-        {:else if taskFileState === 'writing'}
-          <span class="taskfile-status">writing TASK.md…</span>
-        {:else if taskFileState === 'created'}
-          <span class="taskfile-status ok">✓ TASK.md created</span>
-        {:else if taskFileState === 'exists'}
-          <span class="taskfile-status warn">TASK.md already has content —</span>
-          <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId, true)}>
-            overwrite it
-          </button>
-        {:else if taskFileState === 'error'}
-          <span class="taskfile-status bad">✕ {taskFileError}</span>
-        {/if}
-      </div>
-    {:else if taskFileState === 'writing' || taskFileState === 'created' || taskFileState === 'error'}
-      <div class="taskfile mono">
-        {#if taskFileState === 'writing'}
-          <span class="taskfile-status">writing TASK.md…</span>
-        {:else if taskFileState === 'created'}
-          <span class="taskfile-status ok">✓ TASK.md created</span>
-        {:else}
-          <span class="taskfile-status bad">✕ TASK.md not written: {taskFileError}</span>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- blueprint selector -->
-    <section class="blueprints">
-      <span class="seclab mono">BLUEPRINT</span>
-      <div class="seg" role="group" aria-label="blueprint">
-        {#each BLUEPRINT_ORDER as id (id)}
-          {@const bp = BLUEPRINTS[id]}
+    {#snippet guardrailsBody()}
+      <!-- one-click preset bundles (each just sets the three dials below) -->
+      <div class="presets">
+        {#each PRESET_ORDER as name (name)}
           <button
-            class="seg-item bp {blueprintId === id ? 'selected' : ''}"
-            onclick={() => selectBlueprint(id)}
-            title={bp.tagline}
+            class="pchip {preset === name ? 'on' : ''}"
+            aria-pressed={preset === name}
+            onclick={() => applyPreset(name)}
           >
-            <span class="bp-glyph">{bp.glyph}</span>
-            <span class="bp-name">{bp.name}</span>
+            <b>{PRESET_META[name].label}</b>
+            <small class="mono">{PRESET_META[name].sub}</small>
           </button>
         {/each}
+        <span class="preset-cur mono">{preset ? '' : '· custom'}</span>
       </div>
-      <div class="bp-tag mono">{blueprint.tagline}</div>
-    </section>
 
-    <div class="cols">
-      <!-- LEFT: calibration dials -->
-      <section class="panel calib">
-        <span class="seclab mono">CALIBRATION</span>
-
-        <!-- All three dials share ONE orientation: the slider value IS the stored
-             0–1 force, left label is the 0-pole, right label the 1-pole, and the
-             colored fill grows from the left to exactly value% — so the filled
-             track visually equals the setting. -->
-        <div class="dial">
-          <div class="dlabels mono"><span>THRIFT</span><span>AMBITION</span></div>
-          <div class="dsub mono">budget &amp; models</div>
-          <input
-            class="slider thumb-brass"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={dials.ambition}
-            style="--fill:{dials.ambition * 100}%"
-            aria-label="Ambition vs Thrift"
-            aria-valuetext={ambitionText}
-            aria-describedby="dhint-ambition"
-            oninput={(e) => (dials = { ...dials, ambition: +e.currentTarget.value })}
-          />
-          <div id="dhint-ambition" class="dhint mono">
-            {finalEngine.models.execute} · ceiling {fmtUsd(finalEngine.cost.ceilingUsd)} · {finalEngine
-              .stop.maxIters} iters
-          </div>
+      <!-- the same three dials, in plain language, each showing its concrete effect -->
+      <div class="dial dial-plain">
+        <div class="dial-head">
+          <span class="dial-name">Budget &amp; horsepower</span>
+          <span class="dial-poles mono">thrifty ⟷ ambitious</span>
         </div>
-
-        <div class="dial">
-          <div class="dlabels mono"><span>FUSSY</span><span>PATIENCE</span></div>
-          <div class="dsub mono">verification strictness</div>
-          <input
-            class="slider thumb-brass"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={dials.patience}
-            style="--fill:{dials.patience * 100}%"
-            aria-label="Patience vs Fussiness"
-            aria-valuetext={patienceText}
-            aria-describedby="dhint-patience"
-            oninput={(e) => (dials = { ...dials, patience: +e.currentTarget.value })}
-          />
-          <div id="dhint-patience" class="dhint mono">
-            {finalEngine.verify.mutationAudit
-              ? `audit every ${finalEngine.verify.mutationEvery || 1}`
-              : 'audit off'} · plateau {finalEngine.stop.plateauLimit} · regress-limit {finalEngine
-              .stop.regressLimit}
-          </div>
+        <input
+          class="slider thumb-brass"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={dials.ambition}
+          style="--fill:{dials.ambition * 100}%"
+          aria-label="Budget and horsepower"
+          aria-valuetext={ambitionText}
+          oninput={(e) => (dials = { ...dials, ambition: +e.currentTarget.value })}
+        />
+        <div class="dial-mean">
+          Uses <b>{finalEngine.models.execute}</b> (and <b>{finalEngine.models.hard}</b> for the hard
+          steps). Stops at <b>{fmtUsd(finalEngine.cost.ceilingUsd)}</b> or
+          <b>{finalEngine.stop.maxIters} tries</b>, whichever comes first.
         </div>
+      </div>
 
-        <div class="dial">
-          <div class="dlabels mono"><span>COMPANY</span><span>AUTONOMY</span></div>
-          <div class="dsub mono">how unattended</div>
-          <input
-            class="slider thumb-brass"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={dials.autonomy}
-            style="--fill:{dials.autonomy * 100}%"
-            aria-label="Autonomy vs Company"
-            aria-valuetext={autonomyText}
-            aria-describedby="dhint-autonomy"
-            oninput={(e) => (dials = { ...dials, autonomy: +e.currentTarget.value })}
-          />
-          <div id="dhint-autonomy" class="dhint mono">
-            {autonomyLabel} · {finalEngine.permissionMode} · {finalEngine.maxTurns} turns/phase · {finalEngine.iterTimeoutMin}m/iter
-          </div>
+      <div class="dial dial-plain">
+        <div class="dial-head">
+          <span class="dial-name">How carefully it checks its work</span>
+          <span class="dial-poles mono">fast ⟷ fussy</span>
         </div>
-      </section>
+        <input
+          class="slider thumb-brass"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={dials.patience}
+          style="--fill:{dials.patience * 100}%"
+          aria-label="How carefully it checks its work"
+          aria-valuetext={patienceText}
+          oninput={(e) => (dials = { ...dials, patience: +e.currentTarget.value })}
+        />
+        <div class="dial-mean">
+          Self-audits <b>{finalEngine.verify.mutationAudit
+            ? `every ${finalEngine.verify.mutationEvery || 1} green`
+            : 'off'}</b>. Tolerates <b>{finalEngine.stop.plateauLimit}</b> stalled tries and rolls
+          back after <b>{finalEngine.stop.regressLimit}</b> regressions.
+        </div>
+      </div>
 
-      <!-- RIGHT: live preview orrery -->
-      <section class="panel preview">
-        <span class="seclab mono">PREVIEW</span>
-        <div class="orrery-mini">
-          <svg viewBox="0 0 200 130" class="mini">
-            <!-- star -->
-            <circle cx="100" cy="65" r="11" fill="var(--starlight)" opacity="0.9" />
-            <circle cx="100" cy="65" r="17" fill="none" stroke="var(--em-mid)" stroke-width="0.6" opacity="0.5" />
-            <!-- cost horizon ring (tightens + reddens with est spend) -->
-            {#if preview.horizonAtPct >= 0.5}
-              <circle
-                cx="100"
-                cy="65"
-                r={48 - Math.min(1, preview.horizonAtPct) * 18}
-                fill="none"
-                stroke={horizonColor(preview.horizonAtPct)}
-                stroke-width="1.2"
-                opacity="0.8"
-              />
-            {/if}
-            <!-- ghost target -->
-            <circle cx="150" cy="40" r="7" fill="none" stroke="var(--ghost-brass)" stroke-width="1" stroke-dasharray="2 2" />
-            <!-- audit lighthouse beam -->
-            {#if preview.auditOn}
-              <line x1="100" y1="65" x2="150" y2="40" stroke="var(--auditor-white)" stroke-width="0.6" opacity="0.5" />
-              <circle cx="40" cy="30" r="3" fill="var(--auditor-white)" opacity="0.8" />
-            {/if}
-            <!-- AC constellation -->
-            {#each acceptanceCriteria.filter((a) => a.trim()) as _ac, i}
-              <circle
-                cx={150 + Math.cos(i * 1.4) * 14}
-                cy={40 + Math.sin(i * 1.4) * 14}
-                r="1.6"
-                fill="var(--em-mid)"
-                opacity="0.7"
-              />
-            {/each}
-          </svg>
+      <div class="dial dial-plain">
+        <div class="dial-head">
+          <span class="dial-name">How hands-off</span>
+          <span class="dial-poles mono">with you ⟷ on its own</span>
         </div>
-        <ul class="pstats mono">
-          <li>
-            <span>horizon</span>
-            <strong style="color:{horizonColor(preview.horizonAtPct)}">
-              {pct(preview.horizonAtPct)} of {fmtUsd(preview.ceilingUsd)}
-            </strong>
-          </li>
-          <li><span>est. spend</span><strong>~{fmtUsd(preview.estUsd)}</strong></li>
-          <li>
-            <span>audit</span><strong class={preview.auditOn ? 'on' : 'off'}>
-              {preview.auditOn ? '▷ on' : 'off'}</strong
-            >
-          </li>
-          <li><span>regress-limit</span><strong>{preview.regressLimit}</strong></li>
-          <li><span>gate stages</span><strong>{preview.stageCount}</strong></li>
-          <li><span>AC stars</span><strong>{preview.acCount}</strong></li>
-        </ul>
-        <button class="night-btn mono" onclick={() => (nightOpen = !nightOpen)}>
-          {nightOpen ? '▾' : '▸'} preview a full run
-        </button>
-        {#if nightOpen}
-          <div class="night">
-            <svg viewBox="0 0 200 50" class="night-svg">
-              <!-- ceiling line -->
-              <line x1="0" y1="6" x2="200" y2="6" stroke="var(--crimson)" stroke-width="0.5" stroke-dasharray="2 2" opacity="0.6" />
-              {#if night.series.length > 1}
-                {@const maxC = Math.max(night.ceilingUsd, ...night.series.map((s) => s.cum))}
-                <polyline
-                  points={night.series
-                    .map(
-                      (s, i) =>
-                        `${(i / Math.max(1, night.series.length - 1)) * 196 + 2},${
-                          46 - (s.cum / maxC) * 40
-                        }`,
-                    )
-                    .join(' ')}
+        <input
+          class="slider thumb-brass"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={dials.autonomy}
+          style="--fill:{dials.autonomy * 100}%"
+          aria-label="How hands-off"
+          aria-valuetext={autonomyText}
+          oninput={(e) => (dials = { ...dials, autonomy: +e.currentTarget.value })}
+        />
+        <div class="dial-mean">
+          Runs <b>{autonomyPlain}</b> — it <b>{permPlain}</b>. Up to
+          <b>{finalEngine.maxTurns}</b> turns/phase, <b>{finalEngine.iterTimeoutMin}m</b>/try.
+        </div>
+      </div>
+    {/snippet}
+
+    {#snippet summaryAside()}
+      <aside class="summary" aria-label="what will happen">
+        <div class="summary-orb">
+          <div class="orrery-mini">
+            <svg viewBox="0 0 200 130" class="mini">
+              <circle cx="100" cy="65" r="11" fill="var(--starlight)" opacity="0.9" />
+              <circle cx="100" cy="65" r="17" fill="none" stroke="var(--em-mid)" stroke-width="0.6" opacity="0.5" />
+              {#if preview.horizonAtPct >= 0.5}
+                <circle
+                  cx="100"
+                  cy="65"
+                  r={48 - Math.min(1, preview.horizonAtPct) * 18}
                   fill="none"
-                  stroke={horizonColor(night.landsAtPct)}
-                  stroke-width="1.4"
+                  stroke={horizonColor(preview.horizonAtPct)}
+                  stroke-width="1.2"
+                  opacity="0.8"
                 />
               {/if}
+              <circle cx="150" cy="40" r="7" fill="none" stroke="var(--ghost-brass)" stroke-width="1" stroke-dasharray="2 2" />
+              {#if preview.auditOn}
+                <line x1="100" y1="65" x2="150" y2="40" stroke="var(--auditor-white)" stroke-width="0.6" opacity="0.5" />
+                <circle cx="40" cy="30" r="3" fill="var(--auditor-white)" opacity="0.8" />
+              {/if}
+              {#each acceptanceCriteria.filter((a) => a.trim()) as _ac, i}
+                <circle
+                  cx={150 + Math.cos(i * 1.4) * 14}
+                  cy={40 + Math.sin(i * 1.4) * 14}
+                  r="1.6"
+                  fill="var(--em-mid)"
+                  opacity="0.7"
+                />
+              {/each}
             </svg>
-            <div class="night-cap mono">
-              lands at {fmtUsd(night.landsAtUsd)} ({pct(night.landsAtPct)})
-              {#if night.greenAtIter}· green ~iter {night.greenAtIter}{/if}
-              {#if night.hitsCeiling}<span class="warn">· hits ceiling</span>{/if}
-            </div>
           </div>
-        {/if}
-      </section>
-    </div>
-
-    <!-- DESTINATION -->
-    <section class="panel destination">
-      <span class="seclab mono">DEFINITION OF DONE <em>— what must be true when it's finished</em></span>
-      <div class="dest-grid">
-        <div class="ac">
-          <div class="dlab mono">ACCEPTANCE CRITERIA</div>
-          {#each acceptanceCriteria as _ac, i}
-            <div class="ac-row">
-              <span class="ac-star">✦</span>
-              <input
-                class="inp"
-                placeholder="e.g. 401 on an expired token"
-                bind:value={acceptanceCriteria[i]}
-              />
-              <button class="mini-x" aria-label="remove" onclick={() => removeCriterion(i)}>✕</button>
-            </div>
-          {/each}
-          <button class="add mono" onclick={addCriterion}>+ add criterion</button>
+          <span class="summary-state mono">will run</span>
         </div>
-        <div class="gate">
-          <div class="dlab mono">TEST GATE — every stage must pass</div>
-          {#each gateStages as _st, i}
+        <div class="summary-body">
+          <h4 class="mono">{loopName.trim() || 'your loop'}</h4>
+          <p class="summary-lede">
+            Each pass it works toward the goal, then runs the gate. Done when that's green and
+            <b>{critCount} criteri{critCount === 1 ? 'on' : 'a'}</b> hold. Stops at
+            <b>{fmtUsd(finalEngine.cost.ceilingUsd)}</b> or <b>{finalEngine.stop.maxIters} tries</b>.
+          </p>
+          <ul class="summary-stats mono">
+            <li><span>model</span><strong>{finalEngine.models.execute} · {finalEngine.models.hard} hard</strong></li>
+            <li><span>budget</span><strong>{fmtUsd(finalEngine.cost.ceilingUsd)} / {finalEngine.stop.maxIters}</strong></li>
+            <li><span>autonomy</span><strong>{autonomyPlain}</strong></li>
+            <li>
+              <span>gate tested</span>
+              <strong class={gateTested ? 'on' : 'off'}>{gateTested ? '✓ yes' : 'not yet'}</strong>
+            </li>
+          </ul>
+          <button class="night-btn mono" onclick={() => (nightOpen = !nightOpen)}>
+            {nightOpen ? '▾' : '▸'} preview a full run
+          </button>
+          {#if nightOpen}
+            <div class="night">
+              <svg viewBox="0 0 200 50" class="night-svg">
+                <line x1="0" y1="6" x2="200" y2="6" stroke="var(--crimson)" stroke-width="0.5" stroke-dasharray="2 2" opacity="0.6" />
+                {#if night.series.length > 1}
+                  {@const maxC = Math.max(night.ceilingUsd, ...night.series.map((s) => s.cum))}
+                  <polyline
+                    points={night.series
+                      .map(
+                        (s, i) =>
+                          `${(i / Math.max(1, night.series.length - 1)) * 196 + 2},${
+                            46 - (s.cum / maxC) * 40
+                          }`,
+                      )
+                      .join(' ')}
+                    fill="none"
+                    stroke={horizonColor(night.landsAtPct)}
+                    stroke-width="1.4"
+                  />
+                {/if}
+              </svg>
+              <div class="night-cap mono">
+                lands at {fmtUsd(night.landsAtUsd)} ({pct(night.landsAtPct)})
+                {#if night.greenAtIter}· green ~iter {night.greenAtIter}{/if}
+                {#if night.hitsCeiling}<span class="warn">· hits ceiling</span>{/if}
+              </div>
+            </div>
+          {/if}
+          <p class="startnote mono">
+            Creating <b>saves</b> this loop — it won't run until you press <b>✦ Start</b> in its
+            system view.
+          </p>
+        </div>
+      </aside>
+    {/snippet}
+
+    {#snippet doneWhen()}
+      <div class="dod">
+        <div class="dest-grid">
+          <div class="ac">
+            <div class="dlab mono">✦ WHAT “DONE” LOOKS LIKE <em class="req">required</em></div>
+            {#each acceptanceCriteria as _ac, i}
+              <div class="ac-row">
+                <span class="ac-star">✦</span>
+                <input
+                  class="inp"
+                  placeholder="e.g. 401 on an expired token"
+                  bind:value={acceptanceCriteria[i]}
+                />
+                <button class="mini-x" aria-label="remove" onclick={() => removeCriterion(i)}>✕</button>
+              </div>
+            {/each}
+            <button class="add mono" onclick={addCriterion}>+ add criterion</button>
+          </div>
+          <div class="gate">
+            <div class="dlab mono">THE TEST THAT DECIDES IT'S GREEN <em class="req">required</em></div>
+            {#each gateStages as _st, i}
             <div class="st-row">
               <input class="inp st-name mono" placeholder="stage" bind:value={gateStages[i].name} />
               <span class="arrow">→</span>
@@ -755,11 +1003,28 @@
             {/if}
           {/each}
           <button class="add mono" onclick={addStage}>+ add stage</button>
+          </div>
         </div>
       </div>
-    </section>
+    {/snippet}
 
-    <!-- ADVANCED DRAWERS -->
+    {#snippet advancedBody()}
+      <div class="adv" data-open={advOpen}>
+        <button class="adv-top" onclick={() => (advOpen = !advOpen)}>
+          <span class="adv-chev mono">▸</span>
+          Advanced engine settings
+          <span class="adv-sub mono">
+            {#if overrides && Object.keys(overrides).length}
+              <span class="odot"></span> overridden
+            {:else if preset && preset !== 'balanced'}
+              set by {PRESET_META[preset].label} preset
+            {:else}
+              all defaults
+            {/if}
+          </span>
+        </button>
+        {#if advOpen}
+          <div class="adv-body">
     <section class="drawers">
       <div class="drawer-tabs mono">
         {#each DRAWERS as d (d.key)}
@@ -1034,39 +1299,138 @@
         </div>
       {/if}
     </section>
+          </div>
+        {/if}
+      </div>
+    {/snippet}
 
-    <!-- footer: validation + actions -->
-    <footer class="ftr">
+    {#snippet validStatus()}
       <div class="valid mono">
         {#if createError}
           <span class="verr" role="alert">✕ {createError}</span>
+        {:else if !validation.ok && touched}
+          <span class="verr">⚠ {validation.errors[0]}</span>
+        {:else if validation.ok}
+          <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
         {:else}
-          <span class="vstatus" role="status">
-            {#if !validation.ok && touched}
-              <span class="verr">⚠ {validation.errors[0]}</span>
-            {:else if validation.ok}
-              <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
-            {:else}
-              <span class="vhint">review the settings, then start</span>
-            {/if}
-          </span>
+          <span class="vhint">fill in the essentials, then create</span>
         {/if}
       </div>
-      <div class="actions">
-        <button class="ghost mono" onclick={onClose}>cancel</button>
-        <!-- This writes/edits the loop's loop.json; it does NOT start a run. The run is
-             started later with ✦ Start inside the System view — keep the verbs distinct. -->
-        <button class="btn btn-primary btn-lg ignite" disabled={!validation.ok || busy} onclick={ignite}>
-          {busy
-            ? mode === 'edit'
-              ? 'saving…'
-              : 'creating…'
-            : mode === 'edit'
-              ? '✦ SAVE LOOP'
-              : '✦ CREATE LOOP'}
-        </button>
+    {/snippet}
+
+    {#snippet quickFooter()}
+      <!-- This writes/edits the loop's loop.json; it does NOT start a run. The run is
+           started later with ✦ Start inside the System view — keep the verbs distinct. -->
+      <footer class="ftr">
+        {@render validStatus()}
+        <div class="actions">
+          <button class="btn btn-ghost btn-md" onclick={onClose}>cancel</button>
+          <button
+            class="btn btn-primary btn-lg ignite"
+            disabled={!validation.ok || busy}
+            onclick={ignite}
+          >
+            {busy
+              ? mode === 'edit'
+                ? 'saving…'
+                : 'creating…'
+              : mode === 'edit'
+                ? '✦ Save loop'
+                : '✦ Create loop'}
+          </button>
+        </div>
+      </footer>
+    {/snippet}
+
+    {#snippet stepRail()}
+      <div class="rail">
+        {#each STEP_DEFS as s, i (s.key)}
+          <button
+            class="rstep {i < reached ? 'done' : ''}"
+            aria-current={i === step}
+            disabled={i > reached}
+            onclick={() => goStep(i)}
+          >
+            <span class="rdot mono">{i < reached ? '✓' : i + 1}</span>
+            <span class="rlabel">
+              <span class="rname">{s.key}</span>
+              <span class="rsub mono">{s.sub}</span>
+            </span>
+          </button>
+        {/each}
       </div>
-    </footer>
+    {/snippet}
+
+    {#snippet stepNav()}
+      <div class="tc-nav">
+        {#if step > 0}
+          <button class="btn btn-ghost btn-md" onclick={prevStep}>← Back</button>
+        {/if}
+        <span class="nav-spring"></span>
+        {#if step < STEP_DEFS.length - 1}
+          {#if !stepValid(step)}<span class="verr mono">⚠ {stepHint(step)}</span>{/if}
+          <button class="btn btn-primary btn-md" disabled={!stepValid(step)} onclick={nextStep}>
+            Next →
+          </button>
+        {:else}
+          {@render validStatus()}
+          <button
+            class="btn btn-primary btn-lg ignite"
+            disabled={!validation.ok || busy}
+            onclick={ignite}
+          >
+            {busy
+              ? mode === 'edit'
+                ? 'saving…'
+                : 'creating…'
+              : mode === 'edit'
+                ? '✦ Save loop'
+                : '✦ Create loop'}
+          </button>
+        {/if}
+      </div>
+    {/snippet}
+
+    {#snippet reviewBody()}
+      <div class="review-grid">
+        <div class="rev">
+          <span class="rk mono">name</span>
+          <span class="rv">
+            {loopName.trim() || '—'}
+            <small class="mono">id: {loopId.trim() || '—'}</small>
+          </span>
+          <button class="rev-change mono" onclick={() => goStep(0)}>change</button>
+        </div>
+        <div class="rev">
+          <span class="rk mono">done when</span>
+          <span class="rv">
+            {#each acceptanceCriteria.filter((a) => a.trim()) as c}
+              <span class="rev-crit">• {c}</span>
+            {/each}
+            <small class="mono">
+              green on: {gateStages
+                .filter((s) => s.command.trim())
+                .map((s) => s.command)
+                .join(' · ') || '—'}{gateTested ? ' · ✓ tested' : ''}
+            </small>
+          </span>
+          <button class="rev-change mono" onclick={() => goStep(1)}>change</button>
+        </div>
+        <div class="rev">
+          <span class="rk mono">guardrails</span>
+          <span class="rv">
+            {finalEngine.models.execute} · stops at {fmtUsd(finalEngine.cost.ceilingUsd)} or {finalEngine
+              .stop.maxIters} tries
+            <small class="mono">{autonomyPlain} · {permPlain}</small>
+          </span>
+          <button class="rev-change mono" onclick={() => goStep(2)}>change</button>
+        </div>
+      </div>
+      <div class="startnote-box mono">
+        ⚠ <b>Creating saves this loop — it won't run yet.</b> Start it with <b>✦ Start</b> from its
+        system view. Keeping “create” and “start” separate is deliberate.
+      </div>
+    {/snippet}
   </div>
 </div>
 
@@ -1134,10 +1498,6 @@
     background: color-mix(in srgb, var(--n4) 90%, transparent);
   }
 
-  .idrow {
-    display: flex;
-    gap: var(--space-3);
-  }
   .taskfile {
     display: flex;
     align-items: center;
@@ -1181,9 +1541,6 @@
     flex-direction: column;
     gap: var(--space-1);
   }
-  .field.grow {
-    flex: 1;
-  }
   .flab {
     font-size: var(--text-xs);
     letter-spacing: 0.14em;
@@ -1216,74 +1573,12 @@
     cursor: not-allowed;
   }
 
-  .seclab {
-    font-size: var(--text-xs);
-    letter-spacing: 0.16em;
-    color: var(--brass);
-    text-transform: uppercase;
-    display: block;
-    margin-bottom: var(--space-2);
-  }
-  .seclab em {
-    color: var(--text-faint);
-    font-style: normal;
-    letter-spacing: 0.06em;
-  }
-
-  /* blueprint chips — M4.5: track shape/border/background/padding/gap and the
-     selected-state color now come from the shared `.seg`/`.seg-item` primitives
-     (primitives.css, same pattern as ModeBar's `.mbtn`); `.bp` only adds the
-     icon+label row layout `.seg-item` doesn't define — no color of its own. */
-  .bp {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .bp-glyph {
-    font-size: var(--text-lg);
-  }
-  .bp-name {
-    font-size: var(--text-sm);
-    font-weight: 600;
-  }
-  .bp-tag {
-    margin-top: var(--space-2);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-  }
-
-  .cols {
-    display: grid;
-    grid-template-columns: 1.05fr 0.95fr;
-    gap: var(--space-3);
-  }
-  .panel {
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-  }
-
   /* dials */
   .dial {
     margin-bottom: 14px;
   }
   .dial:last-child {
     margin-bottom: 0;
-  }
-  .dlabels {
-    display: flex;
-    justify-content: space-between;
-    font-size: var(--text-xs);
-    letter-spacing: 0.1em;
-    color: var(--text-meta);
-    margin-bottom: var(--space-1);
-  }
-  .dsub {
-    font-size: var(--text-2xs);
-    letter-spacing: 0.04em;
-    color: var(--text-faint);
-    margin-bottom: 5px;
   }
   .dial input[type='range'] {
     width: 100%;
@@ -1311,13 +1606,6 @@
   }
   /* thumb appearance + focus ring now come from the shared .slider.thumb-brass
      (primitives.css) — see the `class="slider thumb-brass"` on each dial <input>. */
-  .dhint {
-    margin-top: 5px;
-    font-size: var(--text-xs);
-    color: var(--em-hi);
-    letter-spacing: 0.02em;
-  }
-
   /* preview */
   .orrery-mini {
     display: flex;
@@ -1328,30 +1616,6 @@
     width: 100%;
     max-width: 240px;
     height: auto;
-  }
-  .pstats {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 3px 14px;
-    font-size: var(--text-2xs);
-  }
-  .pstats li {
-    display: flex;
-    justify-content: space-between;
-    color: var(--text-dim);
-  }
-  .pstats strong {
-    color: var(--starlight);
-    font-weight: 500;
-  }
-  .pstats strong.on {
-    color: var(--auditor-white);
-  }
-  .pstats strong.off {
-    color: var(--text-faint);
   }
   .night-btn {
     margin-top: 8px;
@@ -1676,25 +1940,6 @@
     display: flex;
     gap: 9px;
   }
-  .ghost {
-    background: transparent;
-    border: 1px solid var(--hairline);
-    color: var(--text-dim);
-    border-radius: var(--radius-pill);
-    padding: 8px 16px;
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition:
-      background var(--dur-feedback) var(--ease-standard),
-      color var(--dur-feedback) var(--ease-standard);
-  }
-  .ghost:hover {
-    background: color-mix(in srgb, var(--n4) 55%, transparent);
-    color: var(--starlight);
-  }
-  .ghost:active {
-    background: color-mix(in srgb, var(--n4) 80%, transparent);
-  }
   /* M4.5: fill/border/color/shape/size now come from the shared `.btn`/`.btn-primary`/
      `.btn-lg` primitives (primitives.css) — solid light replaces solid amber, the
      monochrome-inversion CTA. `.ignite` only keeps this button's own letter-spacing
@@ -1710,9 +1955,600 @@
   }
 
   @media (max-width: 720px) {
-    .cols,
     .dest-grid {
       grid-template-columns: 1fr;
     }
+    .tc-2col {
+      grid-template-columns: 1fr;
+    }
+    .summary {
+      position: static;
+    }
+    .rail {
+      flex-direction: row;
+      overflow-x: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--hairline);
+      padding-right: 0;
+      padding-bottom: var(--space-2);
+    }
+    .rstep {
+      flex: none;
+    }
+  }
+
+  /* ══ REDESIGN — gallery / lanes / steps / summary / presets / accordion ══ */
+
+  .gallery-lead {
+    font-size: var(--text-xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-meta);
+    margin: 0 0 var(--space-2);
+  }
+  .recipes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--space-3);
+  }
+  .recipe {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    text-align: left;
+    min-height: 148px;
+    padding: var(--space-4);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--n3) 40%, transparent);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: var(--font-grotesk);
+    transition:
+      border-color var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard),
+      transform var(--dur-feedback) var(--ease-standard);
+  }
+  .recipe:hover {
+    border-color: color-mix(in srgb, var(--em-mid) 45%, transparent);
+    background: color-mix(in srgb, var(--n4) 55%, transparent);
+    transform: translateY(-2px);
+  }
+  .recipe.sel {
+    border-color: var(--em-hi);
+  }
+  .recipe-tag {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--n1);
+    background: var(--em-hi);
+    border-radius: var(--radius-pill);
+    padding: 2px 7px;
+    font-weight: 600;
+  }
+  .recipe-glyph {
+    font-size: var(--text-xl);
+    color: var(--starlight);
+    line-height: 1;
+  }
+  .recipe-name {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--starlight);
+    letter-spacing: -0.01em;
+  }
+  .recipe-blurb {
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .recipe-meta {
+    margin-top: auto;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.02em;
+    color: var(--text-faint);
+  }
+
+  .tc-topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .tc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill);
+    padding: 4px 6px 4px 12px;
+    background: color-mix(in srgb, var(--n3) 45%, transparent);
+    font-size: var(--text-sm);
+    color: var(--starlight);
+  }
+  .tc-chip-glyph {
+    font-size: var(--text-md);
+  }
+  .tc-chip-change {
+    border: none;
+    background: color-mix(in srgb, var(--n4) 70%, transparent);
+    color: var(--text-dim);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    cursor: pointer;
+    transition: color var(--dur-feedback) var(--ease-standard);
+  }
+  .tc-chip-change:hover {
+    color: var(--starlight);
+  }
+  .tc-lane {
+    margin-left: auto;
+  }
+
+  .tc-2col {
+    display: grid;
+    grid-template-columns: 1fr 264px;
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .tc-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .id-field :global(.inp) {
+    max-width: 260px;
+  }
+  .fhelp {
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+    line-height: 1.4;
+  }
+  .req {
+    color: var(--amber);
+    font-style: normal;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+  }
+  .opt {
+    color: var(--text-faint);
+    font-style: normal;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+  }
+
+  /* guided step chrome */
+  .step-h {
+    margin-bottom: var(--space-2);
+  }
+  .step-h .sk {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .step-h h3 {
+    margin: 4px 0 3px;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--starlight);
+    letter-spacing: -0.01em;
+  }
+  .step-h p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    max-width: 52ch;
+    line-height: 1.45;
+  }
+  .tc-step {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-height: 280px;
+    min-width: 0;
+  }
+  /* the guided step column is narrower than the quick lane (the rail takes 172px),
+     so the Definition-of-Done stacks to a single column here instead of overflowing */
+  .tc-step .dest-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* guided step rail */
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid var(--hairline);
+    padding-right: var(--space-3);
+  }
+  .tc-main:has(.rail) {
+    display: grid;
+    grid-template-columns: 172px 1fr;
+    gap: var(--space-3) var(--space-4);
+    align-items: start;
+  }
+  /* the rail is column 1; the step body + nav share column 2 (nav must not fall
+     into the narrow rail column via grid auto-placement) */
+  .tc-main:has(.rail) .tc-step {
+    grid-column: 2;
+  }
+  .tc-main:has(.rail) .tc-nav {
+    grid-column: 2;
+  }
+  .tc-nav .btn {
+    white-space: nowrap;
+  }
+  .rstep {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 8px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    text-align: left;
+    color: var(--text-meta);
+    cursor: pointer;
+    font-family: var(--font-grotesk);
+    transition:
+      background var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard);
+  }
+  .rstep:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--n4) 45%, transparent);
+  }
+  .rstep:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .rstep[aria-current='true'] {
+    background: color-mix(in srgb, var(--n4) 60%, transparent);
+    color: var(--starlight);
+  }
+  .rdot {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+    font-size: var(--text-2xs);
+    color: var(--text-meta);
+  }
+  .rstep[aria-current='true'] .rdot {
+    border-color: var(--em-hi);
+    color: var(--em-hi);
+  }
+  .rstep.done .rdot {
+    background: var(--plasma-green);
+    border-color: var(--plasma-green);
+    color: var(--n1);
+  }
+  .rlabel {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .rname {
+    font-size: var(--text-sm);
+  }
+  .rsub {
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+  }
+
+  .tc-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--hairline);
+  }
+  .nav-spring {
+    flex: 1;
+  }
+
+  /* guardrail presets */
+  .presets {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+  .pchip {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1px;
+    text-align: left;
+    border: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--n3) 40%, transparent);
+    color: var(--text-dim);
+    border-radius: var(--radius);
+    padding: 7px 13px;
+    cursor: pointer;
+    font-family: var(--font-grotesk);
+    transition:
+      border-color var(--dur-feedback) var(--ease-standard),
+      color var(--dur-feedback) var(--ease-standard),
+      background var(--dur-feedback) var(--ease-standard);
+  }
+  .pchip b {
+    font-weight: 600;
+    font-size: var(--text-sm);
+  }
+  .pchip small {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .pchip:hover {
+    border-color: color-mix(in srgb, var(--em-mid) 40%, transparent);
+    color: var(--starlight);
+  }
+  .pchip.on {
+    border-color: var(--em-hi);
+    background: color-mix(in srgb, var(--n4) 65%, transparent);
+    color: var(--starlight);
+  }
+  .pchip.on small {
+    color: var(--text-meta);
+  }
+  .preset-cur {
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+  }
+
+  /* plain-language dials */
+  .dial-plain {
+    margin-bottom: var(--space-4);
+  }
+  .dial-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin-bottom: 5px;
+  }
+  .dial-name {
+    font-size: var(--text-md);
+    color: var(--starlight);
+    font-weight: 500;
+  }
+  .dial-poles {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .dial-mean {
+    margin-top: 6px;
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .dial-mean b {
+    color: var(--starlight);
+    font-weight: 500;
+  }
+
+  /* advanced accordion (wraps the existing drawers) */
+  .adv {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .adv-top {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 12px var(--space-4);
+    background: color-mix(in srgb, var(--n3) 35%, transparent);
+    border: none;
+    color: var(--starlight);
+    font-family: var(--font-grotesk);
+    font-size: var(--text-md);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--dur-feedback) var(--ease-standard);
+  }
+  .adv-top:hover {
+    background: color-mix(in srgb, var(--n4) 50%, transparent);
+  }
+  .adv-chev {
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    transition: transform var(--dur-mid) var(--ease-standard);
+  }
+  .adv[data-open='true'] .adv-chev {
+    transform: rotate(90deg);
+  }
+  .adv-sub {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.03em;
+    color: var(--text-faint);
+  }
+  .adv-body {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    border-top: 1px solid var(--hairline);
+  }
+
+  /* live summary aside */
+  .summary {
+    position: sticky;
+    top: 0;
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    overflow: hidden;
+  }
+  .summary-orb {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-3) var(--space-2);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .summary-orb .orrery-mini {
+    padding: 0;
+  }
+  .summary-orb .mini {
+    max-width: 150px;
+  }
+  .summary-state {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+  .summary-body {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+  .summary-body h4 {
+    margin: 0 0 4px;
+    font-size: var(--text-md);
+    color: var(--starlight);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .summary-lede {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .summary-lede b {
+    color: var(--starlight);
+    font-weight: 500;
+  }
+  .summary-stats {
+    list-style: none;
+    margin: 0 0 var(--space-2);
+    padding: 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .summary-stats li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: 7px 0;
+    border-bottom: 1px solid var(--hairline);
+    font-size: var(--text-2xs);
+  }
+  .summary-stats span {
+    color: var(--text-meta);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .summary-stats strong {
+    color: var(--starlight);
+    font-weight: 500;
+    text-align: right;
+  }
+  .summary-stats strong.on {
+    color: var(--plasma-green);
+  }
+  .summary-stats strong.off {
+    color: var(--text-faint);
+  }
+  .startnote {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-2xs);
+    color: var(--text-dim);
+    line-height: 1.5;
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    background: color-mix(in srgb, var(--amber) 8%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+  }
+  .startnote b {
+    color: var(--amber);
+    font-weight: 500;
+  }
+
+  /* review (check-answers) */
+  .review-grid {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .rev {
+    display: grid;
+    grid-template-columns: 110px 1fr auto;
+    gap: var(--space-3);
+    padding: 12px var(--space-4);
+    border-bottom: 1px solid var(--hairline);
+    align-items: baseline;
+  }
+  .rev:last-child {
+    border-bottom: none;
+  }
+  .rk {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-meta);
+  }
+  .rev .rv {
+    color: var(--starlight);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rev .rv small {
+    color: var(--text-faint);
+    font-size: var(--text-2xs);
+  }
+  .rev-crit {
+    display: block;
+  }
+  .rev-change {
+    background: transparent;
+    border: none;
+    color: var(--amber);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .rev-change:hover {
+    text-decoration: underline;
+  }
+  .startnote-box {
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-dim);
+    line-height: 1.5;
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    background: color-mix(in srgb, var(--amber) 8%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  .startnote-box b {
+    color: var(--amber);
+    font-weight: 500;
   }
 </style>
