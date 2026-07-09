@@ -168,8 +168,20 @@
   // fill vs the star's ~0.1) so the hierarchy stays "star first" (plan invariant). Only the
   // two non-alert states that have a matching scene hue (done/in-progress) get tinted; warn/
   // err/ready are already chrome-shared alert or identity colors and are untouched.
+  // WS-R (light-mode glow): on the LIGHT theme --void is near-WHITE, so muting a scene hue
+  // toward it (as dark does, to darken/desaturate) instead washes it to paper — the planet
+  // fills/glows disappear. On light we mute toward this fixed deep ink instead (same strengths,
+  // opposite direction) so the hue stays saturated for the multiply glow. Dark uses C.void.
+  const LIGHT_INK = 0x11142a;
+  // The APPLIED scene theme — hoisted out of the Pixi closure so scenePair keys off the
+  // same source the rest of tick() does (muteTarget etc.), instead of re-reading the live
+  // DOM dataset per planet per frame. Written at Pixi init and by applyThemeToScene, so a
+  // dark⇄light flip re-tints the planet pairs in the SAME frame as the scene re-tint (no
+  // one-frame inconsistency around the toggle) and the hot path stays DOM-free.
+  let appliedSceneTheme: 'light' | 'dark' = 'dark';
   function scenePair(hex: number): { core: number; base: number } {
-    return { core: muteColor(hex, C.void, 0.12), base: muteColor(hex, C.void, 0.5) };
+    const target = appliedSceneTheme === 'light' ? LIGHT_INK : C.void;
+    return { core: muteColor(hex, target, 0.12), base: muteColor(hex, target, 0.5) };
   }
   function planetPair(o: { status: string; certified: boolean; merged: boolean }): {
     core: number;
@@ -311,15 +323,28 @@
       const brakeG = new PIXI.Graphics(); // brake-ring "stopping at next <mode>"
       const shimmerG = new PIXI.Graphics(); // Rewind-mode time-shimmer frame (neutral frost)
 
+      // WS-R (light-mode glow): the screen/add-blended glow + transient layers below VANISH on
+      // the light theme — screen/add over a near-white --void is a near no-op, so the corona,
+      // planet glows and transient blooms wash out. On light they flip to 'multiply' (the white
+      // glow texture, tinted a saturated hue, darkens the paper into a color wash — watercolor)
+      // and 'normal' (transient strokes read directly). currentTheme reads the LIVE attribute so
+      // a runtime dark⇄light toggle re-applies the branch. Dark is byte-identical (screen/add).
+      const currentTheme = () =>
+        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      const glowBlend = (): 'screen' | 'multiply' =>
+        currentTheme() === 'light' ? 'multiply' : 'screen';
+      const transientBlend = (): 'add' | 'normal' =>
+        currentTheme() === 'light' ? 'normal' : 'add';
+
       // M2.1: glow discipline — corona reads as an atmosphere (screen), never a hard
       // additive hotspot; 'add' is reserved for true transient moments below.
       coronaGlow.anchor.set(0.5);
-      coronaGlow.blendMode = 'screen';
+      coronaGlow.blendMode = glowBlend();
       coronaGlowWide.anchor.set(0.5);
-      coronaGlowWide.blendMode = 'screen';
+      coronaGlowWide.blendMode = glowBlend();
       coronaGlowWide.visible = false;
-      starFlareG.blendMode = 'screen';
-      supernovaG.blendMode = 'add';
+      starFlareG.blendMode = glowBlend();
+      supernovaG.blendMode = transientBlend();
 
       // ── particle stream (pooled ParticleContainer) ──────────────────────
       // A budget of pre-allocated particle sprites flow from the active region
@@ -336,7 +361,7 @@
       const particlesC = new PIXI.ParticleContainer({
         dynamicProperties: { position: true, vertex: true, color: true },
       });
-      particlesC.blendMode = 'screen'; // M2.1: corona/particle containers are screen-blended
+      particlesC.blendMode = glowBlend(); // M2.1: screen-blended on dark; WS-R: 'multiply' on light
       type Mote = {
         sprite: any;
         active: boolean;
@@ -415,11 +440,11 @@
         const container = new PIXI.Container();
         const glow = new PIXI.Sprite(glowTex.texture);
         glow.anchor.set(0.5);
-        glow.blendMode = 'screen';
+        glow.blendMode = glowBlend(); // WS-R: 'screen' on dark, 'multiply' on light
         glow.visible = false;
         const disc = new PIXI.Graphics();
         const fxG = new PIXI.Graphics();
-        fxG.blendMode = 'add';
+        fxG.blendMode = transientBlend(); // WS-R: 'add' on dark, 'normal' on light
         container.addChild(glow, disc, fxG);
         planetsC.addChild(container);
         v = { container, glow, disc, fx: fxG };
@@ -463,11 +488,6 @@
       let sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
       let farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
       let nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
-
-      // WS-C: the scene follows the LIVE <html data-theme> attribute (not the store) so both
-      // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
-      const currentTheme = () =>
-        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 
       // ── M2.3: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
@@ -519,9 +539,12 @@
           old.destroy(true);
         } else {
           vignetteAuroraSprite = new PIXI.Sprite(auroraTex);
-          vignetteAuroraSprite.blendMode = 'screen';
           world.addChild(vignetteAuroraSprite);
         }
+        // WS-R: set the blend every rebuild (runs on resize AND on theme flip) so the aurora
+        // corner wash flips screen⇄multiply with the theme. 'screen' on dark; 'multiply' on
+        // light so a low-alpha teal breath darkens the paper corners rather than no-op'ing.
+        vignetteAuroraSprite.blendMode = glowBlend();
       }
 
       // eased visual state (interpolated toward store targets each frame)
@@ -625,7 +648,7 @@
       // the star and planets cross-fade to the new scene hues on their own — no per-body texture
       // is baked (the glow/particle textures are WHITE and tinted at runtime). Guarded on the
       // live attribute so both the store effect and the observer below stay idempotent.
-      let appliedSceneTheme = currentTheme();
+      appliedSceneTheme = currentTheme(); // (component-scope — scenePair reads it too)
       function applyThemeToScene() {
         const th = currentTheme();
         if (th === appliedSceneTheme) return;
@@ -662,7 +685,21 @@
         sceneAtmo = (C.scene ?? FALLBACK.scene!).atmo;
         farTint = mixColor(mixColor(C.starlight, C.frost, 0.35), sceneAtmo, 0.22);
         nearAuroraTint = mixColor(C.starlight, sceneAtmo, 0.45);
-        rebuildVignette(w, h);
+        rebuildVignette(w, h); // (re-sets vignetteAuroraSprite.blendMode for the new theme)
+        // WS-R: blendMode is set at CONSTRUCTION — flip every live glow/transient layer to the
+        // new theme's mode so a runtime dark⇄light toggle re-applies the light-glow branch. The
+        // tints self-correct in tick (they read `muteTarget`, keyed off appliedSceneTheme above).
+        const gb = glowBlend();
+        const tb = transientBlend();
+        coronaGlow.blendMode = gb;
+        coronaGlowWide.blendMode = gb;
+        starFlareG.blendMode = gb;
+        particlesC.blendMode = gb;
+        supernovaG.blendMode = tb;
+        for (const v of planetPool.values()) {
+          v.glow.blendMode = gb;
+          v.fx.blendMode = tb;
+        }
       }
       retintScene = applyThemeToScene;
       const themeObserver = new MutationObserver(() => applyThemeToScene());
@@ -773,6 +810,11 @@
 
         // single reduced-motion source (uiStore); read fresh each frame
         const reduced = uiStore.reducedMotion;
+        // WS-R (light-mode glow): the fill/glow mute target — C.void on dark (near-black:
+        // darkens, unchanged), the fixed deep ink on light (keeps the scene hue saturated so the
+        // multiply corona/planet washes read on white paper instead of bleaching out).
+        const light = appliedSceneTheme === 'light';
+        const muteTarget = light ? LIGHT_INK : C.void;
         const s = runStore.state;
         // M4.5 safeInsets: the orbital system centers on the unobstructed rect (full canvas
         // minus occluded chrome), not the raw canvas center — eased so a safeInsets change
@@ -933,7 +975,7 @@
           // full-canvas wash, not a small accent. The polar (weekly-wait) end goes fully neutral
           // — its own identity color is the cold frost crystal-spoke motif drawn below, so the
           // base wash underneath it doesn't need its own hue too.
-          const duskWash = muteColor(C.ember, C.void, 0.45);
+          const duskWash = muteColor(C.ember, muteTarget, 0.45); // WS-R: ink target on light
           const polarWash = C.indigo;
           const dusk = lerpColor(duskWash, polarWash, vis.nightHue);
           nightG.rect(0, 0, w, h).fill({ color: dusk, alpha: 0.34 * vis.night });
@@ -1165,8 +1207,8 @@
         // tint always = base tier"), safe since the glow texture itself tops out ~12% alpha.
         // M5.3: both MUTE_* constants pulled back (see their declaration) so the new
         // jewel-tone scene hues actually survive this mute instead of reading gray/dull.
-        const starFill = muteColor(vis.starColor, C.void, MUTE_FILL);
-        const glowTint = muteColor(vis.starColor, C.void, MUTE_GLOW);
+        const starFill = muteColor(vis.starColor, muteTarget, MUTE_FILL); // WS-R: ink target on light
+        const glowTint = muteColor(vis.starColor, muteTarget, MUTE_GLOW); // WS-R: keeps the corona wash saturated on light
         if (coronaAlpha > 0.01) {
           coronaGlow.visible = true;
           // M5.3: raised from (3 + burn*3) — the owner's core complaint was "dull"; a bigger,
@@ -1190,7 +1232,7 @@
           coronaGlowWide.visible = true;
           const wideR = coronaR * (5.5 + Math.min(1, vis.burn) * 3.5) * coronaShimmer;
           sizeGlowSprite(coronaGlowWide, wideGlowTex, cx, cy, wideR);
-          coronaGlowWide.tint = muteColor(vis.coronaColor, C.void, MUTE_GLOW_WIDE);
+          coronaGlowWide.tint = muteColor(vis.coronaColor, muteTarget, MUTE_GLOW_WIDE); // WS-R: ink target on light
           coronaGlowWide.alpha = (0.5 + Math.min(1, vis.burn) * 0.3) * coronaShimmer;
         } else {
           coronaGlowWide.visible = false;
@@ -1319,12 +1361,12 @@
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep - wedge / 2, sweep + wedge / 2);
           starG.closePath();
-          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.18 });
+          starG.fill({ color: muteColor(C.amber, muteTarget, MUTE_FILL), alpha: 0.18 }); // WS-R: ink target on light
           // opposite (echo) arm — same amber family, dimmer, keeps the two-armed read
           starG.moveTo(cx, cy);
           starG.arc(cx, cy, beamR, sweep + Math.PI - wedge / 2, sweep + Math.PI + wedge / 2);
           starG.closePath();
-          starG.fill({ color: muteColor(C.amber, C.void, MUTE_FILL), alpha: 0.08 });
+          starG.fill({ color: muteColor(C.amber, muteTarget, MUTE_FILL), alpha: 0.08 }); // WS-R: ink target on light
           starG.circle(cx, cy, coronaR * 0.55).fill({ color: C.amber, alpha: 0.7 });
         } else if (rest === 'certified-done') {
           // sealed: calm green disc with a brass certification seal (concentric

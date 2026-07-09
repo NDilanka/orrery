@@ -416,9 +416,13 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .palette {
+    :global(:root:not([data-motion='full'])) .palette {
       animation: none;
     }
+  }
+  /* mirrors the media block above, for the user-forced reduced-motion setting */
+  :global(:root[data-motion='reduced']) .palette {
+    animation: none;
   }
 
   .inputrow {

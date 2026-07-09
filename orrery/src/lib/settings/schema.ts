@@ -65,6 +65,8 @@ export interface ProviderInstance {
   mode: AuthMode;
   baseUrl?: string;
   region?: string;
+  /** GCP project id — Vertex cloud only (ANTHROPIC_VERTEX_PROJECT_ID at spawn). */
+  projectId?: string;
   defaultModel?: string;
   /** mirror of keychain_has for this instance's account; the secret never lives here. */
   hasSecret?: boolean;

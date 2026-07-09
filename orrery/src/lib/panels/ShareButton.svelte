@@ -182,9 +182,13 @@
     animation: breathe 1.8s ease-in-out infinite;
   }
   @media (prefers-reduced-motion: reduce) {
-    .trigger .dot {
+    :global(:root:not([data-motion='full'])) .trigger .dot {
       animation: none;
     }
+  }
+  /* mirrors the media block above, for the user-forced reduced-motion setting */
+  :global(:root[data-motion='reduced']) .trigger .dot {
+    animation: none;
   }
 
   .popover {

@@ -32,8 +32,10 @@ Fly through **Cosmos → a System → a Body**. **✦ Ignite** starts a run (wit
 indicator), and **Brake** / **Reignite** stop and resume it; a **LIVE/REPLAY** badge plus a
 **live event log** show exactly what the loop is doing, and a quota limit **pauses-and-resumes**
 the run (POLAR NIGHT). **✦ ignite new loop** authors one in the Tuning Console; toggle
-**Planetarium** (ambient) or **Rewind** (scrub a replay). The desktop window runs live; the
-browser path (`npm run dev`) replays the bundled fixtures in `static/fixtures/`.
+**Planetarium** (ambient) or **Rewind** (scrub a replay). **Settings** (⚙ / `Ctrl+,`) tune the
+app — a full **light theme**, per-loop defaults, notifications, and multi-provider **BYOK** keys
+(stored in your OS keychain). The desktop window runs live; the browser path (`npm run dev`)
+replays the bundled fixtures in `static/fixtures/`.
 
 ### Browser only (no Rust, fastest to look at)
 ```bash
@@ -70,14 +72,20 @@ is supported and exercised by the demo fixture `static/fixtures/bmad-log.jsonl`.
 
 ## Verification
 
-- **81** Rust `#[test]`s (`cargo test`) — including a **cross-language reducer-parity** suite
+- **87** Rust `#[test]`s (`cargo test`) plus a **9-case cross-language reducer-parity** suite
   (`src-tauri/tests/golden_parity.rs`) that asserts the Rust reducer matches committed
   `RunState` goldens.
-- **100+** Vitest tests across 10 files under `src/lib` — including `reduce.golden.test.ts`,
-  where the TS reducer asserts the **same** goldens, so any drift between the Rust and TS
-  reducers fails a test.
-- **5** Playwright E2E smoke tests (`e2e/smoke.spec.ts`) over browser replay; `npm run check`
-  (svelte-check) is clean.
+- **233** Vitest tests across 12 files under `src/lib` — including `reduce.golden.test.ts`
+  (the TS reducer asserts the **same** goldens, so any drift between the Rust and TS reducers
+  fails a test), the light-theme WCAG-contrast suites, and the new alerts / blueprints /
+  settings suites.
+- **9** Playwright E2E tests over browser replay — **5** smoke (`e2e/smoke.spec.ts`) and **4**
+  settings (`e2e/settings.spec.ts`, covering the modal, the theme flip, the Esc / `Ctrl+,`
+  chords, and the desktop-only BYOK state). `npm run check` (svelte-check) is clean (0/0 over
+  1096 files).
+- **Not** E2E-covered: the Settings → real-BYOK spawn **env injection / scrubbing** (it needs
+  the packaged Tauri app plus a live OS keychain — the browser-replay harness has neither). It
+  is covered by the Vitest provider-matrix unit tests and the Rust mirror.
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -97,7 +105,7 @@ orrery/
   loops/<id>/loop.json    seeded loop definition (hello — Python pytest gate) + user-authored
   static/fixtures/        real-log fixtures the app replays in dev / browser mode
   fixtures/               fixtures used by the Rust unit tests
-  e2e/                    Playwright smoke tests
+  e2e/                    Playwright tests (smoke + settings)
 ```
 
 ## Known limitations

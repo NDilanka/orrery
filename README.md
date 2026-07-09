@@ -145,7 +145,7 @@ run-orrery.bat   one-click launchers (venv setup + desktop app)
 run-orrery.sh
 ```
 
-Tested: 631 engine pytest tests, ~145 Vitest tests, 81 Rust `#[test]`s, 5 Playwright e2e smokes, plus golden-corpus parity between the two reducers.
+Tested: 631 engine pytest tests, 233 Vitest tests, 87 Rust `#[test]`s, 9 Playwright e2e (5 smoke + 4 settings), plus 9-case golden-corpus parity between the two reducers.
 
 ## The why
 

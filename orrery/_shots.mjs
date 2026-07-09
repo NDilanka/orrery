@@ -70,10 +70,53 @@ const browser = await chromium.launch();
         await shot(page, '02f-tuning-qa.png'); // QA compact screen
       }
     }
-    // close it
-    await page.keyboard.press('Escape').catch(()=>{});
-    await page.locator('button', { hasText: /close|cancel|✕|×/i }).first().click().catch(()=>{});
+    // close it — click the console's own ✕ (aria-label="close"), NOT a generic ✕
+    // (the QA screen's per-row "remove" buttons are also ✕), then wait for the
+    // scrim to detach so it can't intercept later clicks (gear / station chips).
+    const tcClose = page.locator('[aria-label="close"]');
+    if (await tcClose.count()) await tcClose.first().click().catch(()=>{});
+    await page.locator('.scrim').first().waitFor({ state: 'detached', timeout: 5000 }).catch(()=>{});
     await settle(page, 600);
+  }
+
+  // app settings popup (gear / Ctrl+,) — tabs + the full light theme flip.
+  const gear = page.locator('[aria-label="Open settings"]');
+  if (await gear.count()) {
+    const nav = (name) => page.getByRole('button', { name });
+    const themeRadio = (name) =>
+      page.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name });
+
+    await gear.click();
+    await settle(page, 800);
+    await shot(page, '09-settings-general.png'); // General tab (default)
+
+    await nav('Appearance').click();
+    await settle(page, 500);
+    await shot(page, '09b-settings-appearance.png');
+
+    await nav('AI / Models').click();
+    await settle(page, 500);
+    await shot(page, '09c-settings-ai.png'); // BYOK editor (desktop-only Test disabled here)
+
+    // flip to the full light theme via the Appearance → Theme control, close the
+    // overlay, and re-shoot the Cosmos so the light scene is captured.
+    await nav('Appearance').click();
+    await settle(page, 300);
+    await themeRadio('Light').click().catch(() => {});
+    await settle(page, 500);
+    await page.keyboard.press('Escape').catch(() => {});
+    await settle(page, 1800);
+    await shot(page, '09d-cosmos-light.png');
+
+    // restore dark so the remaining desktop shots (system/body/help) are unaffected.
+    await gear.click();
+    await settle(page, 500);
+    await nav('Appearance').click();
+    await settle(page, 300);
+    await themeRadio('Dark').click().catch(() => {});
+    await settle(page, 500);
+    await page.keyboard.press('Escape').catch(() => {});
+    await settle(page, 700);
   }
 
   // enter the bmad system (rich fixture)

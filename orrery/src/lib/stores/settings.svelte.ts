@@ -136,6 +136,8 @@ class SettingsStore implements SettingsStoreApi {
     }
 
     this.applyTheme();
+    this.applyMotion();
+    this.applyDensity();
     return () => {
       for (const t of teardowns) t();
     };
@@ -150,6 +152,8 @@ class SettingsStore implements SettingsStoreApi {
       if (fresh) {
         this.data = mergeSettings(fresh);
         this.applyTheme();
+        this.applyMotion();
+        this.applyDensity();
       }
     } catch {
       /* transient read error — keep the current tree */
@@ -195,13 +199,44 @@ class SettingsStore implements SettingsStoreApi {
   }
 
   private applySideEffects(path: string): void {
-    // theme is the only live side-effect; a section reset ('appearance') covers it too.
+    // live DOM side-effects; a section reset ('appearance') re-applies all three.
     if (path === 'appearance.theme' || path === 'appearance') this.applyTheme();
+    if (path === 'appearance.motion' || path === 'appearance') this.applyMotion();
+    if (path === 'appearance.density' || path === 'appearance') this.applyDensity();
   }
 
   private applyTheme(): void {
     if (typeof document !== 'undefined') {
       document.documentElement.dataset.theme = this.resolvedTheme;
+    }
+  }
+
+  /**
+   * Stamp data-motion on <html> so a user 'full' choice can override the OS
+   * prefers-reduced-motion (tokens.css scopes the OS freeze to
+   * :root:not([data-motion='full'])) and a 'reduced' choice freezes motion
+   * unconditionally. 'system' leaves the attribute off so only the OS pref speaks.
+   */
+  private applyMotion(): void {
+    if (typeof document === 'undefined') return;
+    const m = this.data.appearance.motion;
+    if (m === 'full' || m === 'reduced') {
+      document.documentElement.dataset.motion = m;
+    } else {
+      delete document.documentElement.dataset.motion;
+    }
+  }
+
+  /**
+   * Stamp data-density on <html> so tokens.css can tighten chrome spacing under
+   * [data-density='compact']. 'comfortable' (the default) leaves the attribute off.
+   */
+  private applyDensity(): void {
+    if (typeof document === 'undefined') return;
+    if (this.data.appearance.density === 'compact') {
+      document.documentElement.dataset.density = 'compact';
+    } else {
+      delete document.documentElement.dataset.density;
     }
   }
 
@@ -245,6 +280,8 @@ class SettingsStore implements SettingsStoreApi {
   replaceAll(next: unknown): void {
     this.data = mergeSettings(next);
     this.applyTheme();
+    this.applyMotion();
+    this.applyDensity();
     void this.persist();
   }
 

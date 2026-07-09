@@ -140,6 +140,28 @@
     onEnter(id);
   }
 
+  // WS-R: delete a loop from the roster. cosmosStore.deleteLoop removes it from local state
+  // itself (and tears down the persisted loop dir under Tauri). Gated by the app's
+  // confirm-destructive setting: when ON we ask first (id in the message); when OFF we delete
+  // straight away — the setting is the single source of the "are you sure?" policy.
+  async function removeLoop(id: string) {
+    // a RUNNING (or stopping) loop deserves a sterner warning — the roster summary's
+    // `status` is the live run status (restState only describes NOT-running palettes).
+    const summary = cosmosStore.get(id);
+    const active = summary?.status === 'running' || summary?.status === 'stopping';
+    const msg = active
+      ? `Loop ${id} is currently running. Delete it and its state? Its files, logs, and run state are removed.`
+      : `Delete loop ${id}? This removes it from the cosmos.`;
+    if (
+      settingsStore.data.general.confirmDestructive &&
+      typeof window !== 'undefined' &&
+      !window.confirm(msg)
+    ) {
+      return;
+    }
+    await cosmosStore.deleteLoop(id);
+  }
+
   // ── at-scale filter ──────────────────────────────────────────────────────
   // The labelled station glyphs ARE the roster now; below FILTER_THRESHOLD loops
   // the field needs no chrome. For a WALL of loops a slim top filter DIMS the
@@ -214,13 +236,26 @@
 
       const world = new PIXI.Container();
       app.stage.addChild(world);
+
+      // WS-C: the scene follows the LIVE <html data-theme> attribute (not the store) so both
+      // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
+      const currentTheme = () =>
+        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      // WS-R (light-mode glow): the screen-blended glow layers below (the aurora wash + every
+      // per-glyph corona) VANISH on the light theme — 'screen' over a near-white --void is a
+      // near no-op, so state glows wash out to paper. On light they flip to 'multiply' so the
+      // white glow texture, tinted a saturated state hue, DARKENS the paper into a visible
+      // color wash (watercolor) instead. Dark is untouched: this returns 'screen'.
+      const glowBlend = (): 'screen' | 'multiply' =>
+        currentTheme() === 'light' ? 'multiply' : 'screen';
+
       // M5 (plan §6 "aurora-teal-led atmosphere"): a faint scene.atmo wash sitting behind
       // EVERYTHING — reuses the same glow texture as a big soft radial, tinted teal at very
       // low alpha so it reads as sky atmosphere, not paint. Sized on resize; a slow shimmer
       // (frozen under reduced motion) lives in tick() below.
       const aurora = new PIXI.Sprite(glowTex.texture);
       aurora.anchor.set(0.5);
-      aurora.blendMode = 'screen';
+      aurora.blendMode = glowBlend(); // WS-R: 'screen' on dark, 'multiply' on light
       aurora.tint = C.scene.atmo;
       aurora.alpha = 0; // sized+set by rebuildVignette/onResize + tick
       const starfieldFar = new PIXI.Graphics(); // M2.9: two-layer parallax field, far (dim/cool/small)
@@ -238,7 +273,7 @@
         if (!s) {
           s = new PIXI.Sprite(glowTex.texture);
           s.anchor.set(0.5);
-          s.blendMode = 'screen';
+          s.blendMode = glowBlend(); // WS-R: 'screen' on dark, 'multiply' on light
           glowsC.addChild(s);
           glowPool.set(id, s);
         }
@@ -255,11 +290,6 @@
       // reaches the starfield itself, not just the wash below. WS-C: now `let` so the theme
       // flip (applyThemeToScene) can recompute it from the light-tuned starlight/atmo.
       let farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
-
-      // WS-C: the scene follows the LIVE <html data-theme> attribute (not the store) so both
-      // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
-      const currentTheme = () =>
-        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 
       // ── M2.9: cached vignette (rebuild on resize only) ──
       let vignetteSprite: any = null;
@@ -325,6 +355,13 @@
         aurora.tint = C.scene.atmo;
         farTint = mixColor(C.starlight, C.scene.atmo, 0.4);
         rebuildVignette(w, h);
+        // WS-R: blendMode is set at CONSTRUCTION — flip every live glow sprite (+ the aurora
+        // wash) to the new theme's mode so a runtime dark⇄light toggle re-applies the light
+        // branch (screen→multiply / multiply→screen). The tints self-correct in tick (they
+        // read `muteTarget`, which keys off appliedSceneTheme just updated above).
+        const gb = glowBlend();
+        aurora.blendMode = gb;
+        for (const s of glowPool.values()) s.blendMode = gb;
       }
       retintScene = applyThemeToScene;
       const themeObserver = new MutationObserver(() => applyThemeToScene());
@@ -477,6 +514,12 @@
       // dead regardless of how saturated the tint is.
       const MUTE_FILL = 0.08;
       const MUTE_GLOW = 0.15;
+      // WS-R (light-mode glow): on the LIGHT theme --void is near-WHITE, so muting a scene hue
+      // toward it (as dark does, to darken/desaturate the fill/glow tint) instead washes it out
+      // to paper and the glow disappears. On light we mute toward this fixed deep ink instead —
+      // SAME MUTE_* strengths, opposite direction — so the hue stays saturated for the multiply
+      // wash. Dark theme is byte-identical: `muteTarget` (in tick) stays C.void there.
+      const LIGHT_INK = 0x11142a;
 
       let t = 0;
       let lastCount = -1;
@@ -489,6 +532,11 @@
         lastTime = now;
         // single reduced-motion source (uiStore); read fresh each frame, like the Observatory.
         const reduced = uiStore.reducedMotion;
+        // WS-R (light-mode glow): read the applied theme (kept in sync by applyThemeToScene) and
+        // pick the fill/glow mute TARGET — C.void on dark (near-black: darkens, unchanged), the
+        // fixed deep ink on light (keeps the hue saturated so the multiply glow reads on paper).
+        const light = appliedSceneTheme === 'light';
+        const muteTarget = light ? LIGHT_INK : C.void;
         const loops = cosmosStore.loops;
         if (loops.length !== lastCount) {
           layout();
@@ -519,7 +567,9 @@
 
         // M5: aurora wash — a faint, slow shimmer (frozen under reduced motion); never a
         // blink, just a gentle breathe on top of the constant low base alpha.
-        const auroraBase = 0.045;
+        // WS-R: on light the aurora is a MULTIPLY wash — it needs a higher base to read as a
+        // gentle teal atmosphere darkening the white paper; dark is byte-identical (0.045).
+        const auroraBase = light ? 0.14 : 0.045;
         aurora.alpha = reduced ? auroraBase : auroraBase + Math.sin(t * 0.12) * 0.015;
 
         // prune glow sprites for loops no longer in the roster
@@ -569,7 +619,7 @@
                   : 0.18;
           e.glow = lerp(e.glow, wantGlow, kdt(0.06, dt));
           const col = e.col; // the saturated "core" hue (restColor's silhouette identity)
-          const base = muteColor(col, C.void, MUTE_FILL); // the muted "base" hue — large fills
+          const base = muteColor(col, muteTarget, MUTE_FILL); // muted "base" hue — large fills (WS-R: ink target on light)
 
           // breathing only while running (steady state never animates, §F)
           const pulse =
@@ -607,7 +657,7 @@
             running && !reduced ? 1 + Math.sin(t * 1.4 + i * 0.9) * 0.15 : 1;
           const glowSprite = getGlowSprite(l.id);
           sizeGlowSprite(glowSprite, glowTex, cx, cy, r * (2.8 + e.glow * 2.6) * glowPulse);
-          glowSprite.tint = muteColor(col, C.void, MUTE_GLOW);
+          glowSprite.tint = muteColor(col, muteTarget, MUTE_GLOW); // WS-R: ink target on light keeps the wash saturated
           glowSprite.alpha = Math.min(0.95, e.glow * 0.95 * glowPulse);
 
           // ── the FIVE rest-state silhouettes (greyscale-separable) ──────────
@@ -788,6 +838,14 @@
           >
             <span aria-hidden="true">✎</span>
           </button>
+          <button
+            class="del"
+            onclick={() => removeLoop(l.id)}
+            aria-label="delete loop {l.id}"
+            title="Delete {l.name}"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
         </div>
       {/if}
     {/each}
@@ -954,7 +1012,8 @@
     opacity: 0.28; /* at-scale filter: non-matching stations recede */
   }
   .station .enter,
-  .station .edit {
+  .station .edit,
+  .station .del {
     pointer-events: auto;
     border: 1px solid var(--hairline);
     background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
@@ -1083,8 +1142,9 @@
   .s-retro.pending {
     color: var(--em-mid);
   }
-  /* the per-station edit affordance — quiet until hover / keyboard focus */
-  .station .edit {
+  /* the per-station edit + delete affordances — quiet until hover / keyboard focus */
+  .station .edit,
+  .station .del {
     align-self: stretch;
     display: inline-flex;
     align-items: center;
@@ -1096,12 +1156,21 @@
     opacity: 0;
   }
   .station:hover .edit,
-  .station:focus-within .edit {
+  .station:focus-within .edit,
+  .station:hover .del,
+  .station:focus-within .del {
     opacity: 1;
   }
   .station .edit:hover {
     border-color: var(--brass);
     color: var(--brass);
+  }
+  /* delete is destructive — its hover earns the sanctioned red alert tint (window.confirm is
+     the real safety when confirmDestructive is on); the ✎ stays brass, so the two never read
+     the same on hover. Both are otherwise identical monochrome ghost buttons. */
+  .station .del:hover {
+    border-color: var(--status-err-core);
+    color: var(--status-err-core);
   }
 
   /* ── N-needs-you badge — the one element allowed to be loud (amber, plan §5 M4.5 #5:

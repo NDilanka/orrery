@@ -16,6 +16,7 @@ import {
   composeEngine,
   composeLoopDef,
   deriveFromDials,
+  engineSectionDiff,
   PRESETS,
   PRESET_ORDER,
   presetFromDials,
@@ -215,6 +216,145 @@ describe('composeLoopDef', () => {
     const noCwd = composeLoopDef(base);
     const j = noCwd.start.args.indexOf('--cwd');
     expect(noCwd.start.args[j + 1]).toBe('.');
+  });
+
+  describe('runner selection → start.args', () => {
+    const bp = BLUEPRINTS.grind;
+    const base = {
+      id: 'r',
+      name: 'r',
+      blueprint: bp,
+      dials: bp.dials,
+      destination: bp.destination,
+      stateDir: '.loop',
+      task: 'TASK.md',
+    };
+    const flagVal = (args: string[], flag: string): string | undefined => {
+      const i = args.indexOf(flag);
+      return i >= 0 ? args[i + 1] : undefined;
+    };
+
+    it('emits nothing runner-related by default (no runner set)', () => {
+      const args = composeLoopDef(base).start.args;
+      expect(args).not.toContain('--runner');
+      expect(args).not.toContain('--model');
+      expect(args).not.toContain('--effort');
+    });
+
+    it('a non-claude runner emits --runner and --model', () => {
+      const args = composeLoopDef({ ...base, runner: 'codex', model: 'gpt-5' }).start.args;
+      expect(flagVal(args, '--runner')).toBe('codex');
+      expect(flagVal(args, '--model')).toBe('gpt-5');
+      expect(args).not.toContain('--effort');
+    });
+
+    it('a non-claude runner without a model omits --model but still emits --runner', () => {
+      const args = composeLoopDef({ ...base, runner: 'aider' }).start.args;
+      expect(flagVal(args, '--runner')).toBe('aider');
+      expect(args).not.toContain('--model');
+    });
+
+    it('the claude runner emits --effort (not --runner/--model) when effort is set', () => {
+      const args = composeLoopDef({ ...base, runner: 'claude', effort: 'high' }).start.args;
+      expect(flagVal(args, '--effort')).toBe('high');
+      expect(args).not.toContain('--runner');
+      expect(args).not.toContain('--model');
+    });
+
+    it('an unset runner defaults to claude behavior (effort emitted, no --runner)', () => {
+      const args = composeLoopDef({ ...base, effort: 'medium' }).start.args;
+      expect(flagVal(args, '--effort')).toBe('medium');
+      expect(args).not.toContain('--runner');
+    });
+
+    // The Tuning Console's edit-mode prefill parses --runner/--model/--effort back out of a
+    // loop's stored start.args and re-emits them on save. This guards that contract: compose
+    // → parse the flags → recompose yields byte-identical args (nothing is silently dropped
+    // or rewritten). Mirrors the component's argVal() parse.
+    it('runner/model/effort round-trip: compose → parse flags → recompose is identical', () => {
+      const parseRunner = (args: string[]) => flagVal(args, '--runner') as never;
+      const cases = [
+        { runner: 'codex' as const, model: 'gpt-5' },
+        { runner: 'aider' as const },
+        { runner: 'claude' as const, effort: 'high' },
+        {}, // a bare loop — no runner/model/effort flags at all
+      ];
+      for (const c of cases) {
+        const first = composeLoopDef({ ...base, ...c }).start.args;
+        const parsed = {
+          runner: first.includes('--runner') ? parseRunner(first) : undefined,
+          model: flagVal(first, '--model'),
+          effort: flagVal(first, '--effort'),
+        };
+        const second = composeLoopDef({ ...base, ...parsed }).start.args;
+        expect(second).toEqual(first);
+      }
+    });
+  });
+});
+
+describe('engineSectionDiff — the console persist path (the projection must reach disk)', () => {
+  const bp = BLUEPRINTS.grind;
+  const composed = composeEngine(bp, bp.dials, bp.destination, 'TASK.md');
+
+  it('identical engines diff to {} (edit mode degenerates to plain overrides)', () => {
+    expect(engineSectionDiff(composed, composed)).toEqual({});
+  });
+
+  it('a loop-defaults projection survives composeLoopDef via the diffed overrides', () => {
+    // Mirror TuningConsole's projectDefaults(): settings ceiling $80 / execute model /
+    // permission laid over the dial composition. The BLOCKER scenario: the console
+    // previews the projected values but composeLoopDef recomposes from dials alone —
+    // passing engineSectionDiff(finalEngine, composed) as engineOverrides is what
+    // carries the projection to the persisted engine.
+    const projected: EngineConfig = {
+      ...composed,
+      cost: { ...composed.cost, ceilingUsd: 80 },
+      models: { ...composed.models, execute: 'opus' },
+      permissionMode: 'plan',
+    };
+    const diff = engineSectionDiff(projected, composed);
+    // exactly the three projected sections — permissionMode rides as its own scalar entry
+    expect(Object.keys(diff).sort()).toEqual(['cost', 'models', 'permissionMode']);
+
+    const def = composeLoopDef({
+      id: 'p',
+      name: 'p',
+      blueprint: bp,
+      dials: bp.dials,
+      destination: bp.destination,
+      stateDir: '.loop',
+      task: 'TASK.md',
+      engineOverrides: diff,
+    });
+    expect(def.engine.cost.ceilingUsd).toBe(80);
+    expect(def.engine.models.execute).toBe('opus');
+    expect(def.engine.permissionMode).toBe('plan');
+    // sections the projection didn't touch still recompose from the dials, untouched
+    expect(def.engine.stop).toEqual(composed.stop);
+    assertEngineIsWarningFree(def.engine);
+  });
+
+  it('a drawer override stacked on the projection also lands (both layers in one diff)', () => {
+    const effective: EngineConfig = {
+      ...composed,
+      cost: { ...composed.cost, ceilingUsd: 80 },
+      stop: { ...composed.stop, maxIters: 99 },
+    };
+    const diff = engineSectionDiff(effective, composed);
+    expect(Object.keys(diff).sort()).toEqual(['cost', 'stop']);
+    const def = composeLoopDef({
+      id: 'q',
+      name: 'q',
+      blueprint: bp,
+      dials: bp.dials,
+      destination: bp.destination,
+      stateDir: '.loop',
+      task: 'TASK.md',
+      engineOverrides: diff,
+    });
+    expect(def.engine.cost.ceilingUsd).toBe(80);
+    expect(def.engine.stop.maxIters).toBe(99);
   });
 });
 

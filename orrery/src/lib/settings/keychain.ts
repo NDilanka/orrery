@@ -56,12 +56,17 @@ export async function keychainDelete(account: string): Promise<void> {
 export async function byokAuthStatus(inst: ProviderInstance): Promise<ByokAuthStatus | null> {
   if (!hasTauri()) return null;
   try {
+    // The Rust command is `byok_auth_status(instance: Value)`, so the whole
+    // instance must be wrapped under an `instance` key — a flat payload never binds.
     return await invokeCmd<ByokAuthStatus>(CMD.byokAuthStatus, {
-      runner: inst.runner,
-      provider: inst.provider,
-      mode: inst.mode,
-      baseUrl: inst.baseUrl,
-      region: inst.region,
+      instance: {
+        runner: inst.runner,
+        provider: inst.provider,
+        mode: inst.mode,
+        baseUrl: inst.baseUrl,
+        region: inst.region,
+        projectId: inst.projectId,
+      },
     });
   } catch {
     return null;

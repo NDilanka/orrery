@@ -23,6 +23,10 @@
 // every dial now drives a REAL bundle (see `deriveFromDials`).
 
 import type { Model } from './types';
+// type-only (erased at build — no runtime cycle with settings/schema, which imports
+// this module's types). Keeps blueprints.ts pure: it names the runner union, never
+// the settings store.
+import type { RunnerId } from './settings/schema';
 
 // ─── Engine config shape (PROTOCOL §7 engine block, engine/orrery_loop/config.py) ──
 // Kept structural & permissive: this is the object that lands under loop.json's
@@ -425,6 +429,12 @@ export interface ConsoleInput {
   cwd?: string;
   // drawer overrides: a partial EngineConfig deep-merged over the composed one.
   engineOverrides?: Partial<EngineConfig>;
+  // runner selection — lives ENTIRELY in start.args (the Rust side needs no change).
+  // For a non-claude runner we emit `--runner <r>` (+ `--model <id>`); for the
+  // default claude runner we emit `--effort <e>` when an effort tier is set.
+  runner?: RunnerId;
+  model?: string;
+  effort?: string;
 }
 
 /**
@@ -453,10 +463,59 @@ export function composeLoopDef(input: ConsoleInput): LoopDefDraft {
     // `loop.json` land in the right place regardless of the app's own cwd.
     start: {
       program: 'loop',
-      args: ['--loop-json', 'loop.json', '--cwd', input.cwd?.trim() || '.', '--state-dir', input.stateDir],
+      args: composeStartArgs(input),
     },
     engine,
   };
+}
+
+/**
+ * Assemble the generic loop's start.args. Base args (loop-json / cwd / state-dir)
+ * mirror the seeded loops exactly; the runner selection is appended on top:
+ *   • a NON-claude runner → `--runner <r>` and, when a model id is set, `--model <id>`
+ *   • the default claude runner → `--effort <e>` when an effort tier is set
+ * (runner lives entirely in start.args — the Rust `create_loop` treats args as opaque).
+ */
+function composeStartArgs(input: ConsoleInput): string[] {
+  const args = [
+    '--loop-json',
+    'loop.json',
+    '--cwd',
+    input.cwd?.trim() || '.',
+    '--state-dir',
+    input.stateDir,
+  ];
+  const runner = input.runner;
+  if (runner && runner !== 'claude') {
+    args.push('--runner', runner);
+    if (input.model) args.push('--model', input.model);
+  } else if (input.effort) {
+    args.push('--effort', input.effort);
+  }
+  return args;
+}
+
+/**
+ * Per-section diff of an EFFECTIVE engine against its raw dial COMPOSITION: every
+ * top-level section whose value differs (canonical-JSON compare) is included verbatim
+ * from `effective`; identical sections are omitted so composeLoopDef's own recomposition
+ * supplies them. This is how the Tuning Console persists its preview exactly: it passes
+ * `engineSectionDiff(finalEngine, composed)` as `engineOverrides`, so layers that exist
+ * only in the console (the loop-defaults projection + drawer overrides) survive into the
+ * loop.json instead of being silently recomposed away. Scalar sections (permissionMode /
+ * maxTurns / iterTimeoutMin / task) ride as their own entries, matching the overrides shape.
+ */
+export function engineSectionDiff(
+  effective: EngineConfig,
+  composed: EngineConfig,
+): Partial<EngineConfig> {
+  const out: Partial<EngineConfig> = {};
+  for (const key of Object.keys(effective) as (keyof EngineConfig)[]) {
+    if (JSON.stringify(effective[key]) !== JSON.stringify(composed[key])) {
+      (out as Record<string, unknown>)[key] = effective[key];
+    }
+  }
+  return out;
 }
 
 /** Shallow-by-section deep merge of drawer overrides over a composed engine. */

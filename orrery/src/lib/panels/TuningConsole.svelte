@@ -27,6 +27,7 @@
     BLUEPRINT_ORDER,
     composeEngine,
     composeLoopDef,
+    engineSectionDiff,
     projectPreview,
     previewNight,
     validateDraft,
@@ -53,6 +54,8 @@
     type SmokeMode,
   } from '../externalRecipes';
   import { cosmosStore, type ProbeResult } from '../stores/cosmos.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
+  import type { RunnerId } from '../settings/schema';
   import { focusTrap } from '../actions/focusTrap';
 
   let {
@@ -103,6 +106,17 @@
   let busy = $state(false);
   let createError = $state<string | null>(null);
 
+  // ── runner / model / effort selection (FIX 2) ──────────────────────────────
+  // Captured into component state at init and NEVER re-read from live settings at
+  // ignite, so editing Settings after opening the console can't silently rewrite what
+  // this loop emits. Create: seeded from loopDefaults (+ the BYOK default instance for a
+  // non-claude --model). Edit: parsed back out of the loop's existing start.args during
+  // the generic prefill. These flow into composeLoopDef's ConsoleInput; there is no
+  // dedicated runner UI control in the generic console, so none is added.
+  let runnerSel = $state<RunnerId>('claude');
+  let runnerModel = $state<string | undefined>(undefined);
+  let effortSel = $state<string | undefined>(undefined);
+
   // ── selecting a blueprint resets the dials + destination seed to its chart ──
   function selectBlueprint(id: BlueprintId) {
     blueprintId = id;
@@ -119,10 +133,40 @@
   const composed = $derived<EngineConfig>(
     composeEngine(blueprint, dials, { acceptanceCriteria, gateStages }, task),
   );
-  // the final engine the loop.json will carry (composed + drawer overrides)
-  const finalEngine = $derived<EngineConfig>(mergeOver(composed, overrides));
+
+  // ── the loop-defaults PROJECTION layer (CREATE MODE ONLY) ───────────────────
+  // Lays the user's three loop-defaults (cost ceiling / execute model / permission
+  // mode) OVER the dial-composed engine and BENEATH the user's drawer overrides:
+  //   effective = mergeOver(project(composed), overrides)
+  // Unlike the old one-shot onMount seed (which a blueprint switch WIPED and whose
+  // whole-section overrides DEADENED the dials), this layer stays live: a blueprint or
+  // dial change recomputes `composed`, the projection re-lays the same three fields on
+  // top, and the dials keep driving everything else. Edit mode does NOT project — the
+  // stored loop governs — but the dot baseline always projects (see seededBaseline).
+  function projectDefaults(base: EngineConfig): EngineConfig {
+    const ld = settingsStore.data.loopDefaults;
+    return {
+      ...base,
+      cost: { ...base.cost, ceilingUsd: ld.ceilingUsd },
+      models: { ...base.models, execute: ld.model },
+      permissionMode: ld.permissionMode,
+    };
+  }
+  const projected = $derived<EngineConfig>(mode === 'create' ? projectDefaults(composed) : composed);
+  // the final engine the loop.json will carry (projection + drawer overrides)
+  const finalEngine = $derived<EngineConfig>(mergeOver(projected, overrides));
   const preview = $derived(projectPreview(finalEngine));
   const night = $derived(previewNight(finalEngine));
+
+  // ── the override-dot BASELINE: the user's loop-defaults, projected onto the
+  // current blueprint/dials/destination. Owner decision: a dot means "differs from
+  // YOUR default", not from the blueprint. It is ALWAYS the projection (create AND
+  // edit), so the semantics are uniform. Create: `projected === seededBaseline`, so a
+  // fresh console — and every later blueprint/dial move — shows ZERO dots (both sides
+  // move together); only a drawer edit lights that exact section's dot. Edit: the
+  // effective engine is the stored loop (no projection) while the dot still compares to
+  // your defaults. An out-of-dial-range ceiling like the $80 default lands here verbatim.
+  const seededBaseline = $derived<EngineConfig>(projectDefaults(composed));
 
   function mergeOver(base: EngineConfig, over: Partial<EngineConfig>): EngineConfig {
     const out = { ...base } as unknown as Record<string, unknown>;
@@ -165,9 +209,15 @@
     ),
   );
 
-  // ── override-dot bookkeeping: is a given section overridden? ─────────────────
+  // ── override-dot bookkeeping: does a section DIVERGE from the user's default? ──
+  // Rebased off `overrides[section] !== undefined` to a value comparison against
+  // `seededBaseline` so the loop-default seed (ceiling/model/permission) shows no
+  // dot, and a dot appears only once the effective value differs from YOUR default.
+  function sectionEqual(a: unknown, b: unknown): boolean {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
   function overridden(section: keyof EngineConfig): boolean {
-    return overrides[section] !== undefined;
+    return !sectionEqual(finalEngine[section], seededBaseline[section]);
   }
   function setOverride<K extends keyof EngineConfig>(section: K, value: EngineConfig[K]) {
     overrides = { ...overrides, [section]: value };
@@ -364,8 +414,22 @@
           },
           stateDir: stateDir.trim() || '.loop',
           task: task.trim() || 'TASK.md',
-          engineOverrides: overrides,
+          // Persist EXACTLY what the console previewed (BLOCKER fix): composeLoopDef
+          // recomposes the dial engine itself with NO knowledge of the loop-defaults
+          // projection, so passing raw `overrides` would silently drop the projected
+          // ceiling/model/permission (preview $80, disk $20). The per-section diff of
+          // finalEngine vs composed carries projection + drawer overrides; in edit mode
+          // the projection is identity, so this degenerates to today's behavior.
+          engineOverrides: engineSectionDiff(finalEngine, composed),
           cwd: cwd.trim() || undefined,
+          // runner/model/effort come from component state captured at init (create: your
+          // loop-defaults + BYOK default instance; edit: parsed from the loop's own
+          // start.args), NOT re-read from live settings — so a Settings edit after opening
+          // can't rewrite them. composeLoopDef emits them into start.args: a non-claude
+          // runner adds --runner/--model; the claude runner adds --effort.
+          runner: runnerSel,
+          model: runnerModel,
+          effort: effortSel,
         };
         def = composeLoopDef(input) as unknown as Record<string, unknown>;
       }
@@ -463,6 +527,16 @@
           // generic loop: prefill from the engine block + preserve any external --cwd target
           const c = argVal('--cwd');
           if (c && c !== '.') cwd = c;
+          // preserve the loop's existing runner/model/effort instead of rewriting them to
+          // today's settings on save — parse them straight back out of start.args (FIX 2).
+          // Absent flags stay undefined so composeStartArgs emits nothing, matching the
+          // stored loop (a bare loop with neither --runner nor --effort round-trips clean).
+          const rArg = argVal('--runner');
+          if (rArg) runnerSel = rArg as RunnerId;
+          const mArg = argVal('--model');
+          if (mArg) runnerModel = mArg;
+          const eArg = argVal('--effort');
+          if (eArg) effortSel = eArg;
           const eng = def.engine as Partial<EngineConfig> | undefined;
           if (eng) {
             if (typeof eng.task === 'string') task = eng.task;
@@ -475,6 +549,28 @@
         }
       })();
     } else {
+      // create mode: seed the console from the user's loop-defaults (Settings ▸ Loop
+      // defaults). The blueprint is the starting star-chart. Ceiling / execute model /
+      // permission are NOT seeded as one-shot overrides — they ride in through the live
+      // projectDefaults() layer (see `projected`/`seededBaseline`), so a blueprint or dial
+      // change can't wipe them, the dials keep driving every other field, and a fresh
+      // console shows zero override-dots.
+      const ld = settingsStore.data.loopDefaults;
+      selectBlueprint(ld.blueprint); // sets blueprintId + dials + destination seed, clears overrides
+      // runner / model / effort are captured HERE (not re-read at ignite) so a later
+      // settings edit can't retroactively change what this console emits.
+      runnerSel = ld.runner;
+      effortSel = ld.effort;
+      // a non-claude runner's --model comes from the BYOK default instance, but ONLY when
+      // that instance actually drives the chosen runner. Never the claude tier name in
+      // loopDefaults.model (e.g. 'sonnet') — that would be a bogus codex/aider model id, so
+      // claude stays model-less and composeStartArgs emits --effort instead of --model.
+      runnerModel = undefined;
+      if (ld.runner !== 'claude') {
+        const ai = settingsStore.data.ai;
+        const def = ai.instances.find((i) => i.id === ai.defaultInstanceId);
+        if (def && def.runner === ld.runner && def.defaultModel) runnerModel = def.defaultModel;
+      }
       // the friendly default id the comment promised
       loopId = friendlyDefaultId();
     }
@@ -504,6 +600,11 @@
     { key: 'allowedTools', label: 'Tools' },
     { key: 'feedback', label: 'Diagnostics' },
   ];
+
+  // does ANY drawer section diverge from the user's loop-defaults? Value-based (via
+  // `overridden`) rather than a presence check on `overrides`, so the create-mode
+  // seed of ceiling/model/permission doesn't read as "overridden" on a fresh console.
+  const anyOverridden = $derived(DRAWERS.some((d) => overridden(d.key as keyof EngineConfig)));
 
   function fmtUsd(n: number): string {
     return '$' + n.toFixed(2);
@@ -1587,7 +1688,7 @@
           <span class="adv-chev mono">▸</span>
           Advanced engine settings
           <span class="adv-sub mono">
-            {#if overrides && Object.keys(overrides).length}
+            {#if anyOverridden}
               <span class="odot"></span> overridden
             {:else if preset && preset !== 'balanced'}
               set by {PRESET_META[preset].label} preset

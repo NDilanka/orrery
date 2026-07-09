@@ -9,6 +9,7 @@
   import { onDestroy } from 'svelte';
   import { runStore } from '../stores/run.svelte';
   import { sessionStore } from '../stores/session.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
 
   const s = $derived(runStore.state);
   const running = $derived(s.run.status === 'running' || s.run.status === 'quota-wait');
@@ -142,6 +143,21 @@
     if (live && !running && !banked && !failed && !pending) void fire('start');
   });
 
+  // Restart fresh discards the crashed run and starts over from the merge-base — a
+  // destructive path, so gate it behind the native confirm when the user has that on
+  // (settings.general.confirmDestructive; native confirm is the house pattern, cf.
+  // SettingsOverlay/AiByokPanel). Plain Start never routes through here, so it never confirms.
+  function restartFresh() {
+    if (
+      settingsStore.data.general.confirmDestructive &&
+      typeof window !== 'undefined' &&
+      !window.confirm('Restart fresh? This discards the crashed run and starts the loop over.')
+    ) {
+      return;
+    }
+    fire('start');
+  }
+
   onDestroy(clearTimers);
 </script>
 
@@ -178,7 +194,7 @@
       class:working={pending === 'start'}
       aria-label="Restart fresh — start the loop over, discarding the crashed run"
       disabled={pending !== null}
-      onclick={() => fire('start')}
+      onclick={restartFresh}
       >{pending === 'start' ? '✦ restarting…' : '✦ Restart fresh'}</button
     >
   {/if}
@@ -339,9 +355,14 @@
   }
   /* reduced-motion: no pulsing (urgency reads from text, not blink) */
   @media (prefers-reduced-motion: reduce) {
-    .pending.braking,
-    .pending.igniting { animation: none; }
-    .btn.working,
-    .stopnow.working { animation: none; }
+    :global(:root:not([data-motion='full'])) .pending.braking,
+    :global(:root:not([data-motion='full'])) .pending.igniting { animation: none; }
+    :global(:root:not([data-motion='full'])) .btn.working,
+    :global(:root:not([data-motion='full'])) .stopnow.working { animation: none; }
   }
+  /* mirrors the media block above, for the user-forced reduced-motion setting */
+  :global(:root[data-motion='reduced']) .pending.braking,
+  :global(:root[data-motion='reduced']) .pending.igniting { animation: none; }
+  :global(:root[data-motion='reduced']) .btn.working,
+  :global(:root[data-motion='reduced']) .stopnow.working { animation: none; }
 </style>
