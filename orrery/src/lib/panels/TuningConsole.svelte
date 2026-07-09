@@ -42,6 +42,16 @@
     type ConsoleInput,
     type PresetName,
   } from '../blueprints';
+  import {
+    composeBmadLoopDef,
+    composeQaLoopDef,
+    validateExternalDraft,
+    BMAD_PROFILES,
+    type ExternalAdapter,
+    type BmadPhase,
+    type ReviewRetroMode,
+    type SmokeMode,
+  } from '../externalRecipes';
   import { cosmosStore, type ProbeResult } from '../stores/cosmos.svelte';
   import { focusTrap } from '../actions/focusTrap';
 
@@ -54,7 +64,10 @@
     mode?: 'create' | 'edit';
     editId?: string | null;
     onClose: () => void;
-    onCreated?: (id: string, ctx: { mode: 'create' | 'edit'; persisted: boolean }) => void;
+    onCreated?: (
+      id: string,
+      ctx: { mode: 'create' | 'edit'; persisted: boolean; startAfterCreate: boolean },
+    ) => void;
   } = $props();
 
   // ── core console state ─────────────────────────────────────────────────────
@@ -66,6 +79,10 @@
   let loopName = $state('');
   let stateDir = $state('.loop');
   let task = $state('TASK.md');
+  // follow-up #2 — where a GENERIC loop runs its gate/git/agent (emitted as --cwd).
+  // Empty = its own loops/<id>/ folder (the default); an absolute path targets an
+  // external repo. Not used by the external (bmad/qa) recipes — they carry --project-root.
+  let cwd = $state('');
 
   // ── pristine-form guard: don't scold an untouched form. The "give it an id"
   // warning stays quiet until the user types/edits or attempts to ignite. ──
@@ -295,35 +312,74 @@
   }
 
   // ── ignite ──────────────────────────────────────────────────────────────────
-  async function ignite() {
-    if (!validation.ok || busy) {
+  async function ignite(startAfterCreate = false) {
+    if (!activeValid.ok || busy) {
       touched = true; // surface any latent validation messages on a blocked submit
       return;
     }
     busy = true;
     createError = null;
     try {
-      const input: ConsoleInput = {
-        id: loopId.trim(),
-        name: loopName.trim(),
-        blueprint,
-        dials,
-        destination: {
-          acceptanceCriteria: acceptanceCriteria.map((s) => s.trim()).filter(Boolean),
-          gateStages: gateStages.filter((s) => s.name.trim() || s.command.trim()),
-        },
-        stateDir: stateDir.trim() || '.loop',
-        task: task.trim() || 'TASK.md',
-        engineOverrides: overrides,
-      };
-      const def = composeLoopDef(input) as unknown as Record<string, unknown>;
+      let def: Record<string, unknown>;
+      if (recipeKind === 'external' && externalAdapter === 'bmad') {
+        def = composeBmadLoopDef({
+          id: loopId.trim(),
+          name: loopName.trim(),
+          targetRepo: bmadRepo.trim(),
+          mergeBase: bmadMergeBase.trim() || 'develop',
+          stateDir: stateDir.trim() || '.loop',
+          models: bmadModels,
+          effort: bmadEffort,
+          reviewMode: bmadReviewMode,
+          smokeMode: bmadSmokeMode,
+          retroMode: bmadRetroMode,
+          noSmoke: bmadNoSmoke,
+          noMerge: bmadNoMerge,
+          noRetro: bmadNoRetro,
+          noVerify: bmadNoVerify,
+          noPlanGate: bmadNoPlanGate,
+        }) as unknown as Record<string, unknown>;
+      } else if (recipeKind === 'external' && externalAdapter === 'qa') {
+        def = composeQaLoopDef({
+          id: loopId.trim(),
+          name: loopName.trim(),
+          targetRepo: qaRepo.trim(),
+          manifest: qaManifest.trim(),
+          stateDir: stateDir.trim() || '.loop',
+          baseUrl: qaBaseUrl.trim(),
+          app: qaApp.trim(),
+          storageState: qaStorageState.trim(),
+          seedSummary: qaSeedSummary.trim(),
+          costCeilingUsd: Number.isFinite(qaCostCeiling) && qaCostCeiling > 0 ? qaCostCeiling : undefined,
+        }) as unknown as Record<string, unknown>;
+      } else {
+        const input: ConsoleInput = {
+          id: loopId.trim(),
+          name: loopName.trim(),
+          blueprint,
+          dials,
+          destination: {
+            acceptanceCriteria: acceptanceCriteria.map((s) => s.trim()).filter(Boolean),
+            gateStages: gateStages.filter((s) => s.name.trim() || s.command.trim()),
+          },
+          stateDir: stateDir.trim() || '.loop',
+          task: task.trim() || 'TASK.md',
+          engineOverrides: overrides,
+          cwd: cwd.trim() || undefined,
+        };
+        def = composeLoopDef(input) as unknown as Record<string, unknown>;
+      }
       const { id, persisted } = await cosmosStore.createLoop(def, { mode, editId });
-      // U3 Task 2: a brand-new loop starts against a spec that matches what the console
-      // promised. Only on a freshly PERSISTED create, and only while the task path is
-      // still the default 'TASK.md' — an edit never auto-writes (see the manual
-      // "regenerate" control by the TASK field, which respects a hand-authored file the
-      // same way: write_loop_file never clobbers without an explicit overwrite).
-      if (mode === 'create' && persisted && (task.trim() || 'TASK.md') === 'TASK.md') {
+      // U3 Task 2: a brand-new GENERIC loop starts against a scaffolded TASK.md that matches
+      // what the console promised. Only on a freshly PERSISTED create, while the task path is
+      // still the default. External (bmad/qa) recipes carry their spec in the TARGET repo
+      // (sprint files / AC manifest), so we never scaffold a TASK.md for them.
+      if (
+        recipeKind === 'generic' &&
+        mode === 'create' &&
+        persisted &&
+        (task.trim() || 'TASK.md') === 'TASK.md'
+      ) {
         await scaffoldTaskFile(id);
         if (taskFileState === 'created') {
           // hold the console open just long enough to show the confirmation before the
@@ -331,9 +387,10 @@
           await new Promise((r) => setTimeout(r, 700));
         }
       }
-      // Pass mode + whether it actually hit disk so the shell only flies into a System for a
-      // NEW, persisted loop — a SAVE (edit) or a dev-mode no-op create stays at the Cosmos.
-      onCreated?.(id, { mode, persisted });
+      // Pass mode + whether it hit disk + whether the user asked to start it, so the shell
+      // only flies into a System (and, for ✦ Create & start, starts the run) for a NEW,
+      // persisted loop — a SAVE (edit) or a dev-mode no-op create stays at the Cosmos.
+      onCreated?.(id, { mode, persisted, startAfterCreate });
       onClose();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
@@ -360,9 +417,48 @@
       // load the def async, but keep onMount sync so it can return a teardown
       void (async () => {
         const def = await cosmosStore.loadLoopDef(editId);
-        if (def) {
-          loopName = String(def.name ?? editId);
-          if (typeof def.stateDir === 'string') stateDir = def.stateDir;
+        if (!def) return;
+        loopName = String(def.name ?? editId);
+        if (typeof def.stateDir === 'string') stateDir = def.stateDir;
+        const start = def.start as { program?: string; args?: string[] } | undefined;
+        const program = start?.program;
+        const args = Array.isArray(start?.args) ? (start!.args as string[]) : [];
+        const argVal = (flag: string): string => {
+          const i = args.indexOf(flag);
+          return i >= 0 && i + 1 < args.length ? args[i + 1] : '';
+        };
+        if (program === 'loop-bmad') {
+          // editing an external BMAD loop → the dedicated compact surface, prefilled from
+          // start.args + the top-level `bmad` block (never the generic dials/engine).
+          recipeKind = 'external';
+          externalAdapter = 'bmad';
+          bmadRepo = argVal('--project-root');
+          bmadMergeBase = argVal('--merge-base') || 'develop';
+          bmadNoSmoke = args.includes('--no-smoke');
+          bmadNoMerge = args.includes('--no-merge');
+          bmadNoRetro = args.includes('--no-retro');
+          bmadNoVerify = args.includes('--no-verify');
+          bmadNoPlanGate = args.includes('--no-plan-gate');
+          const b = (def.bmad ?? {}) as Record<string, unknown>;
+          if (b.models) bmadModels = { ...bmadModels, ...(b.models as Record<BmadPhase, string>) };
+          if (b.effort) bmadEffort = { ...bmadEffort, ...(b.effort as Record<BmadPhase, string>) };
+          if (b.reviewMode) bmadReviewMode = b.reviewMode as ReviewRetroMode;
+          if (b.smokeMode) bmadSmokeMode = b.smokeMode as SmokeMode;
+          if (b.retroMode) bmadRetroMode = b.retroMode as ReviewRetroMode;
+        } else if (program === 'loop-qa') {
+          recipeKind = 'external';
+          externalAdapter = 'qa';
+          qaRepo = argVal('--project-root');
+          qaManifest = argVal('--manifest') || 'ac-manifest.json';
+          const q = (def.qa ?? {}) as Record<string, unknown>;
+          if (typeof q.baseUrl === 'string') qaBaseUrl = q.baseUrl;
+          if (typeof q.app === 'string') qaApp = q.app;
+          if (typeof q.storageState === 'string') qaStorageState = q.storageState;
+          if (typeof q.seedSummary === 'string') qaSeedSummary = q.seedSummary;
+        } else {
+          // generic loop: prefill from the engine block + preserve any external --cwd target
+          const c = argVal('--cwd');
+          if (c && c !== '.') cwd = c;
           const eng = def.engine as Partial<EngineConfig> | undefined;
           if (eng) {
             if (typeof eng.task === 'string') task = eng.task;
@@ -434,6 +530,120 @@
 
   // which named guardrail preset the current dials sit on (null = Custom)
   const preset = $derived<PresetName | null>(presetFromDials(dials));
+
+  // ══ EXTERNAL-ADAPTER RECIPES (BMAD / QA) — a parallel compact surface ══
+  // These loops have no dials, no acceptance-criteria/gate, and no `engine` block: the
+  // Python engine picks the adapter by start.program (loop-bmad / loop-qa) and reads a
+  // top-level `bmad`/`qa` block. So they get their own screen (no lane, no steps), and
+  // ignite() composes them via externalRecipes.ts instead of composeLoopDef.
+  let recipeKind = $state<'generic' | 'external'>('generic');
+  let externalAdapter = $state<ExternalAdapter | null>(null);
+  let extAdvOpen = $state(false);
+
+  const BMAD_PHASES: BmadPhase[] = ['create', 'dev', 'review', 'smoke', 'retro', 'decider'];
+
+  // BMAD draft (seeded from the Max-power profile = the shipped loops/bmad seed the owner
+  // reproduces; one chip switches to the engine's cost-aware defaults).
+  let bmadRepo = $state('');
+  let bmadMergeBase = $state('develop');
+  let bmadModels = $state<Record<BmadPhase, string>>({ ...BMAD_PROFILES.maxPower.models });
+  let bmadEffort = $state<Record<BmadPhase, string>>({ ...BMAD_PROFILES.maxPower.effort });
+  let bmadReviewMode = $state<ReviewRetroMode>('single-pass');
+  let bmadSmokeMode = $state<SmokeMode>('single-pass');
+  let bmadRetroMode = $state<ReviewRetroMode>('single-pass');
+  let bmadNoSmoke = $state(true);
+  let bmadNoMerge = $state(false);
+  let bmadNoRetro = $state(false);
+  let bmadNoVerify = $state(false);
+  let bmadNoPlanGate = $state(false);
+
+  // QA draft
+  let qaRepo = $state('');
+  let qaManifest = $state('ac-manifest.json');
+  let qaBaseUrl = $state('http://localhost:3000');
+  let qaApp = $state('app');
+  let qaStorageState = $state('');
+  let qaSeedSummary = $state('');
+  let qaCostCeiling = $state(30);
+
+  function bmadMatches(p: 'maxPower' | 'costAware'): boolean {
+    const prof = BMAD_PROFILES[p];
+    return (
+      BMAD_PHASES.every(
+        (ph) => bmadModels[ph] === prof.models[ph] && bmadEffort[ph] === prof.effort[ph],
+      ) &&
+      bmadReviewMode === prof.reviewMode &&
+      bmadSmokeMode === prof.smokeMode &&
+      bmadRetroMode === prof.retroMode
+    );
+  }
+  // which BMAD power-profile the model/effort/mode grid currently matches (else 'custom')
+  const bmadProfile = $derived<'maxPower' | 'costAware' | 'custom'>(
+    bmadMatches('maxPower') ? 'maxPower' : bmadMatches('costAware') ? 'costAware' : 'custom',
+  );
+  function applyBmadProfile(p: 'maxPower' | 'costAware') {
+    const prof = BMAD_PROFILES[p];
+    bmadModels = { ...prof.models };
+    bmadEffort = { ...prof.effort };
+    bmadReviewMode = prof.reviewMode;
+    bmadSmokeMode = prof.smokeMode;
+    bmadRetroMode = prof.retroMode;
+  }
+
+  // the two external recipes shown in the gallery alongside the generic blueprints
+  const EXTERNAL_RECIPES: {
+    adapter: ExternalAdapter;
+    glyph: string;
+    title: string;
+    blurb: string;
+    meta: string;
+  }[] = [
+    {
+      adapter: 'bmad',
+      glyph: '◆',
+      title: 'Work a backlog (BMAD)',
+      blurb:
+        'Drives a BMAD sprint in one of your repos — create → dev → review → merge, story by story.',
+      meta: 'loop-bmad · external repo · needs BMAD installed',
+    },
+    {
+      adapter: 'qa',
+      glyph: '◈',
+      title: 'QA a web app',
+      blurb:
+        'Drives a headless browser through your app’s acceptance criteria and authors regression specs.',
+      meta: 'loop-qa · external repo · needs a manifest + running app',
+    },
+  ];
+
+  function pickExternalRecipe(adapter: ExternalAdapter) {
+    recipeKind = 'external';
+    externalAdapter = adapter;
+    if (mode === 'create' && !loopName.trim()) {
+      loopName = adapter === 'bmad' ? 'Work a backlog' : 'QA a web app';
+      if (!idTouched) loopId = uniqueSlug(loopName);
+    }
+    flow = 'config';
+  }
+
+  // external draft validity — the external analogue of `validation`. Generic drafts
+  // keep using `validation`; the active footer/CTA gate on `activeValid`.
+  const externalValidation = $derived(
+    externalAdapter
+      ? validateExternalDraft(
+          {
+            id: loopId,
+            name: loopName,
+            targetRepo: externalAdapter === 'bmad' ? bmadRepo : qaRepo,
+            mergeBase: bmadMergeBase,
+            manifest: qaManifest,
+          },
+          externalAdapter,
+          cosmosStore.existingIds.filter((id) => id !== editId),
+        )
+      : { ok: true, errors: [] as string[] },
+  );
+  const activeValid = $derived(recipeKind === 'external' ? externalValidation : validation);
 
   // recipe = blueprint, re-presented in plain language for the gallery. Honest copy
   // only (see blueprints.ts — Sprint no longer claims BMAD; it's a build→lint→test gate).
@@ -513,6 +723,8 @@
     markTouched();
   }
   function pickRecipe(id: BlueprintId) {
+    recipeKind = 'generic';
+    externalAdapter = null;
     selectBlueprint(id);
     if (mode === 'create' && !loopName.trim()) {
       loopName = RECIPE_META[id].title;
@@ -598,33 +810,43 @@
       <div class="tc-topbar">
         {#if mode === 'edit'}
           <span class="tc-chip mono"><span class="tc-chip-glyph">✎</span> editing {editId}</span>
+        {:else if recipeKind === 'external'}
+          <span class="tc-chip mono">
+            <span class="tc-chip-glyph">{externalAdapter === 'bmad' ? '◆' : '◈'}</span>{externalAdapter ===
+            'bmad'
+              ? 'Work a backlog (BMAD)'
+              : 'QA a web app'}
+            <button class="tc-chip-change mono" onclick={() => (flow = 'gallery')}>change</button>
+          </span>
         {:else}
           <span class="tc-chip mono">
             <span class="tc-chip-glyph">{blueprint.glyph}</span>{RECIPE_META[blueprintId].title}
             <button class="tc-chip-change mono" onclick={() => (flow = 'gallery')}>change</button>
           </span>
         {/if}
-        <div class="seg tc-lane" role="group" aria-label="how to fill this in">
-          <button
-            class="seg-item {lane === 'quick' ? 'selected' : ''}"
-            aria-pressed={lane === 'quick'}
-            onclick={() => (lane = 'quick')}
-          >⚡ Quick create</button>
-          <button
-            class="seg-item {lane === 'guided' ? 'selected' : ''}"
-            aria-pressed={lane === 'guided'}
-            onclick={() => {
-              lane = 'guided';
-              reached = Math.max(reached, step);
-            }}
-          >🧭 Walk me through it</button>
-        </div>
+        {#if recipeKind === 'generic'}
+          <div class="seg tc-lane" role="group" aria-label="how to fill this in">
+            <button
+              class="seg-item {lane === 'quick' ? 'selected' : ''}"
+              aria-pressed={lane === 'quick'}
+              onclick={() => (lane = 'quick')}
+            >⚡ Quick create</button>
+            <button
+              class="seg-item {lane === 'guided' ? 'selected' : ''}"
+              aria-pressed={lane === 'guided'}
+              onclick={() => {
+                lane = 'guided';
+                reached = Math.max(reached, step);
+              }}
+            >🧭 Walk me through it</button>
+          </div>
+        {/if}
       </div>
 
       <!-- U3 Task 2: TASK.md scaffold feedback. Create mode shows a transient confirmation
            (set by ignite() just before it closes); edit mode offers an explicit, opt-in
            regenerate control that never clobbers a hand-authored file without confirming. -->
-      {#if mode === 'edit' && (task.trim() || 'TASK.md') === 'TASK.md'}
+      {#if recipeKind === 'generic' && mode === 'edit' && (task.trim() || 'TASK.md') === 'TASK.md'}
         <div class="taskfile mono">
           {#if taskFileState === 'idle'}
             <button class="taskfile-btn" onclick={() => editId && scaffoldTaskFile(editId)}>
@@ -658,9 +880,17 @@
       <!-- config surface: main column + persistent live summary -->
       <div class="tc-2col">
         <div class="tc-main">
-          {#if lane === 'quick'}
+          {#if recipeKind === 'external'}
+            {#if externalAdapter === 'bmad'}
+              {@render bmadBody()}
+            {:else}
+              {@render qaBody()}
+            {/if}
+            {@render externalFooter()}
+          {:else if lane === 'quick'}
             {@render nameField()}
             {@render doneWhen()}
+            {@render whereField()}
             {@render advancedBody()}
             {@render quickFooter()}
           {:else}
@@ -678,6 +908,7 @@
                   <input class="inp mono" bind:value={task} placeholder="TASK.md" />
                   <span class="fhelp">We scaffold this from your answers if it doesn't exist yet.</span>
                 </label>
+                {@render whereField()}
               {:else if step === 1}
                 <div class="step-h">
                   <span class="sk mono">Step 2 of 4 · Done when</span>
@@ -708,7 +939,11 @@
             {@render stepNav()}
           {/if}
         </div>
-        {@render summaryAside()}
+        {#if recipeKind === 'external'}
+          {@render externalSummary()}
+        {:else}
+          {@render summaryAside()}
+        {/if}
       </div>
     {/if}
 
@@ -718,12 +953,31 @@
         {#each BLUEPRINT_ORDER as id (id)}
           {@const bp = BLUEPRINTS[id]}
           {@const meta = RECIPE_META[id]}
-          <button class="recipe {blueprintId === id ? 'sel' : ''}" onclick={() => pickRecipe(id)}>
+          <button
+            class="recipe {recipeKind === 'generic' && blueprintId === id ? 'sel' : ''}"
+            onclick={() => pickRecipe(id)}
+          >
             {#if meta.recommended}<span class="recipe-tag mono">recommended</span>{/if}
             <span class="recipe-glyph">{bp.glyph}</span>
             <span class="recipe-name">{meta.title}</span>
             <span class="recipe-blurb">{meta.blurb}</span>
             <span class="recipe-meta mono">{bp.tagline}</span>
+          </button>
+        {/each}
+      </div>
+      <p class="gallery-sub mono">…or drive one of your own repos</p>
+      <div class="recipes">
+        {#each EXTERNAL_RECIPES as r (r.adapter)}
+          <button
+            class="recipe recipe-ext {recipeKind === 'external' && externalAdapter === r.adapter
+              ? 'sel'
+              : ''}"
+            onclick={() => pickExternalRecipe(r.adapter)}
+          >
+            <span class="recipe-glyph">{r.glyph}</span>
+            <span class="recipe-name">{r.title}</span>
+            <span class="recipe-blurb">{r.blurb}</span>
+            <span class="recipe-meta mono">{r.meta}</span>
           </button>
         {/each}
       </div>
@@ -749,6 +1003,321 @@
           disabled={mode === 'edit'}
         />
       </label>
+    {/snippet}
+
+    {#snippet whereField()}
+      <label class="field">
+        <span class="flab mono">WHERE IT RUNS <em class="opt">optional · defaults to its own folder</em></span>
+        <input
+          class="inp mono"
+          placeholder="C:/dev/your-repo — blank = a self-contained loop"
+          bind:value={cwd}
+        />
+        <span class="fhelp">
+          Point it at an external repo to run the gate, git, and agent there (emitted as
+          <code>--cwd</code>). Blank runs inside the loop's own <code>loops/&lt;id&gt;/</code> folder.
+        </span>
+      </label>
+    {/snippet}
+
+    <!-- ════ external-adapter (BMAD / QA) compact screens ════ -->
+    {#snippet bmadBody()}
+      {@render nameField()}
+      <label class="field">
+        <span class="flab mono">BMAD REPO <em class="req">required</em></span>
+        <input
+          class="inp mono"
+          placeholder="C:/dev/your-project"
+          bind:value={bmadRepo}
+          oninput={markTouched}
+        />
+        <span class="fhelp">
+          The repo the sprint runs in — it must already have BMAD installed
+          (<code>_bmad-output/…</code>). Passed as <code>--project-root</code>.
+        </span>
+      </label>
+      <label class="field">
+        <span class="flab mono">INTEGRATION BRANCH <em class="opt">PRs merge into this · e.g. develop / main</em></span>
+        <input class="inp mono" placeholder="develop" bind:value={bmadMergeBase} oninput={markTouched} />
+      </label>
+
+      <div class="ext-field">
+        <span class="flab mono">MODEL PROFILE</span>
+        <div class="presets ext-presets">
+          <button
+            class="pchip {bmadProfile === 'maxPower' ? 'on' : ''}"
+            onclick={() => applyBmadProfile('maxPower')}
+          >
+            <b>Max power</b><small class="mono">Opus · xhigh · single-pass</small>
+          </button>
+          <button
+            class="pchip {bmadProfile === 'costAware' ? 'on' : ''}"
+            onclick={() => applyBmadProfile('costAware')}
+          >
+            <b>Cost-aware</b><small class="mono">Sonnet · inherit · qa</small>
+          </button>
+          <span class="preset-cur mono">{bmadProfile === 'custom' ? '· custom' : ''}</span>
+        </div>
+      </div>
+
+      <label class="ext-toggle">
+        <input type="checkbox" bind:checked={bmadNoSmoke} />
+        <span>Skip the browser-smoke phase <em class="mono">(recommended for non-Next.js repos)</em></span>
+      </label>
+
+      {@render bmadAdvanced()}
+    {/snippet}
+
+    {#snippet bmadAdvanced()}
+      <div class="adv" data-open={extAdvOpen}>
+        <button class="adv-top" onclick={() => (extAdvOpen = !extAdvOpen)}>
+          <span class="adv-chev mono">▸</span>
+          Advanced BMAD settings
+          <span class="adv-sub mono">
+            {bmadProfile === 'custom'
+              ? 'custom models/effort'
+              : `${bmadProfile === 'maxPower' ? 'Max power' : 'Cost-aware'} profile`}
+          </span>
+        </button>
+        {#if extAdvOpen}
+          <div class="adv-body">
+            <div class="phase-grid">
+              <div class="phase-row phase-head mono"><span>phase</span><span>model</span><span>effort</span></div>
+              {#each BMAD_PHASES as ph (ph)}
+                <div class="phase-row">
+                  <span class="mono phase-name">{ph}</span>
+                  <input
+                    class="inp mono"
+                    placeholder="inherit"
+                    value={bmadModels[ph]}
+                    onchange={(e) => (bmadModels = { ...bmadModels, [ph]: e.currentTarget.value })}
+                  />
+                  <select
+                    value={bmadEffort[ph]}
+                    onchange={(e) => (bmadEffort = { ...bmadEffort, [ph]: e.currentTarget.value })}
+                  >
+                    <option value="">inherit</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                    <option value="max">max</option>
+                  </select>
+                </div>
+              {/each}
+            </div>
+            <div class="def mono">
+              Empty model/effort = inherit your Claude Code default. A model can be a tier
+              (haiku/sonnet/opus) or a pinned id like <code>claude-opus-4-8[1m]</code>. Keep the
+              decider cheap.
+            </div>
+
+            <div class="row ext-modes">
+              <label class="kv"><span class="mono">review</span>
+                <select
+                  value={bmadReviewMode}
+                  onchange={(e) => (bmadReviewMode = e.currentTarget.value as ReviewRetroMode)}
+                >
+                  <option value="qa">qa</option><option value="single-pass">single-pass</option>
+                </select>
+              </label>
+              <label class="kv"><span class="mono">smoke</span>
+                <select
+                  value={bmadSmokeMode}
+                  onchange={(e) => (bmadSmokeMode = e.currentTarget.value as SmokeMode)}
+                >
+                  <option value="iterative">iterative</option><option value="single-pass">single-pass</option>
+                </select>
+              </label>
+              <label class="kv"><span class="mono">retro</span>
+                <select
+                  value={bmadRetroMode}
+                  onchange={(e) => (bmadRetroMode = e.currentTarget.value as ReviewRetroMode)}
+                >
+                  <option value="qa">qa</option><option value="single-pass">single-pass</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="ext-toggles">
+              <label class="ext-toggle"><input type="checkbox" bind:checked={bmadNoMerge} /><span>Open PRs but don't auto-merge <em class="mono">(--no-merge)</em></span></label>
+              <label class="ext-toggle"><input type="checkbox" bind:checked={bmadNoRetro} /><span>Skip epic retrospectives <em class="mono">(--no-retro)</em></span></label>
+              <label class="ext-toggle"><input type="checkbox" bind:checked={bmadNoVerify} /><span>Disable adversarial verify-before-merge <em class="mono">(--no-verify)</em></span></label>
+              <label class="ext-toggle"><input type="checkbox" bind:checked={bmadNoPlanGate} /><span>Disable the plan-gate readiness check <em class="mono">(--no-plan-gate)</em></span></label>
+            </div>
+            <div class="def mono">
+              The gate defaults to <code>bun run codegen · lint · test</code> and the dev-server to
+              <code>bun run dev</code>. For a non-bun repo, override <code>gateStages</code> /
+              <code>devServerArgv</code> in the loop.json after creating.
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/snippet}
+
+    {#snippet qaBody()}
+      {@render nameField()}
+      <label class="field">
+        <span class="flab mono">WEBAPP REPO <em class="req">required</em></span>
+        <input
+          class="inp mono"
+          placeholder="C:/dev/your-webapp"
+          bind:value={qaRepo}
+          oninput={markTouched}
+        />
+        <span class="fhelp">
+          The app repo the agent runs in and writes specs into. Passed as <code>--project-root</code>.
+        </span>
+      </label>
+      <label class="field">
+        <span class="flab mono">AC MANIFEST <em class="req">required</em></span>
+        <input
+          class="inp mono"
+          placeholder="ac-manifest.json"
+          bind:value={qaManifest}
+          oninput={markTouched}
+        />
+        <span class="fhelp">
+          The acceptance-criteria oracle. Build it first with
+          <code>python -m orrery_loop.qa.manifest &lt;stories-dir&gt;</code>. Passed as
+          <code>--manifest</code>.
+        </span>
+      </label>
+      <label class="field">
+        <span class="flab mono">BASE URL <em class="opt">the running app</em></span>
+        <input class="inp mono" placeholder="http://localhost:3000" bind:value={qaBaseUrl} />
+        <span class="fhelp">Your app must already be running here — the loop drives the browser, it doesn't boot the app.</span>
+      </label>
+      <label class="field">
+        <span class="flab mono">APP NAME <em class="opt">shown in the report</em></span>
+        <input class="inp mono" placeholder="app" bind:value={qaApp} />
+      </label>
+
+      {@render qaAdvanced()}
+    {/snippet}
+
+    {#snippet qaAdvanced()}
+      <div class="adv" data-open={extAdvOpen}>
+        <button class="adv-top" onclick={() => (extAdvOpen = !extAdvOpen)}>
+          <span class="adv-chev mono">▸</span>
+          Advanced QA settings
+          <span class="adv-sub mono">auth · seed · budget</span>
+        </button>
+        {#if extAdvOpen}
+          <div class="adv-body">
+            <label class="field">
+              <span class="flab mono">AUTH storageState <em class="opt">for auth-gated apps</em></span>
+              <input class="inp mono" placeholder="C:/…/storage-state.json" bind:value={qaStorageState} />
+              <span class="fhelp">A saved Playwright auth session. Leave blank for a public/no-auth app.</span>
+            </label>
+            <label class="field">
+              <span class="flab mono">SEED SUMMARY <em class="opt">the data oracle</em></span>
+              <textarea
+                class="inp mono"
+                rows="2"
+                placeholder="e.g. 2 lists (Work, Home); 3 todos; darkMode off"
+                bind:value={qaSeedSummary}
+              ></textarea>
+            </label>
+            <label class="field">
+              <span class="flab mono">COST CEILING <em class="opt">USD · stops between epics · 0 = uncapped</em></span>
+              <input class="inp mono" type="number" step="1" min="0" bind:value={qaCostCeiling} />
+            </label>
+            <div class="def mono">
+              Model, effort, spec dir and turn/timeout caps keep the engine defaults; tune them in
+              the loop.json after creating.
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/snippet}
+
+    {#snippet externalFooter()}
+      <footer class="ftr">
+        {@render validStatus()}
+        <div class="actions">
+          <button class="btn btn-ghost btn-md" onclick={onClose}>cancel</button>
+          {#if mode === 'create'}
+            <button
+              class="btn btn-ghost btn-lg"
+              disabled={!activeValid.ok || busy}
+              onclick={() => ignite(true)}
+              title="create the loop, then start the run in its system view"
+            >
+              {busy ? 'creating…' : '✦ Create & start'}
+            </button>
+          {/if}
+          <button
+            class="btn btn-primary btn-lg ignite"
+            disabled={!activeValid.ok || busy}
+            onclick={() => ignite(false)}
+          >
+            {busy
+              ? mode === 'edit'
+                ? 'saving…'
+                : 'creating…'
+              : mode === 'edit'
+                ? '✦ Save loop'
+                : '✦ Create loop'}
+          </button>
+        </div>
+      </footer>
+    {/snippet}
+
+    {#snippet externalSummary()}
+      <aside class="summary" aria-label="what will happen">
+        <div class="summary-body">
+          <h4 class="mono">
+            {loopName.trim() || (externalAdapter === 'bmad' ? 'your BMAD sprint' : 'your QA pass')}
+          </h4>
+          {#if externalAdapter === 'bmad'}
+            <p class="summary-lede">
+              Runs <b>loop-bmad</b> against <b>{bmadRepo.trim() || 'your repo'}</b>, branching off
+              <b>{bmadMergeBase.trim() || 'develop'}</b>. Works the sprint story by story: create → dev
+              → review{bmadNoSmoke ? '' : ' → smoke'} → {bmadNoMerge ? 'PR' : 'merge'}.
+            </p>
+            <ul class="summary-stats mono">
+              <li><span>dev model</span><strong>{bmadModels.dev || 'inherit'}</strong></li>
+              <li>
+                <span>profile</span>
+                <strong>
+                  {bmadProfile === 'maxPower'
+                    ? 'Max power'
+                    : bmadProfile === 'costAware'
+                      ? 'Cost-aware'
+                      : 'custom'}
+                </strong>
+              </li>
+              <li><span>smoke</span><strong>{bmadNoSmoke ? 'off' : bmadSmokeMode}</strong></li>
+            </ul>
+            <p class="ext-prereq mono">
+              Needs in the repo: BMAD installed (<code>_bmad-output/…</code>), a populated
+              <code>sprint-status.yaml</code> + story files, <code>gh</code> authed, and the
+              <code>{bmadMergeBase.trim() || 'develop'}</code> branch.
+            </p>
+          {:else}
+            <p class="summary-lede">
+              Runs <b>loop-qa</b> against <b>{qaApp.trim() || 'your app'}</b> at
+              <b>{qaBaseUrl.trim() || 'the base URL'}</b>, judging each epic's acceptance criteria in a
+              headless browser and authoring regression specs.
+            </p>
+            <ul class="summary-stats mono">
+              <li><span>manifest</span><strong>{qaManifest.trim() || '—'}</strong></li>
+              <li><span>auth</span><strong>{qaStorageState.trim() ? 'storageState' : 'none'}</strong></li>
+              <li><span>budget</span><strong>{qaCostCeiling > 0 ? fmtUsd(qaCostCeiling) : 'uncapped'}</strong></li>
+            </ul>
+            <p class="ext-prereq mono">
+              Needs first: the app running at the base URL, an <code>ac-manifest.json</code> (build with
+              <code>orrery_loop.qa.manifest</code>), and — for auth-gated apps — a Playwright
+              storageState file.
+            </p>
+          {/if}
+          <p class="startnote mono">
+            Creating <b>saves</b> this loop — it won't run until you press <b>✦ Start</b> (or use
+            <b>✦ Create &amp; start</b>).
+          </p>
+        </div>
+      </aside>
     {/snippet}
 
     {#snippet guardrailsBody()}
@@ -1308,9 +1877,9 @@
       <div class="valid mono">
         {#if createError}
           <span class="verr" role="alert">✕ {createError}</span>
-        {:else if !validation.ok && touched}
-          <span class="verr">⚠ {validation.errors[0]}</span>
-        {:else if validation.ok}
+        {:else if !activeValid.ok && touched}
+          <span class="verr">⚠ {activeValid.errors[0]}</span>
+        {:else if activeValid.ok}
           <span class="vok">{mode === 'edit' ? '✓ ready to save' : '✓ ready to create'}</span>
         {:else}
           <span class="vhint">fill in the essentials, then create</span>
@@ -1325,10 +1894,20 @@
         {@render validStatus()}
         <div class="actions">
           <button class="btn btn-ghost btn-md" onclick={onClose}>cancel</button>
+          {#if mode === 'create'}
+            <button
+              class="btn btn-ghost btn-lg"
+              disabled={!validation.ok || busy}
+              onclick={() => ignite(true)}
+              title="create the loop, then start the run in its system view"
+            >
+              {busy ? 'creating…' : '✦ Create & start'}
+            </button>
+          {/if}
           <button
             class="btn btn-primary btn-lg ignite"
             disabled={!validation.ok || busy}
-            onclick={ignite}
+            onclick={() => ignite(false)}
           >
             {busy
               ? mode === 'edit'
@@ -1374,10 +1953,20 @@
           </button>
         {:else}
           {@render validStatus()}
+          {#if mode === 'create'}
+            <button
+              class="btn btn-ghost btn-lg"
+              disabled={!validation.ok || busy}
+              onclick={() => ignite(true)}
+              title="create the loop, then start the run in its system view"
+            >
+              {busy ? 'creating…' : '✦ Create & start'}
+            </button>
+          {/if}
           <button
             class="btn btn-primary btn-lg ignite"
             disabled={!validation.ok || busy}
-            onclick={ignite}
+            onclick={() => ignite(false)}
           >
             {busy
               ? mode === 'edit'
@@ -2550,5 +3139,99 @@
   .startnote-box b {
     color: var(--amber);
     font-weight: 500;
+  }
+
+  /* ── external-adapter (BMAD / QA) recipe surface ──────────────────────────
+     Chrome stays monochrome (M5 calm-chrome law): grays + amber/red only. */
+  .gallery-sub {
+    font-size: var(--text-xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-meta);
+    margin: var(--space-4) 0 var(--space-2);
+  }
+  .recipe-ext .recipe-glyph {
+    color: var(--em-hi);
+  }
+  .ext-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: var(--space-3) 0;
+  }
+  .ext-presets {
+    margin-bottom: 0;
+  }
+  .ext-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-dim);
+    line-height: 1.4;
+    cursor: pointer;
+    margin: var(--space-2) 0;
+  }
+  .ext-toggle input {
+    margin-top: 2px;
+    accent-color: var(--em-hi);
+    flex: none;
+  }
+  .ext-toggle em {
+    color: var(--text-faint);
+    font-style: normal;
+  }
+  .ext-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: var(--space-3) 0;
+  }
+  .phase-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: var(--space-2);
+  }
+  .phase-row {
+    display: grid;
+    grid-template-columns: 72px 1fr 108px;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .phase-head {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .phase-name {
+    font-size: var(--text-xs);
+    color: var(--text-dim);
+  }
+  .phase-row .inp,
+  .phase-row select {
+    padding: 4px 8px;
+    font-size: var(--text-xs);
+  }
+  .ext-modes {
+    margin-top: var(--space-2);
+  }
+  .ext-prereq {
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-dim);
+    line-height: 1.5;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    background: color-mix(in srgb, var(--n3) 30%, transparent);
+  }
+  .ext-prereq code,
+  .fhelp code,
+  .def code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    color: var(--text-meta);
   }
 </style>

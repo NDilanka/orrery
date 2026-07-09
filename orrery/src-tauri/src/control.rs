@@ -1135,6 +1135,29 @@ fn spawn_cwd(state_dir: &Path) -> PathBuf {
         .unwrap_or_else(|| state_dir.to_path_buf())
 }
 
+/// The dir a loop's GATE effectively runs in: the external repo passed to the engine as
+/// `--cwd` (generic) or `--project-root` (bmad/qa) when that value is an ABSOLUTE path,
+/// else the loop's own base dir (`spawn_cwd`). Lets `probe_command` run "Test it now" where
+/// the real gate will run for a loop pointed at an external repo. NOTE: only the probe uses
+/// this — `spawn_detached` deliberately keeps its process cwd at the loop folder so the
+/// relative `--state-dir` (.loop) stays isolated under loops/<id>/ (Python honors --cwd itself).
+fn gate_cwd(def: &LoopDef, base_dir: &Path) -> PathBuf {
+    if let Some(spec) = &def.start {
+        // scan args for the value following --cwd or --project-root
+        let args = &spec.args;
+        for i in 0..args.len() {
+            if (args[i] == "--cwd" || args[i] == "--project-root") && i + 1 < args.len() {
+                let val = &args[i + 1];
+                let p = Path::new(val);
+                if p.is_absolute() {
+                    return PathBuf::from(val);
+                }
+            }
+        }
+    }
+    spawn_cwd(&state_dir_of(def, base_dir))
+}
+
 /// Resolve `rel` strictly INSIDE `base`: reject an absolute path and reject any
 /// `..` (`ParentDir`) component anywhere in it, so a relative path can never escape
 /// the loop's own directory. A `.` (`CurDir`) segment is a harmless no-op; a
@@ -1270,14 +1293,15 @@ pub fn probe_command(
 
     let loops = PathBuf::from(&loops_dir);
     let base_dir = loop_base_dir(&loops, &loop_id);
-    // Prefer the loop's own declared stateDir (exactly `start_loop`'s cwd) when its
-    // loop.json is already on disk. The Tuning Console's "▸ test" button can probe a
-    // gate stage BEFORE the loop is ever created (while still authoring the draft) —
-    // in that case there is no loop.json yet, so fall back to the loop's own base dir
-    // (loops/<id>/), which is what the default stateDir (".loop", one level under it)
-    // resolves to anyway in the common case.
+    // Run the probe where the REAL gate will run (`gate_cwd`): the external repo passed
+    // to the engine via `--cwd`/`--project-root` when that's absolute, else the loop's own
+    // base dir — matching a real run for both self-contained and external-repo loops. The
+    // Tuning Console's "▸ test" button can probe a gate stage BEFORE the loop is ever
+    // created (while still authoring the draft) — in that case there is no loop.json yet,
+    // so fall back to the loop's own base dir (loops/<id>/), which is what the default
+    // stateDir (".loop", one level under it) resolves to anyway in the common case.
     let cwd = match load_loop_def(&loops, &loop_id) {
-        Ok(def) => spawn_cwd(&state_dir_of(&def, &base_dir)),
+        Ok(def) => gate_cwd(&def, &base_dir),
         Err(_) => base_dir.clone(),
     };
     std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd {cwd:?}: {e}"))?;
@@ -1542,6 +1566,58 @@ mod tests {
     }
 
     #[test]
+    fn create_loop_round_trips_top_level_bmad_and_qa_blocks() {
+        // A BMAD/QA loop.json carries namespaced top-level `bmad`/`qa` tuning blocks
+        // (peers of `engine`). write_loop_def re-serializes from the typed LoopDef, so
+        // unless the struct has opaque `bmad`/`qa` fields these blocks are silently
+        // dropped on create/update/clone. Assert they survive a full round-trip.
+        let tmp = TmpDir::new("crud-bmadqa");
+        let loops_dir = tmp.path().to_string_lossy().to_string();
+
+        let def = serde_json::json!({
+            "id": "bqtest",
+            "name": "A BMAD + QA loop",
+            "kind": "external",
+            "adapter": "bmad",
+            "stateDir": ".loop",
+            "start": { "program": "loop-bmad", "args": ["--project-root", "D:/dev/app"] },
+            "bmad": { "models": { "dev": "sonnet" }, "reviewMode": "single-pass" },
+            "qa": { "baseUrl": "http://x" }
+        });
+
+        // create returns the canonical LoopDef with both opaque blocks preserved
+        let created = create_loop(loops_dir.clone(), def).expect("create_loop ok");
+        assert!(created.bmad.is_some(), "bmad block preserved in returned def");
+        assert!(created.qa.is_some(), "qa block preserved in returned def");
+        assert_eq!(
+            created.bmad.as_ref().and_then(|b| b.get("reviewMode")).and_then(|v| v.as_str()),
+            Some("single-pass"),
+            "nested bmad value preserved"
+        );
+        assert_eq!(
+            created.qa.as_ref().and_then(|q| q.get("baseUrl")).and_then(|v| v.as_str()),
+            Some("http://x"),
+            "nested qa value preserved"
+        );
+
+        // read the file back from disk: the blocks (and their nested keys) are on disk
+        let p = loop_json_path(tmp.path(), "bqtest");
+        assert!(p.exists(), "loop.json written at {p:?}");
+        let on_disk = std::fs::read_to_string(&p).unwrap();
+        assert!(on_disk.contains("\"reviewMode\""), "bmad block on disk");
+        assert!(on_disk.contains("\"baseUrl\""), "qa block on disk");
+
+        // and re-parsing the on-disk JSON yields the same opaque blocks
+        let reparsed: LoopDef = serde_json::from_str(&on_disk).expect("reparse loop.json");
+        assert_eq!(
+            reparsed.bmad.as_ref().and_then(|b| b.get("models")).and_then(|m| m.get("dev")).and_then(|v| v.as_str()),
+            Some("sonnet"),
+            "nested bmad.models.dev survived to disk and back"
+        );
+        assert!(reparsed.qa.is_some(), "qa survived to disk and back");
+    }
+
+    #[test]
     fn update_clone_delete_loop_lifecycle() {
         let tmp = TmpDir::new("crud2");
         let loops_dir = tmp.path().to_string_lossy().to_string();
@@ -1648,6 +1724,8 @@ mod tests {
                 args: args.into_iter().map(|s| s.to_string()).collect(),
             }),
             engine: None,
+            bmad: None,
+            qa: None,
         }
     }
 
@@ -1668,6 +1746,8 @@ mod tests {
             checkpoint: Some(".loop/checkpoint.json".into()),
             start: None,
             engine: None,
+            bmad: None,
+            qa: None,
         };
         // relative stateDir + STOP + checkpoint all resolve under base.
         assert_eq!(state_dir_of(&def, base), Path::new("/loops/hello/.loop"));
@@ -1697,6 +1777,8 @@ mod tests {
             checkpoint: None,
             start: None,
             engine: None,
+            bmad: None,
+            qa: None,
         };
         assert_eq!(state_dir_of(&def, base), PathBuf::from(abs));
         assert_eq!(stop_flag_path(&def, base), PathBuf::from(abs).join("STOP"));
@@ -1704,6 +1786,48 @@ mod tests {
             checkpoint_file_path(&def, base),
             PathBuf::from(abs).join("checkpoint.json")
         );
+    }
+
+    #[test]
+    fn gate_cwd_targets_external_repo_arg_when_absolute_else_loop_folder() {
+        // The probe ("Test it now") must run where the REAL gate runs. For a loop pointed at an
+        // external repo that's the ABSOLUTE path handed to the engine via `--cwd` (generic) or
+        // `--project-root` (bmad/qa); for a self-contained loop (relative or no such arg) it's the
+        // loop's own base dir, exactly `spawn_cwd(state_dir_of(..))` (a real run's cwd).
+        let base = Path::new(if cfg!(windows) { "C:/loops/hello" } else { "/loops/hello" });
+        let ext = if cfg!(windows) { "C:/ext/repo" } else { "/ext/repo" };
+        let app = if cfg!(windows) { "D:/dev/app" } else { "/dev/app" };
+
+        // build a minimal LoopDef via serde (a struct literal would need every field); only
+        // `start.args` varies between cases.
+        let mk = |args: serde_json::Value| -> LoopDef {
+            serde_json::from_value(serde_json::json!({
+                "id": "hello",
+                "name": "hello",
+                "adapter": "generic",
+                "stateDir": ".loop",
+                "start": { "program": "loop", "args": args }
+            }))
+            .expect("valid LoopDef")
+        };
+
+        // --cwd <absolute> (generic engine) → the external repo verbatim
+        let d1 = mk(serde_json::json!(["--cwd", ext, "--state-dir", ".loop"]));
+        assert_eq!(gate_cwd(&d1, base), PathBuf::from(ext));
+
+        // --project-root <absolute> (bmad/qa driver) → that repo verbatim
+        let d2 = mk(serde_json::json!(["--project-root", app, "--state-dir", ".loop"]));
+        assert_eq!(gate_cwd(&d2, base), PathBuf::from(app));
+
+        // --cwd . (RELATIVE) → not an external repo, so fall back to the loop folder
+        let d3 = mk(serde_json::json!(["--cwd", ".", "--state-dir", ".loop"]));
+        assert_eq!(gate_cwd(&d3, base), spawn_cwd(&state_dir_of(&d3, base)));
+        assert_eq!(gate_cwd(&d3, base), base, "relative --cwd → the loop's own base dir");
+
+        // no --cwd / --project-root arg at all → the loop folder
+        let d4 = mk(serde_json::json!(["--loop-json", "loop.json", "--state-dir", ".loop"]));
+        assert_eq!(gate_cwd(&d4, base), spawn_cwd(&state_dir_of(&d4, base)));
+        assert_eq!(gate_cwd(&d4, base), base);
     }
 
     #[test]
@@ -1842,6 +1966,8 @@ mod tests {
                     .into_iter().map(|s| s.to_string()).collect(),
             }),
             engine: None,
+            bmad: None,
+            qa: None,
         };
         let spec = guard_spec(&def);
         assert_eq!(spec.program_stem.as_deref(), Some("loop-bmad"), "must key on program");
@@ -1887,6 +2013,8 @@ mod tests {
                     .into_iter().map(|s| s.to_string()).collect(),
             }),
             engine: None,
+            bmad: None,
+            qa: None,
         };
         let spec = guard_spec(&def);
         assert_eq!(spec.program_stem.as_deref(), Some("loop"));
@@ -1931,6 +2059,8 @@ mod tests {
             checkpoint: None,
             start: None, // no start spec -> nothing to derive tokens from
             engine: None,
+            bmad: None,
+            qa: None,
         };
         let spec = guard_spec(&def);
         assert!(spec.program_stem.is_none() && spec.arg_tokens.is_empty(), "tokenless spec must yield NO discriminators");

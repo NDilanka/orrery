@@ -45,6 +45,31 @@ const browser = await chromium.launch();
         await shot(page, '02c-tuning-guided.png');
       }
     }
+    // external-adapter recipes (BMAD / QA) — the dedicated compact screens
+    const backToGallery = async () => {
+      const chg = page.locator('.tc-chip-change');
+      if (await chg.count()) { await chg.first().click(); await settle(page, 400); }
+    };
+    await backToGallery();
+    const bmadCard = page.locator('.recipe-ext').first();
+    if (await bmadCard.count()) {
+      await bmadCard.click();
+      await settle(page, 700);
+      await shot(page, '02d-tuning-bmad.png'); // BMAD compact screen
+      const adv = page.locator('.adv-top');
+      if (await adv.count()) {
+        await adv.first().click();
+        await settle(page, 400);
+        await shot(page, '02e-tuning-bmad-adv.png'); // per-phase model/effort grid
+      }
+      await backToGallery();
+      const qaCard = page.locator('.recipe-ext').nth(1);
+      if (await qaCard.count()) {
+        await qaCard.click();
+        await settle(page, 700);
+        await shot(page, '02f-tuning-qa.png'); // QA compact screen
+      }
+    }
     // close it
     await page.keyboard.press('Escape').catch(()=>{});
     await page.locator('button', { hasText: /close|cancel|✕|×/i }).first().click().catch(()=>{});

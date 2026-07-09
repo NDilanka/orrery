@@ -574,6 +574,12 @@ pub struct LoopDef {
     /// present when kind=generic (the 6 blocks as config); kept opaque here
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<serde_json::Value>,
+    /// present when adapter=bmad (the BMAD driver's namespaced tuning block); kept opaque here
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bmad: Option<serde_json::Value>,
+    /// present for a loop-qa recipe (the QA driver's namespaced tuning block); kept opaque here
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qa: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
