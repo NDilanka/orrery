@@ -60,9 +60,14 @@
     transform: translate(calc(var(--sw-w) - 16px), -50%);
   }
   @media (prefers-reduced-motion: reduce) {
-    .switch,
-    .knob {
+    :global(:root:not([data-motion='full'])) .switch,
+    :global(:root:not([data-motion='full'])) .knob {
       transition: none;
     }
+  }
+  /* mirrors the media block above, for the user-forced reduced-motion setting */
+  :global(:root[data-motion='reduced']) .switch,
+  :global(:root[data-motion='reduced']) .knob {
+    transition: none;
   }
 </style>

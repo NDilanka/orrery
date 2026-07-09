@@ -12,7 +12,8 @@
 
 import { browser } from '$app/environment';
 import { hasTauri } from '../transport';
-import { DEFAULT_LOOPS_DIR } from '../paths';
+import { getLoopsDir } from '../paths';
+import { settingsStore } from './settings.svelte';
 
 export interface LanInfo {
   url: string;
@@ -71,7 +72,12 @@ class ShareStore {
       if (hasTauri()) {
         const { invoke } = await import('@tauri-apps/api/core');
         const info = (await invoke('start_lan_server', {
-          loopsDir: DEFAULT_LOOPS_DIR,
+          loopsDir: getLoopsDir(),
+          // honor the user's configured LAN port (Rust `port: Option<u16>`). Only read it
+          // once the settings store has actually loaded — before that, `data` is DEFAULTS
+          // and could shadow a persisted custom port, so we pass undefined and let Rust use
+          // its own default (DEFAULT_PORT, identical to DEFAULTS.lanPort) instead.
+          port: settingsStore.loaded ? settingsStore.data.general.lanPort : undefined,
         })) as LanInfo;
         this.info = info;
         this.simulated = false;

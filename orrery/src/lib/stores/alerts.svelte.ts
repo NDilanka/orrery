@@ -13,8 +13,9 @@
 // timeline crosses a boundary back and forth.
 
 import type { RestState } from '../types';
+import type { AlertState } from '../settings/schema';
 
-export type AlertKind = 'failed' | 'handoff' | 'quota';
+export type AlertKind = 'failed' | 'handoff' | 'quota' | 'done' | 'stopped';
 
 export interface RunAlert {
   /** `${loopId}:${kind}` — stable per loop+kind: re-observing the same state is a no-op,
@@ -33,6 +34,11 @@ const KIND_BY_REST: Partial<Record<NonNullable<RestState>, AlertKind>> = {
   'failed-dark': 'failed',
   'handoff-beacon': 'handoff',
   'quota-frost': 'quota',
+  // 'certified-done' + 'stopped-ember' are OFFERED in the settings alertOn list, so they
+  // must be fireable too. Neither is a failure or a needs-you: styled monochrome downstream
+  // (done = bright white "finished", stopped = dim/neutral) — never red/amber.
+  'certified-done': 'done',
+  'stopped-ember': 'stopped',
 };
 
 export function alertKindFor(restState: RestState): AlertKind | null {
@@ -60,6 +66,10 @@ export function messageFor(kind: AlertKind, loopId: string, resumeAt?: string | 
         ? `${loopId} hit its quota — resumes ~${eta}`
         : `${loopId} hit its quota — resumes later`;
     }
+    case 'done':
+      return `${loopId} finished — all stories done`;
+    case 'stopped':
+      return `${loopId} stopped — resume when ready`;
   }
 }
 
@@ -89,29 +99,59 @@ export function detectEdge(prev: RestState | undefined, next: RestState): EdgeRe
 
 class AlertStore {
   alerts = $state<RunAlert[]>([]);
+  /**
+   * Fire-and-forget signal that a loop just came back from a quota wait: set on the
+   * clear-path when a loop leaves 'quota-frost' straight back to running (restState null).
+   * `seq` monotonically increments so a watcher can edge-detect even on a repeat loopId.
+   * The store only RECORDS the fact — it stays settings-free; Toast.svelte decides whether
+   * to surface it (settings.notifications.quotaResumeToast).
+   */
+  lastQuotaResume = $state<{ loopId: string; at: number; seq: number } | null>(null);
+  private quotaResumeSeq = 0;
   private lastRestState = new Map<string, RestState>();
 
-  /** Feed one loop's freshly-observed restState. Call this only from a live (non-replay)
-   * source — see the module comment above. */
-  observe(loopId: string, restState: RestState, source: 'system' | 'cosmos', resumeAt?: string | null): void {
+  /**
+   * Feed one loop's freshly-observed restState. Call this only from a live (non-replay)
+   * source — see the module comment above.
+   *
+   * `allowed` (optional) is the user's `notifications.alertOn` filter: when provided, ONLY
+   * the FIRE branch is gated on `restState ∈ allowed`. The clear/baseline bookkeeping still
+   * runs unconditionally, so a filtered-out state can't strand a stale alert and re-entering
+   * an allowed state still edge-detects correctly.
+   */
+  observe(
+    loopId: string,
+    restState: RestState,
+    source: 'system' | 'cosmos',
+    resumeAt?: string | null,
+    allowed?: AlertState[],
+  ): void {
     const prev = this.lastRestState.has(loopId) ? this.lastRestState.get(loopId) : undefined;
     this.lastRestState.set(loopId, restState);
     const { clearKind, fireKind } = detectEdge(prev, restState);
+    // Quota-resume signal (settings-free): left quota-frost straight back to running.
+    if (prev === 'quota-frost' && restState === null) {
+      this.lastQuotaResume = { loopId, at: Date.now(), seq: ++this.quotaResumeSeq };
+    }
     if (clearKind) {
       const clearId = `${loopId}:${clearKind}`;
       this.alerts = this.alerts.filter((a) => a.id !== clearId);
     }
     if (fireKind) {
-      const id = `${loopId}:${fireKind}`;
-      const alert: RunAlert = {
-        id,
-        loopId,
-        kind: fireKind,
-        message: messageFor(fireKind, loopId, resumeAt),
-        createdAt: Date.now(),
-        source,
-      };
-      this.alerts = [...this.alerts.filter((a) => a.id !== id), alert];
+      // gate ONLY the fire on the alertOn filter (restState is non-null whenever fireKind is)
+      const stateAllowed = !allowed || (restState !== null && allowed.includes(restState));
+      if (stateAllowed) {
+        const id = `${loopId}:${fireKind}`;
+        const alert: RunAlert = {
+          id,
+          loopId,
+          kind: fireKind,
+          message: messageFor(fireKind, loopId, resumeAt),
+          createdAt: Date.now(),
+          source,
+        };
+        this.alerts = [...this.alerts.filter((a) => a.id !== id), alert];
+      }
     }
   }
 
@@ -128,6 +168,8 @@ class AlertStore {
   reset(): void {
     this.alerts = [];
     this.lastRestState.clear();
+    this.lastQuotaResume = null;
+    this.quotaResumeSeq = 0;
   }
 }
 

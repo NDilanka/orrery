@@ -19,7 +19,7 @@ import type { RestState, RunState, RunStatus } from '../types';
 import { reduce } from '../reduce';
 import { normalizeAll } from '../adapters';
 import { hasTauri, LOOPS, type LoopChoice } from '../transport';
-import { DEFAULT_LOOPS_DIR } from '../paths';
+import { getLoopsDir } from '../paths';
 import { base } from '$app/paths';
 import { browser } from '$app/environment';
 
@@ -230,7 +230,7 @@ class CosmosStore {
       // Tauri backend failed — we're about to silently fall back to fixtures below.
       // Record that (never set in plain-browser dev, where fixtures ARE the source).
       if (this.source === 'tauri') {
-        this.backendError = `couldn't list loops at ${DEFAULT_LOOPS_DIR} — ${detail}`;
+        this.backendError = `couldn't list loops at ${getLoopsDir()} — ${detail}`;
       }
       // dev fallback so the Cosmos is never blank even if Tauri commands fail
       if (this.loops.length === 0) {
@@ -253,7 +253,7 @@ class CosmosStore {
   private async loadTauri(): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     // list_loops(loopsDir) → LoopDef[] (PROTOCOL §6/§7)
-    const defs = (await invoke('list_loops', { loopsDir: DEFAULT_LOOPS_DIR })) as Array<{
+    const defs = (await invoke('list_loops', { loopsDir: getLoopsDir() })) as Array<{
       id: string;
       name: string;
       theme?: string;
@@ -336,7 +336,7 @@ class CosmosStore {
     try {
       if (hasTauri()) {
         const { invoke } = await import('@tauri-apps/api/core');
-        const defs = (await invoke('list_loops', { loopsDir: DEFAULT_LOOPS_DIR })) as Array<
+        const defs = (await invoke('list_loops', { loopsDir: getLoopsDir() })) as Array<
           Record<string, unknown>
         >;
         return defs.find((d) => d.id === id) ?? null;
@@ -366,9 +366,9 @@ class CosmosStore {
     if (browser && hasTauri()) {
       const { invoke } = await import('@tauri-apps/api/core');
       if (opts.mode === 'edit' && opts.editId) {
-        await invoke('update_loop', { loopsDir: DEFAULT_LOOPS_DIR, id: opts.editId, def });
+        await invoke('update_loop', { loopsDir: getLoopsDir(), id: opts.editId, def });
       } else {
-        await invoke('create_loop', { loopsDir: DEFAULT_LOOPS_DIR, def });
+        await invoke('create_loop', { loopsDir: getLoopsDir(), def });
       }
       await this.load(); // re-read the registry so the new system appears
       return { id, persisted: true };
@@ -409,6 +409,40 @@ class CosmosStore {
   }
 
   /**
+   * Delete a loop: remove `loops/<id>/` on disk (Rust `delete_loop`, idempotent) and drop the
+   * star from the local roster so the Cosmos updates immediately without a full reload. In dev
+   * (no Tauri) there is nothing on disk to remove, so it just prunes the local roster — the same
+   * graceful "no Tauri → degrade, never pretend" idiom `createLoop` uses. If the Tuning Console
+   * is currently editing the loop being deleted, the console is closed (its edit target is gone).
+   * The caller (roster ✕ button) owns any view-level deselection of a mounted/active loop.
+   * Returns whether the backend actually persisted the deletion.
+   */
+  async deleteLoop(id: string): Promise<{ id: string; persisted: boolean }> {
+    let persisted = false;
+    if (browser && hasTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      try {
+        // Rust `delete_loop(loops_dir, id)` → Tauri v2 camelCase args { loopsDir, id }.
+        await invoke('delete_loop', { loopsDir: getLoopsDir(), id });
+        persisted = true;
+      } catch (e) {
+        // Surface the failure through the existing error strip (same pattern as the
+        // list_loops failure path) instead of letting the rejection propagate raw — an
+        // unwired caller must never produce an unhandled rejection. The loop is still on
+        // disk, so we leave the roster untouched rather than pretending it's gone.
+        const detail = e instanceof Error ? e.message : String(e);
+        this.backendError = `couldn't delete loop “${id}” — ${detail}`;
+        return { id, persisted: false };
+      }
+    }
+    // mirror how load()/createLoop update the roster: reassign `loops` so the runes tree reacts.
+    this.loops = this.loops.filter((l) => l.id !== id);
+    // if the console was editing the just-deleted loop, there is nothing left to edit — close it.
+    if (this.console?.editId === id) this.console = null;
+    return { id, persisted };
+  }
+
+  /**
    * Scaffold a file (typically TASK.md) inside a loop's own dir (U3 Task 2, §6
    * `write_loop_file`). In Tauri this writes the real file; in dev (no Tauri) there is
    * nothing to write to, so it no-ops and reports `written: false` — the same shape
@@ -426,7 +460,7 @@ class CosmosStore {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('write_loop_file', {
         loopId: id,
-        loopsDir: DEFAULT_LOOPS_DIR,
+        loopsDir: getLoopsDir(),
         relPath,
         content,
         overwrite,
@@ -451,7 +485,7 @@ class CosmosStore {
       const { invoke } = await import('@tauri-apps/api/core');
       return (await invoke('probe_command', {
         loopId: id,
-        loopsDir: DEFAULT_LOOPS_DIR,
+        loopsDir: getLoopsDir(),
         command,
         timeoutMs,
       })) as ProbeResult;

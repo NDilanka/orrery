@@ -6,6 +6,34 @@ changes between minor versions.
 
 ## [Unreleased]
 
+### Added — app settings (Orrery's first)
+- **Settings popup**: a gear / `Ctrl+,` / command-palette-reachable modal with six
+  tabs (General, Appearance, Loops & Defaults, Notifications, AI / Models, About &
+  Diagnostics), live search, a user ⇆ workspace scope switch, per-key / per-section /
+  reset-all, and import / export.
+- **Persistence**: settings live in `settings.json` via `tauri-plugin-store`, with a
+  `localStorage` fallback for the browser dev/replay build and a pre-paint FOUC script
+  (`app.html`) that applies theme/density before first render.
+- **Full light theme**: a complete light palette across both chrome and the PixiJS
+  canvas scene (`data-theme`), with light-mode glow polish (`screen`→`multiply`); dark
+  stays the default and is byte-identical to before.
+- **Multi-provider BYOK**: an AI / Models editor over a provider-instance model
+  (runner × provider × auth-mode), backed by OS-keychain secrets (write-only). A
+  `PROVIDER_MATRIX` mirrored in TS + Rust gates unsupported combinations and drives
+  env injection / scrubbing at spawn (Vertex `ANTHROPIC_VERTEX_PROJECT_ID`, a fallback
+  instance, and a Test-connection reachability probe); subscription mode injects nothing.
+- **Loop defaults are live**: new loops seed from your Loops & Defaults (a projection
+  layer); the Tuning Console's override dots now mean "differs from *your* defaults", and
+  `--runner` / `--model` / `--effort` are emitted into `start.args` (a non-Claude BYOK
+  instance supplies the model id).
+- **Runtime wiring**: loops directory (`resolve_loops_dir` at boot) and LAN companion
+  port are read from settings; `appearance.motion` / `appearance.density` project onto
+  `data-motion` / `data-density` (compact spacing; a user 'full' defeats OS reduce).
+- **Notifications**: an `alertOn` filter over done / stopped alert kinds, an optional
+  WebAudio chime, and a quota-resume toast — all settings-gated.
+- **Safety**: `confirmDestructive` now gates both Restart-fresh and a new roster ✕
+  delete-loop (`cosmosStore.deleteLoop` → Rust `delete_loop`).
+
 ## [0.3.0] — 2026-07-05
 
 ### Added — you no longer build from source

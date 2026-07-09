@@ -7,6 +7,7 @@
 
   import { alertStore, type RunAlert } from '../stores/alerts.svelte';
   import { uiStore } from '../stores/ui.svelte';
+  import { settingsStore } from '../stores/settings.svelte';
 
   let { onJump }: { onJump: (loopId: string) => void } = $props();
 
@@ -14,6 +15,8 @@
     failed: '⚠',
     handoff: '◈',
     quota: '❄',
+    done: '✓',
+    stopped: '⏸',
   };
 
   // Cap the visible stack — a multi-loop bad night (several failures + handoffs) shouldn't
@@ -21,9 +24,69 @@
   // see alerts.svelte.ts), so severity ordering lives here: failures sort ahead of the amber
   // kinds (handoff/quota), stable otherwise.
   const MAX_VISIBLE = 3;
-  const SEVERITY_RANK: Record<RunAlert['kind'], number> = { failed: 0, handoff: 1, quota: 1 };
+  // failures lead, then the amber needs-you kinds, then the monochrome informational
+  // kinds (done/stopped) — neither is urgent, so they sink to the bottom of the stack.
+  const SEVERITY_RANK: Record<RunAlert['kind'], number> = {
+    failed: 0,
+    handoff: 1,
+    quota: 1,
+    done: 2,
+    stopped: 2,
+  };
 
   let expanded = $state(false);
+
+  // Alert sound (settings.notifications.sound): a short, quiet 2-tone sine blip synthesized
+  // via the Web Audio API — no asset fetch (offline Tauri). Edge-detected on alert ids so it
+  // fires once per NEW alert, never on a re-render or when an alert is dismissed. Primed on
+  // first run so pre-existing alerts at mount don't blip.
+  let knownIds = new Set<string>();
+  let primed = false;
+  $effect(() => {
+    const ids = new Set(alertStore.alerts.map((a) => a.id));
+    if (!primed) {
+      knownIds = ids;
+      primed = true;
+      return;
+    }
+    let hasNew = false;
+    for (const id of ids) if (!knownIds.has(id)) hasNew = true;
+    knownIds = ids;
+    // short-circuit keeps the effect from subscribing to `sound` unless something new fired
+    if (hasNew && settingsStore.data.notifications.sound) playChime();
+  });
+
+  function playChime(): void {
+    try {
+      const Ctx =
+        typeof window !== 'undefined'
+          ? (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
+          : undefined;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      // a context created outside a user gesture can start 'suspended' (autoplay policy)
+      // and silently swallow the blip — nudge it awake; a refusal just means no chime.
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+      const now = ctx.currentTime;
+      [660, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t0 = now + i * 0.11;
+        gain.gain.setValueAtTime(0, t0);
+        gain.gain.linearRampToValueAtTime(0.1, t0 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.12);
+      });
+      // free the context once the blip (~230ms) has played out
+      setTimeout(() => void ctx.close().catch(() => {}), 400);
+    } catch {
+      /* audio unavailable / blocked — a missing chime is never fatal */
+    }
+  }
 
   let sorted = $derived(
     [...alertStore.alerts].sort((a, b) => SEVERITY_RANK[a.kind] - SEVERITY_RANK[b.kind]),
@@ -31,9 +94,12 @@
   let overflow = $derived(sorted.length > MAX_VISIBLE);
   let visible = $derived(expanded ? sorted : sorted.slice(0, MAX_VISIBLE));
   let hidden = $derived(sorted.slice(MAX_VISIBLE));
-  // never hue-alone: the summary's amber/red family is a shorthand for "does the hidden
-  // tail contain a failure", but the "+N more" text carries the actual information.
+  // never hue-alone: the summary's tint is a shorthand for the WORST kind in the hidden
+  // tail — red if it holds a failure, amber if it holds a needs-you (handoff/quota), and
+  // MONOCHROME when it's only the informational done/stopped kinds (design law: those are
+  // never red/amber). The "+N more" text carries the actual information either way.
   let hiddenHasFailure = $derived(hidden.some((a) => a.kind === 'failed'));
+  let hiddenHasNeedsYou = $derived(hidden.some((a) => SEVERITY_RANK[a.kind] === 1));
 </script>
 
 {#if alertStore.alerts.length}
@@ -56,11 +122,14 @@
       <button
         type="button"
         class="bar summary"
-        class:sev-amber={!hiddenHasFailure}
+        class:sev-amber={!hiddenHasFailure && hiddenHasNeedsYou}
+        class:sev-mono={!hiddenHasFailure && !hiddenHasNeedsYou}
         class:reduced={uiStore.reducedMotion}
         onclick={() => (expanded = !expanded)}
       >
-        <span class="glyph" aria-hidden="true">{hiddenHasFailure ? GLYPH.failed : GLYPH.handoff}</span>
+        <span class="glyph" aria-hidden="true">
+          {hiddenHasFailure ? GLYPH.failed : hiddenHasNeedsYou ? GLYPH.handoff : GLYPH.done}
+        </span>
         <span class="msg">{expanded ? 'show less' : `+${hidden.length} more`}</span>
       </button>
     {/if}
@@ -106,6 +175,14 @@
     background: color-mix(in srgb, var(--amber) 14%, var(--void-2));
     border-bottom-color: color-mix(in srgb, var(--amber) 35%, transparent);
   }
+  /* DESIGN LAW: a done or stopped loop is NOT a failure and NOT a needs-you — it stays
+     monochrome, never red/amber. `done` reads as a bright/positive resolution (em-hi white
+     emphasis); `stopped` is a neutral, quiet parked state (dim). */
+  .bar.done,
+  .bar.stopped {
+    background: color-mix(in srgb, var(--em-hi) 8%, var(--void-2));
+    border-bottom-color: var(--hairline);
+  }
   /* summary row (overflow cap) — a real <button> so it's keyboard-reachable; reset the
      native button chrome back to the plain `.bar` look. `.sev-amber` is a severity
      shorthand (not a real alert kind) for "no failure in the hidden tail"; unset it falls
@@ -127,6 +204,15 @@
   .bar.summary.sev-amber .glyph {
     color: var(--amber);
   }
+  /* a hidden tail of ONLY done/stopped alerts is informational, never an alert — it takes
+     the same monochrome treatment as the .bar.done/.bar.stopped rows above (design law). */
+  .bar.summary.sev-mono {
+    background: color-mix(in srgb, var(--em-hi) 8%, var(--void-2));
+    border-bottom-color: var(--hairline);
+  }
+  .bar.summary.sev-mono .glyph {
+    color: var(--em-mid);
+  }
   .glyph {
     flex: none;
     font-size: var(--text-lg);
@@ -135,6 +221,12 @@
   .bar.quota .glyph,
   .bar.handoff .glyph {
     color: var(--amber);
+  }
+  .bar.done .glyph {
+    color: var(--em-hi);
+  }
+  .bar.stopped .glyph {
+    color: var(--em-mid);
   }
   .msg {
     flex: 1;

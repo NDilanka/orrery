@@ -39,6 +39,7 @@
   import AlertBanner from '$lib/panels/AlertBanner.svelte';
   import CommandPalette from '$lib/panels/CommandPalette.svelte';
   import SettingsOverlay from '$lib/panels/settings/SettingsOverlay.svelte';
+  import Toast from '$lib/panels/Toast.svelte';
 
   import { runStore } from '$lib/stores/run.svelte';
   import { cosmosStore } from '$lib/stores/cosmos.svelte';
@@ -47,6 +48,7 @@
   import { alertStore } from '$lib/stores/alerts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { hasTauri, hasWsServer, LOOPS } from '$lib/transport';
+  import { resolveLoopsDir } from '$lib/paths';
 
   type View = 'cosmos' | 'system' | 'body';
 
@@ -134,6 +136,10 @@
     activeLoop = id;
     bodyKey = null;
     view = 'system';
+    // settings: open a system straight into the ambient Planetarium when asked.
+    // setMode marks the choice "user-picked", which also keeps the phone
+    // auto-default from fighting it later — the setting IS the user's pick.
+    if (settingsStore.data.general.startInAmbient) uiStore.setMode('planetarium');
     await sessionStore.mountLoop(id);
   }
 
@@ -251,10 +257,22 @@
   // stores/alerts.svelte.ts's module comment explains why (a human is actively
   // watching/scrubbing a fixture; there's no "while I wasn't looking" to alert about,
   // and scrubbing back and forth across a boundary would otherwise spam fire/clear).
+  // settings gate: the master toggle maps to allowed=[] (not an early return) so the
+  // observe() clear/baseline bookkeeping still runs — switching alerts back on later
+  // edge-detects fresh instead of firing on states that predate the toggle.
+  const alertAllowed = $derived(
+    settingsStore.data.notifications.unattendedAlerts ? settingsStore.data.notifications.alertOn : [],
+  );
   $effect(() => {
     if (!activeLoop || sessionStore.transportKind === 'replay' || sessionStore.transportKind === null)
       return;
-    alertStore.observe(activeLoop, runStore.state.run.restState, 'system', runStore.state.quota.resumeAt);
+    alertStore.observe(
+      activeLoop,
+      runStore.state.run.restState,
+      'system',
+      runStore.state.quota.resumeAt,
+      alertAllowed,
+    );
   });
   // Cosmos-sourced: catch a transition on a loop you're NOT currently inside, while
   // sitting at the roster. Only meaningful when the Cosmos is polling a live backend
@@ -262,7 +280,7 @@
   // load, so it establishes its baseline once and never fires.
   $effect(() => {
     if (cosmosStore.source !== 'tauri') return;
-    for (const l of cosmosStore.loops) alertStore.observe(l.id, l.restState, 'cosmos');
+    for (const l of cosmosStore.loops) alertStore.observe(l.id, l.restState, 'cosmos', undefined, alertAllowed);
   });
 
   onMount(() => {
@@ -273,7 +291,10 @@
     void settingsStore.init().then((fn) => {
       teardownSettings = fn;
     });
-    void cosmosStore.load();
+    // Resolve the runtime loops dir (settings override) BEFORE the first roster
+    // load — otherwise the roster races the resolver and lists the build-time
+    // default dir. resolveLoopsDir() is idempotent and a cheap no-op in dev.
+    void resolveLoopsDir().then(() => cosmosStore.load());
     window.addEventListener('keydown', onKeydown);
     return () => {
       teardownUi();
@@ -559,6 +580,9 @@
       <SettingsOverlay onClose={() => (showSettings = false)} />
     {/if}
 
+    <!-- quota-resume toast (settings-gated internally) — one app-wide mount. -->
+    <Toast />
+
     <!-- A5: the Tuning Console (create / edit a loop) -->
     {#if cosmosStore.console}
       <TuningConsole
@@ -656,10 +680,15 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .layer {
+    :global(:root:not([data-motion='full'])) .layer {
       transition: opacity 0.25s linear;
       transform: none !important;
     }
+  }
+  /* mirrors the media block above for the user-forced Reduced setting (data-motion) */
+  :global(:root[data-motion='reduced']) .layer {
+    transition: opacity 0.25s linear;
+    transform: none !important;
   }
 
   /* ══ M4.3 the one top rail ═══════════════════════════════════════════════════

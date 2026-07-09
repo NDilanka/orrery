@@ -116,6 +116,7 @@
     mode: AuthMode;
     baseUrl: string;
     region: string;
+    projectId: string;
     defaultModel: string;
   };
   let editingId = $state<string | null>(null); // an instance id, 'new', or null (closed)
@@ -132,6 +133,7 @@
       mode: 'subscription',
       baseUrl: '',
       region: '',
+      projectId: '',
       defaultModel: '',
     };
   }
@@ -142,6 +144,7 @@
   const account = $derived(rule.keychainAccount);
   const needsBaseUrl = $derived(draft.mode === 'gateway' || draft.mode === 'local');
   const needsRegion = $derived(draft.mode === 'cloud');
+  const needsProjectId = $derived(draft.mode === 'cloud' && draft.provider === 'vertex');
 
   /** Keep the selected mode inside the supported set whenever provider/runner change. */
   function ensureValidMode() {
@@ -178,6 +181,7 @@
       mode: inst.mode,
       baseUrl: inst.baseUrl ?? '',
       region: inst.region ?? '',
+      projectId: inst.projectId ?? '',
       defaultModel: inst.defaultModel ?? '',
     };
     secretDraft = '';
@@ -228,6 +232,7 @@
         mode: draft.mode,
         baseUrl: needsBaseUrl && draft.baseUrl.trim() ? draft.baseUrl.trim() : undefined,
         region: needsRegion && draft.region.trim() ? draft.region.trim() : undefined,
+        projectId: needsProjectId && draft.projectId.trim() ? draft.projectId.trim() : undefined,
         defaultModel: draft.defaultModel.trim() || undefined,
         hasSecret: account ? !!(presence[account] || secretDraft.trim()) : false,
       };
@@ -427,6 +432,17 @@
             />
           </div>
         {/if}
+        {#if needsProjectId}
+          <div class="field">
+            <span class="field-label">Project ID</span>
+            <TextField
+              value={draft.projectId}
+              label="Project ID"
+              onCommit={(v) => (draft.projectId = v)}
+              onCancel={() => {}}
+            />
+          </div>
+        {/if}
 
         <div class="field">
           <span class="field-label">Default model <span class="opt">(optional)</span></span>
@@ -491,6 +507,9 @@
                       mode: draft.mode,
                       baseUrl: draft.baseUrl || undefined,
                       region: draft.region || undefined,
+                      // gate on needsProjectId (same as save) so a stale projectId from a
+                      // previous vertex draft can't ride along on a non-vertex probe.
+                      projectId: needsProjectId && draft.projectId.trim() ? draft.projectId.trim() : undefined,
                     },
                     'draft',
                   )}

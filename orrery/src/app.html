@@ -15,11 +15,16 @@
       (function () {
         try {
           var raw = localStorage.getItem('orrery.settings');
-          var theme = raw ? (JSON.parse(raw).appearance || {}).theme : 'dark';
+          var appearance = raw ? JSON.parse(raw).appearance || {} : {};
+          var theme = appearance.theme || 'dark';
           if (theme === 'system') {
             theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           }
           document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+          // density before first paint too, so compact chrome doesn't reflow (WS-A)
+          if (appearance.density === 'compact') {
+            document.documentElement.dataset.density = 'compact';
+          }
         } catch (e) {
           document.documentElement.dataset.theme = 'dark';
         }

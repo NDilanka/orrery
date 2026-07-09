@@ -167,10 +167,15 @@
    that rule rather than staying put — freeze the lift/press displacement itself so a
    reduced-motion user never sees the button move at all, only (optionally) the shadow. */
 @media (prefers-reduced-motion: reduce) {
-  .btn:hover:not(:disabled),
-  .btn:active:not(:disabled) {
+  :root:not([data-motion='full']) .btn:hover:not(:disabled),
+  :root:not([data-motion='full']) .btn:active:not(:disabled) {
     transform: none;
   }
+}
+/* mirrors the media block above, for the user-forced reduced-motion setting */
+:root[data-motion='reduced'] .btn:hover:not(:disabled),
+:root[data-motion='reduced'] .btn:active:not(:disabled) {
+  transform: none;
 }
 
 /* -primary — the monochrome inversion: solid bright fill, dark text. The strongest CTA in

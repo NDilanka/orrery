@@ -344,8 +344,10 @@
     50% { opacity: 0.4; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .dot.live { animation: none; }
+    :global(:root:not([data-motion='full'])) .dot.live { animation: none; }
   }
+  /* mirrors the media block above, for the user-forced reduced-motion setting */
+  :global(:root[data-motion='reduced']) .dot.live { animation: none; }
   /* inline legend key */
   .key {
     display: inline-flex;

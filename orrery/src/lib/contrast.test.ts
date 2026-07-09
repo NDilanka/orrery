@@ -23,12 +23,29 @@ const rootBlockMatch = css.match(/:root\s*{([\s\S]*?)\n}/);
 if (!rootBlockMatch) throw new Error('tokens.css: could not locate :root block');
 const rootBlock = rootBlockMatch[1];
 
-const rawTokens: Record<string, string> = {};
-const tokenRe = /--([\w-]+):\s*([^;]+);/g;
-let tm: RegExpExecArray | null;
-while ((tm = tokenRe.exec(rootBlock))) {
-  rawTokens['--' + tm[1]] = tm[2].trim();
+// parse a block body's `--name: value;` declarations into a flat map.
+function parseDecls(block: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /--([\w-]+):\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(block))) out['--' + m[1]] = m[2].trim();
+  return out;
 }
+
+const rawTokens: Record<string, string> = parseDecls(rootBlock);
+
+// ── LIGHT theme overlay (:root[data-theme='light']) ────────────────────────────────────────
+// tokens.css also carries :root[data-motion='reduced'] and :root[data-density='compact']
+// blocks — this selects the THEME block specifically by its attribute selector (not "the second
+// :root", which those other blocks would break). The bare `:root {` match above is unaffected:
+// its `:root\s*{` cannot match a `:root[...]` selector, so the dark base parse stays exact.
+const lightBlockMatch = css.match(/:root\[data-theme=['"]light['"]\]\s*{([\s\S]*?)\n}/);
+if (!lightBlockMatch) throw new Error("tokens.css: could not locate :root[data-theme='light'] block");
+// LAYERED: the light theme only OVERRIDES a subset of tokens; every var() the light block
+// doesn't redefine (e.g. --surface-panel: var(--n2), --text-primary: var(--em-hi)) must still
+// resolve — through the light-overridden --n2/--em-hi. So merge the dark base with the light
+// overlay: light wins where present, dark fills the rest.
+const lightTokens: Record<string, string> = { ...rawTokens, ...parseDecls(lightBlockMatch[1]) };
 
 // ── oklch -> linear-sRGB -> gamma-encoded sRGB (Björn Ottosson's OKLab matrices) ────────────
 function oklchToRgb(L: number, C: number, H: number): { r: number; g: number; b: number } {
@@ -92,12 +109,12 @@ function parseLiteral(str: string): RGBA {
   throw new Error(`contrast.test.ts: unparseable color literal "${str}"`);
 }
 
-function resolveToken(name: string, depth = 0): RGBA {
+function resolveToken(name: string, tokens: Record<string, string> = rawTokens, depth = 0): RGBA {
   if (depth > 10) throw new Error(`contrast.test.ts: var() cycle resolving ${name}`);
-  const raw = rawTokens[name];
+  const raw = tokens[name];
   if (raw === undefined) throw new Error(`contrast.test.ts: unknown token ${name}`);
   const varMatch = raw.match(/^var\(\s*(--[\w-]+)\s*\)$/);
-  if (varMatch) return resolveToken(varMatch[1], depth + 1);
+  if (varMatch) return resolveToken(varMatch[1], tokens, depth + 1);
   return parseLiteral(raw);
 }
 
@@ -120,10 +137,11 @@ function relativeLuminance({ r, g, b }: RGBA): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
-/** Contrast ratio of `fgName` composited over `bgName`'s opaque surface. */
-function contrast(fgName: string, bgName: string): number {
-  const bg = resolveToken(bgName);
-  const fg = flattenOver(resolveToken(fgName), bg);
+/** Contrast ratio of `fgName` composited over `bgName`'s opaque surface, in a token map
+ *  (defaults to the dark-theme :root map; pass `lightTokens` for the light-theme layer). */
+function contrast(fgName: string, bgName: string, tokens: Record<string, string> = rawTokens): number {
+  const bg = resolveToken(bgName, tokens);
+  const fg = flattenOver(resolveToken(fgName, tokens), bg);
   const L1 = relativeLuminance(fg);
   const L2 = relativeLuminance(bg);
   const lighter = Math.max(L1, L2);
@@ -222,6 +240,61 @@ describe('contrast audit (tokens.css, docs/ui-modernization-plan.md §M3.3)', ()
       expect(focusRatio, `--border-focus on ${bg} = ${focusRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
       // --border-focus is a bare alias of --em-hi (tokens.css) — same resolved color, so
       // both must report identical ratios.
+      expect(emHiRatio).toBeCloseTo(focusRatio, 6);
+    },
+  );
+});
+
+// ── LIGHT theme (:root[data-theme='light']) — the SAME WCAG bars, re-run against the layered
+// light surfaces. Dark assertions above are untouched; a light pair that genuinely fails a bar
+// is reported (not silenced) — tokens.css is owned elsewhere, so this test can only flag it. ──
+describe('contrast audit — LIGHT theme (:root[data-theme=light], layered over dark base)', () => {
+  it.each(BODY_TEXT_TOKENS.flatMap((fg) => BACKGROUNDS.map((bg) => [fg, bg] as const)))(
+    '%s on %s is >=4.5:1 (WCAG AA text)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg, lightTokens);
+      expect(ratio, `${fg} on ${bg} (light) = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(BACKGROUNDS.map((bg) => [bg] as const))(
+    '--text-faint on %s is >=3:1 (documented decorative-only exception)',
+    (bg) => {
+      const ratio = contrast('--text-faint', bg, lightTokens);
+      expect(ratio, `--text-faint on ${bg} (light) = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it.each(EM_HI_MID_TOKENS.flatMap((fg) => BACKGROUNDS.map((bg) => [fg, bg] as const)))(
+    '%s on %s is >=4.5:1 (WCAG AA text)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg, lightTokens);
+      expect(ratio, `${fg} on ${bg} (light) = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each((['--n1', '--n2'] as const).map((bg) => ['--em-low', bg] as const))(
+    '%s on %s is >=4.5:1 (WCAG AA text — --em-low backs --text-meta label text)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg, lightTokens);
+      expect(ratio, `${fg} on ${bg} (light) = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(STATUS_CORE_TOKENS.flatMap((fg) => (['--n1', '--n2'] as const).map((bg) => [fg, bg] as const)))(
+    '%s on %s is >=3:1 (WCAG UI component)',
+    (fg, bg) => {
+      const ratio = contrast(fg, bg, lightTokens);
+      expect(ratio, `${fg} on ${bg} (light) = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it.each((['--n1', '--n2'] as const).map((bg) => [bg] as const))(
+    '--border-focus (== --em-hi) on %s is >=3:1 (WCAG focus-indicator UI component)',
+    (bg) => {
+      const focusRatio = contrast('--border-focus', bg, lightTokens);
+      const emHiRatio = contrast('--em-hi', bg, lightTokens);
+      expect(focusRatio, `--border-focus on ${bg} (light) = ${focusRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
       expect(emHiRatio).toBeCloseTo(focusRatio, 6);
     },
   );

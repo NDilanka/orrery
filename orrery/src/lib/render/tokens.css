@@ -354,11 +354,40 @@ body {
   box-shadow: 0 0 0 2px var(--n1), 0 0 0 4px var(--border-focus);
 }
 
-/* reduced-motion is first-class (plan §3 accessibility) */
+/* reduced-motion is first-class (plan §3 accessibility). The OS prefers-reduced-motion
+   is honored by default, but a user who explicitly picks 'full' (settingsStore stamps
+   data-motion='full' on <html>) opts OUT of the freeze despite the OS pref — hence the
+   :not() scope. */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  :root:not([data-motion='full']) * {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* an explicit user 'reduced' choice (data-motion='reduced') freezes motion
+   unconditionally, regardless of the OS prefers-reduced-motion pref. */
+:root[data-motion='reduced'] * {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COMPACT DENSITY (WS-A) — applies only under <html data-density='compact'>,
+   which settingsStore stamps from appearance.density (and app.html's FOUC script
+   sets before first paint). CHROME-ONLY: the canvas reads no --space-* / inset
+   tokens, so tightening the spacing scale + gutters shrinks only panels/HUD/strip.
+   The comfortable default leaves these at their :root values above. Tasteful ~0.75x
+   step-down — compact, not cramped. */
+:root[data-density='compact'] {
+  --space-1: 3px;
+  --space-2: 6px;
+  --space-3: 9px;
+  --space-4: 12px;
+  --space-5: 18px;
+  --space-6: 24px;
+  --page-inset: 12px; /* --chrome-inset aliases this, so the gutter tightens too */
+  --strip-h: 100px; /* cost/quota strip height */
 }

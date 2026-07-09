@@ -16,6 +16,7 @@
 // read here too so every renderer can consult one source.
 
 import { browser } from '$app/environment';
+import { settingsStore } from './settings.svelte';
 
 export type ViewMode = 'observatory' | 'planetarium' | 'rewind';
 
@@ -26,7 +27,17 @@ class UiStore {
   mode = $state<ViewMode>('observatory');
   /** viewport width (px); 0 until measured on the client. */
   vw = $state(0);
-  reducedMotion = $state(false);
+  /**
+   * Single source of truth for "should animation freeze": delegates to the
+   * settings store's resolver (appearance.motion: 'system' honors the OS
+   * prefers-reduced-motion, 'full'/'reduced' force the choice). Kept as a
+   * getter (was a local $state mirror of matchMedia) so a user override in the
+   * settings popup is honored everywhere the 11 consumers read it — reactivity
+   * flows through settingsStore's own $state.
+   */
+  get reducedMotion(): boolean {
+    return settingsStore.reducedMotion;
+  }
   /** the user explicitly chose a mode (so we don't keep auto-forcing it). */
   private userPicked = false;
 
@@ -59,9 +70,9 @@ class UiStore {
   }
 
   /**
-   * Start measuring the viewport + reduced-motion. Returns a teardown fn. On a
-   * phone the first measurement makes Planetarium the implicit default (unless
-   * the user has already picked a mode this session).
+   * Start measuring the viewport. Returns a teardown fn. On a phone the first
+   * measurement makes Planetarium the implicit default (unless the user has
+   * already picked a mode this session). Reduced-motion is owned by settingsStore.
    */
   init(): () => void {
     if (!browser) return () => {};
@@ -75,14 +86,11 @@ class UiStore {
     measure();
     window.addEventListener('resize', measure, { passive: true });
 
-    const rm = window.matchMedia('(prefers-reduced-motion: reduce)');
-    this.reducedMotion = rm.matches;
-    const onRm = () => (this.reducedMotion = rm.matches);
-    rm.addEventListener?.('change', onRm);
+    // reduced-motion is no longer wired here — uiStore.reducedMotion delegates to
+    // settingsStore, which owns the prefers-reduced-motion listener + user override.
 
     return () => {
       window.removeEventListener('resize', measure);
-      rm.removeEventListener?.('change', onRm);
     };
   }
 }

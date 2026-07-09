@@ -7,7 +7,7 @@ import type { Delta, RawEvent, RunState } from '../types';
 import { initialState } from '../reduce';
 import { logStore } from '../stores/log.svelte';
 import { activityStore } from '../stores/activity.svelte';
-import { DEFAULT_LOOPS_DIR } from '../paths';
+import { getLoopsDir } from '../paths';
 import type { Transport, TransportOpts } from './index';
 
 export interface TauriConfig {
@@ -101,7 +101,7 @@ export class TauriTransport implements Transport {
   async control(action: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     const loopId = this.cfg.loopId;
-    const loopsDir = this.cfg.loopsDir ?? DEFAULT_LOOPS_DIR;
+    const loopsDir = this.cfg.loopsDir ?? getLoopsDir();
     switch (action) {
       case 'start':
         await invoke('start_loop', { loopId, loopsDir });
@@ -134,7 +134,7 @@ export class TauriTransport implements Transport {
   async answer(qid: string, text: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     const loopId = this.cfg.loopId;
-    const loopsDir = this.cfg.loopsDir ?? DEFAULT_LOOPS_DIR;
+    const loopsDir = this.cfg.loopsDir ?? getLoopsDir();
     await invoke('answer_question', { loopId, loopsDir, qid, text });
   }
 }

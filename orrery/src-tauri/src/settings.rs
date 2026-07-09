@@ -288,13 +288,14 @@ fn provider_rule(provider: &str, runner: &str, mode: &str) -> Option<&'static Ma
 }
 
 /// The VALUE source for one named inject env var. The matrix only NAMES env vars; this maps each
-/// name to where its value comes from — the keychain secret, the instance's baseUrl/region, or a
-/// literal cloud flag. Returns `None` (skip the var) when the source is empty/absent — e.g.
-/// `ANTHROPIC_VERTEX_PROJECT_ID`, which has no field in the v1 instance model.
+/// name to where its value comes from — the keychain secret, the instance's baseUrl/region/
+/// projectId, or a literal cloud flag. Returns `None` (skip the var) when the source is
+/// empty/absent — e.g. `ANTHROPIC_VERTEX_PROJECT_ID` when the instance carries no project id.
 fn value_for(
     name: &str,
     base_url: Option<&str>,
     region: Option<&str>,
+    project_id: Option<&str>,
     secret: Option<&str>,
 ) -> Option<String> {
     let nonempty = |o: Option<&str>| {
@@ -308,6 +309,7 @@ fn value_for(
         | "GEMINI_API_KEY" | "ANTHROPIC_AUTH_TOKEN" => nonempty(secret),
         "ANTHROPIC_BASE_URL" | "OPENAI_BASE_URL" | "OLLAMA_API_BASE" => nonempty(base_url),
         "AWS_REGION" | "CLOUD_ML_REGION" => nonempty(region),
+        "ANTHROPIC_VERTEX_PROJECT_ID" => nonempty(project_id),
         "CLAUDE_CODE_USE_BEDROCK" | "CLAUDE_CODE_USE_VERTEX" => Some("1".to_string()),
         _ => None,
     }
@@ -328,6 +330,7 @@ fn build_byok_env(
     mode: &str,
     base_url: Option<&str>,
     region: Option<&str>,
+    project_id: Option<&str>,
     secret_lookup: impl Fn(&str) -> Option<String>,
 ) -> (Vec<(String, String)>, Vec<String>) {
     let rule = match provider_rule(provider, runner, mode) {
@@ -343,7 +346,7 @@ fn build_byok_env(
     };
     let mut inject: Vec<(String, String)> = Vec::new();
     for name in rule.inject {
-        if let Some(val) = value_for(name, base_url, region, secret.as_deref()) {
+        if let Some(val) = value_for(name, base_url, region, project_id, secret.as_deref()) {
             inject.push(((*name).to_string(), val));
         }
     }
@@ -351,30 +354,31 @@ fn build_byok_env(
     (inject, scrub)
 }
 
-/// Extract the default `ProviderInstance` object from a parsed settings tree, if one is selected.
-fn default_instance(settings: &Value) -> Option<Value> {
-    let ai = settings.get("ai")?;
-    let default_id = ai.get("defaultInstanceId")?.as_str()?;
-    let instances = ai.get("instances")?.as_array()?;
-    instances
+/// Read a pointer id (`ai.defaultInstanceId` / `ai.fallbackInstanceId`) from a parsed settings tree.
+fn instance_pointer(settings: &Value, key: &str) -> Option<String> {
+    settings
+        .get("ai")?
+        .get(key)?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// Find a `ProviderInstance` object in `ai.instances` by its id.
+fn instance_by_id(settings: &Value, id: &str) -> Option<Value> {
+    settings
+        .get("ai")?
+        .get("instances")?
+        .as_array()?
         .iter()
-        .find(|i| i.get("id").and_then(|v| v.as_str()) == Some(default_id))
+        .find(|i| i.get("id").and_then(|v| v.as_str()) == Some(id))
         .cloned()
 }
 
-/// Resolve the spawn-time BYOK env from `settings.json`'s DEFAULT instance — callable WITHOUT an
-/// `AppHandle` (reads the config-dir OnceLock). Returns `(inject pairs, scrub keys)`; empty/empty
-/// when there is no default instance or the combo is unsupported (fall back to inherited env =
-/// today's behavior). NEVER logs a secret. `control::spawn_detached` applies the result.
-pub fn byok_env() -> (Vec<(String, String)>, Vec<String>) {
-    let settings = match read_settings_value() {
-        Some(v) => v,
-        None => return (Vec::new(), Vec::new()),
-    };
-    let inst = match default_instance(&settings) {
-        Some(i) => i,
-        None => return (Vec::new(), Vec::new()),
-    };
+/// Build the BYOK env for one resolved instance `Value` given a secret lookup.
+fn byok_env_for_instance(
+    inst: &Value,
+    secret_lookup: &impl Fn(&str) -> Option<String>,
+) -> (Vec<(String, String)>, Vec<String>) {
     let field = |k: &str| inst.get(k).and_then(|v| v.as_str());
     build_byok_env(
         field("provider").unwrap_or(""),
@@ -382,8 +386,41 @@ pub fn byok_env() -> (Vec<(String, String)>, Vec<String>) {
         field("mode").unwrap_or(""),
         field("baseUrl"),
         field("region"),
-        keychain_get,
+        field("projectId"),
+        secret_lookup,
     )
+}
+
+/// Pure resolver (testable without the config-dir OnceLock or a real keychain): given a parsed
+/// settings tree and a secret lookup, try the DEFAULT instance first, then the FALLBACK instance.
+/// An env with at least one inject or scrub key is a real result; empty/empty is "no credentials
+/// applied" and triggers the fallthrough (a subscription's scrub-only result still counts as real).
+fn byok_env_from(
+    settings: &Value,
+    secret_lookup: impl Fn(&str) -> Option<String>,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let resolved = |key: &str| -> Option<(Vec<(String, String)>, Vec<String>)> {
+        instance_pointer(settings, key)
+            .and_then(|id| instance_by_id(settings, &id))
+            .map(|inst| byok_env_for_instance(&inst, &secret_lookup))
+            .filter(|(inject, scrub)| !inject.is_empty() || !scrub.is_empty())
+    };
+    resolved("defaultInstanceId")
+        .or_else(|| resolved("fallbackInstanceId"))
+        .unwrap_or_else(|| (Vec::new(), Vec::new()))
+}
+
+/// Resolve the spawn-time BYOK env from `settings.json` — callable WITHOUT an `AppHandle` (reads the
+/// config-dir OnceLock). Tries the DEFAULT instance first; when it yields no env (missing instance,
+/// unsupported combo, or a secret-backed mode with no stored secret → empty/empty), falls through to
+/// the FALLBACK instance before giving up. Returns `(inject pairs, scrub keys)`; empty/empty means
+/// inherit today's env. NEVER logs a secret. `control::spawn_detached` applies the result.
+pub fn byok_env() -> (Vec<(String, String)>, Vec<String>) {
+    let settings = match read_settings_value() {
+        Some(v) => v,
+        None => return (Vec::new(), Vec::new()),
+    };
+    byok_env_from(&settings, keychain_get)
 }
 
 // ---------------------------------------------------------------------------
@@ -718,7 +755,7 @@ mod tests {
     fn subscription_injects_nothing_but_scrubs_the_keys() {
         // anthropic/claude/subscription: no secret needed; empty inject, scrub the three keys.
         let (inject, scrub) =
-            build_byok_env("anthropic", "claude", "subscription", None, None, no_secret);
+            build_byok_env("anthropic", "claude", "subscription", None, None, None, no_secret);
         assert!(inject.is_empty(), "subscription injects nothing: {inject:?}");
         assert_eq!(
             scrub_set(&scrub),
@@ -734,6 +771,7 @@ mod tests {
             "apiKey",
             None,
             None,
+            None,
             with_secret("sk-test"),
         );
         assert_eq!(inject_set(&inject), s(&[("ANTHROPIC_API_KEY", "sk-test")]));
@@ -747,6 +785,7 @@ mod tests {
             "claude",
             "gateway",
             Some("https://openrouter.ai/api/v1"),
+            None,
             None,
             with_secret("or-key"),
         );
@@ -769,6 +808,7 @@ mod tests {
             "cloud",
             None,
             Some("us-east-1"),
+            None,
             with_secret("aws-creds"),
         );
         assert_eq!(
@@ -782,7 +822,7 @@ mod tests {
     fn unsupported_combo_is_empty_and_empty() {
         // anthropic/codex/apiKey is not in the matrix → inherit env (no inject, no scrub).
         let (inject, scrub) =
-            build_byok_env("anthropic", "codex", "apiKey", None, None, with_secret("x"));
+            build_byok_env("anthropic", "codex", "apiKey", None, None, None, with_secret("x"));
         assert!(inject.is_empty() && scrub.is_empty(), "{inject:?} / {scrub:?}");
     }
 
@@ -790,26 +830,104 @@ mod tests {
     fn secret_backed_mode_without_secret_falls_back_to_inherited_env() {
         // Supported combo, but no stored secret → empty/empty rather than scrub-with-no-key.
         let (inject, scrub) =
-            build_byok_env("anthropic", "claude", "apiKey", None, None, no_secret);
+            build_byok_env("anthropic", "claude", "apiKey", None, None, None, no_secret);
         assert!(inject.is_empty() && scrub.is_empty(), "{inject:?} / {scrub:?}");
     }
 
     #[test]
-    fn vertex_skips_project_id_with_no_source_but_injects_flag_and_region() {
-        // ANTHROPIC_VERTEX_PROJECT_ID has no field in the v1 instance model → skipped, not
-        // injected empty. The flag + region still apply.
+    fn vertex_injects_project_id_when_present_else_skips_it() {
+        // With a projectId, ANTHROPIC_VERTEX_PROJECT_ID is injected alongside the flag + region.
         let (inject, _scrub) = build_byok_env(
             "vertex",
             "claude",
             "cloud",
             None,
             Some("us-central1"),
+            Some("my-gcp-project"),
             with_secret("gcp-creds"),
         );
         assert_eq!(
             inject_set(&inject),
+            s(&[
+                ("CLAUDE_CODE_USE_VERTEX", "1"),
+                ("CLOUD_ML_REGION", "us-central1"),
+                ("ANTHROPIC_VERTEX_PROJECT_ID", "my-gcp-project"),
+            ]),
+        );
+
+        // Without a projectId (or whitespace-only), the var is skipped — not injected empty.
+        let (inject_none, _) = build_byok_env(
+            "vertex",
+            "claude",
+            "cloud",
+            None,
+            Some("us-central1"),
+            Some("  "),
+            with_secret("gcp-creds"),
+        );
+        assert_eq!(
+            inject_set(&inject_none),
             s(&[("CLAUDE_CODE_USE_VERTEX", "1"), ("CLOUD_ML_REGION", "us-central1")]),
         );
+    }
+
+    #[test]
+    fn byok_env_falls_back_when_default_has_no_secret() {
+        // Default = anthropic/claude/apiKey (needs orrery/anthropic/api-key, NOT stored);
+        // fallback = openai/codex/apiKey (needs orrery/openai/api-key, stored).
+        let settings: Value = serde_json::json!({
+            "version": 1,
+            "ai": {
+                "defaultInstanceId": "d",
+                "fallbackInstanceId": "f",
+                "instances": [
+                    { "id": "d", "provider": "anthropic", "runner": "claude", "mode": "apiKey" },
+                    { "id": "f", "provider": "openai", "runner": "codex", "mode": "apiKey" }
+                ]
+            }
+        });
+        // Secret exists only for the fallback's account.
+        let lookup = |acct: &str| -> Option<String> {
+            (acct == "orrery/openai/api-key").then(|| "codex-key".to_string())
+        };
+        let (inject, scrub) = byok_env_from(&settings, lookup);
+        assert_eq!(inject_set(&inject), s(&[("CODEX_API_KEY", "codex-key")]));
+        assert!(scrub.is_empty(), "codex apiKey scrubs nothing: {scrub:?}");
+    }
+
+    #[test]
+    fn byok_env_prefers_default_when_it_has_a_secret() {
+        // Both instances have their secret stored → the DEFAULT wins, fallback is never consulted.
+        let settings: Value = serde_json::json!({
+            "version": 1,
+            "ai": {
+                "defaultInstanceId": "d",
+                "fallbackInstanceId": "f",
+                "instances": [
+                    { "id": "d", "provider": "anthropic", "runner": "claude", "mode": "apiKey" },
+                    { "id": "f", "provider": "openai", "runner": "codex", "mode": "apiKey" }
+                ]
+            }
+        });
+        let (inject, _scrub) = byok_env_from(&settings, with_secret("secret"));
+        assert_eq!(inject_set(&inject), s(&[("ANTHROPIC_API_KEY", "secret")]));
+    }
+
+    #[test]
+    fn byok_env_empty_when_neither_default_nor_fallback_has_a_secret() {
+        let settings: Value = serde_json::json!({
+            "version": 1,
+            "ai": {
+                "defaultInstanceId": "d",
+                "fallbackInstanceId": "f",
+                "instances": [
+                    { "id": "d", "provider": "anthropic", "runner": "claude", "mode": "apiKey" },
+                    { "id": "f", "provider": "openai", "runner": "codex", "mode": "apiKey" }
+                ]
+            }
+        });
+        let (inject, scrub) = byok_env_from(&settings, no_secret);
+        assert!(inject.is_empty() && scrub.is_empty(), "{inject:?} / {scrub:?}");
     }
 
     #[test]
