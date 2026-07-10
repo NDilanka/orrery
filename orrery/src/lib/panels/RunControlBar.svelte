@@ -129,6 +129,19 @@
     }
   }
 
+  // ✦ Create & start: consume the one-shot intent the Tuning Console parked on the session
+  // store, but only once a transport has ACTUALLY mounted (the System tree renders before
+  // mountLoop resolves, so at first render there is nothing to control yet). Always consume —
+  // a replay mount must drop the intent, not save it for a later System — and fire through
+  // fire('start') so a failed auto-start gets the same pending/slow/stalled/error treatment
+  // as a hand-clicked ✦ Start.
+  $effect(() => {
+    if (!sessionStore.autostartPending || !sessionStore.transportKind) return;
+    const live = sessionStore.transportKind !== 'replay';
+    sessionStore.consumeAutostart();
+    if (live && !running && !banked && !failed && !pending) void fire('start');
+  });
+
   onDestroy(clearTimers);
 </script>
 
