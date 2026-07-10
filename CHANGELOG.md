@@ -4,7 +4,31 @@ All notable changes to Orrery are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/). While pre-1.0, expect breaking
 changes between minor versions.
 
-## [Unreleased]
+## [0.4.0] — 2026-07-10
+
+### Added — engine hardening from a dogfood run
+- **`gate.lockInfra`** (opt-in): extends the test hash-lock over test *infrastructure*
+  (`conftest.py`, `vitest.config`, etc.) so the suite can't be neutered from outside the
+  test files.
+- **`stop.tokenCeiling`** (opt-in): a token-budget stop for subscription runs where the
+  dollar ceiling doesn't bind.
+- The anti-false-green **verifier now sees the gate's real result** alongside the diff,
+  so it can't be talked into a pass the gate contradicts.
+- **Config validation** covers every engine sub-block — unknown keys warn instead of
+  being silently ignored.
+- `python -m orrery_loop` propagates the loop's real exit code (parity with the `loop`
+  console script).
+
+### Added — create loops without hand-writing loop.json
+- **Recipe gallery**: ✦ new loop opens a redesigned Tuning Console — pick from four
+  generic blueprints (Fix until green, Build + verify, Explore with me, Blank) or two
+  external recipes that drive one of your own repos: **Work a backlog (BMAD)**
+  (`loop-bmad`) and **QA a web app** (`loop-qa`). BMAD and QA loops no longer need
+  hand-authoring.
+- **Run anywhere**: a generic loop takes an optional *where it runs* directory and emits
+  `--cwd <path>`, so it can drive any repo on disk (blank = its own `loops/<id>/`).
+- **✦ Create & start**: one click creates the loop, flies into its System, and ignites
+  it (create-only remains the default; failures surface in the control bar).
 
 ### Added — app settings (Orrery's first)
 - **Settings popup**: a gear / `Ctrl+,` / command-palette-reachable modal with six
@@ -32,7 +56,9 @@ changes between minor versions.
 - **Notifications**: an `alertOn` filter over done / stopped alert kinds, an optional
   WebAudio chime, and a quota-resume toast — all settings-gated.
 - **Safety**: `confirmDestructive` now gates both Restart-fresh and a new roster ✕
-  delete-loop (`cosmosStore.deleteLoop` → Rust `delete_loop`).
+  delete-loop (`cosmosStore.deleteLoop` → Rust `delete_loop`). Deleting a loop that is
+  currently RUNNING stops its engine process tree first, so the confirmed delete can't
+  leave an orphaned run or a half-removed directory.
 
 ## [0.3.0] — 2026-07-05
 
@@ -232,6 +258,7 @@ First public release: a cross-platform Python loop engine plus the Orrery visual
 - Cross-run lessons-memory is not yet surfaced in the visualizer (needs a new protocol event).
 - No published benchmark yet (e.g. SWE-bench) — roadmap.
 
+[0.4.0]: https://github.com/NDilanka/orrery/releases/tag/v0.4.0
 [0.3.0]: https://github.com/NDilanka/orrery/releases/tag/v0.3.0
 [0.2.0]: https://github.com/NDilanka/orrery/releases/tag/v0.2.0
 [0.1.0]: https://github.com/NDilanka/orrery/releases/tag/v0.1.0

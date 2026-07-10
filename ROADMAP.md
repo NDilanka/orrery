@@ -4,7 +4,7 @@ Orrery is a best-effort personal project that's growing into a community one.
 This roadmap is directional, not a promise — items move as reality intervenes.
 Discuss anything here in [GitHub Discussions](https://github.com/NDilanka/orrery/discussions).
 
-## Now (v0.3)
+## Now (v0.3 → v0.4)
 
 - **Prebuilt binaries** — GitHub releases with Windows/macOS/Linux installers on every
   tag, so nobody has to build from source. (`.github/workflows/release.yml`)
@@ -12,6 +12,11 @@ Discuss anything here in [GitHub Discussions](https://github.com/NDilanka/orrery
   (headless loops, no desktop app). Import package renamed to `orrery_loop` to be
   collision-proof; console-script names (`loop`, `loop-bmad`, `loop-qa`,
   `loop-supervise`, `loop-stop`) are unchanged.
+- **In-app loop authoring** *(v0.4.0)* — the Tuning Console's recipe gallery creates
+  generic, BMAD, and QA loops (external repos via `--cwd`) with one-click
+  ✦ Create & start.
+- **App settings** *(v0.4.0)* — settings popup with live persistence, a full light
+  theme, notifications, and OS-keychain-backed multi-provider BYOK.
 
 ## Next
 
@@ -25,8 +30,8 @@ Discuss anything here in [GitHub Discussions](https://github.com/NDilanka/orrery
 
 ## Later / exploring
 
-- **More loop templates** — beyond `bmad` and `webapp-qa`: issue-triage loops,
-  dependency-update loops, test-backfill loops.
+- **More gallery recipes** — beyond the built-in BMAD and QA recipes: issue-triage
+  loops, dependency-update loops, test-backfill loops.
 - **Runner breadth** — the engine already abstracts runners (Claude Code, aider,
   codex); deepen the non-Claude paths as people use them.
 - **Remote viewing polish** — the LAN control surface exists; make watching a

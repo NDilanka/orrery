@@ -27,6 +27,10 @@ also supported), and a gate command your project already has (`pytest`, `bun tes
 | `loop-stop` | cooperative safe-stop controller (request a clean stop at the next checkpoint) |
 | `loop-supervise` | restart-on-failure wrapper for any of the above (thrash-guarded; see below) |
 
+You don't have to start from the CLI: the Orrery desktop app's Tuning Console authors
+`loop`, `loop-bmad`, and `loop-qa` loops from a recipe gallery (✦ new loop) and runs them
+with live visualization — this README is the headless/hand-authored path.
+
 If the `loop` script name is shadowed on your `PATH` (another tool ships a `loop` binary, or
 the venv's `bin`/`Scripts` isn't first), run the generic loop via its module entry point
 instead — it's the same `main()` the console script calls:

@@ -7,8 +7,8 @@ it (per [`PROTOCOL.md`](PROTOCOL.md)) into a `RunState` — cost horizon, six-ph
 per-item gate state, quota-night, rest-states, run-quality metrics, and a verifier seal.
 
 This is the companion app to the loop **engine** in [`../engine`](../engine) (a Python
-package). The BMAD sprint loop is one supported adapter, not the whole app — you can author
-your own loops in the in-app Tuning Console.
+package). The BMAD sprint loop is one supported adapter, not the whole app — the in-app
+Tuning Console authors generic, BMAD, and QA loops from a recipe gallery.
 
 - **Stack:** Tauri v2 (Rust core) + SvelteKit / Svelte 5 (runes) + PixiJS v8 + uPlot. Cross-platform.
 - **Wire contract:** [`PROTOCOL.md`](PROTOCOL.md) — the single source of truth shared by the
@@ -31,11 +31,14 @@ npm run tauri build    # release bundle / installer
 Fly through **Cosmos → a System → a Body**. **✦ Ignite** starts a run (with an "igniting…"
 indicator), and **Brake** / **Reignite** stop and resume it; a **LIVE/REPLAY** badge plus a
 **live event log** show exactly what the loop is doing, and a quota limit **pauses-and-resumes**
-the run (POLAR NIGHT). **✦ ignite new loop** authors one in the Tuning Console; toggle
-**Planetarium** (ambient) or **Rewind** (scrub a replay). **Settings** (⚙ / `Ctrl+,`) tune the
-app — a full **light theme**, per-loop defaults, notifications, and multi-provider **BYOK** keys
-(stored in your OS keychain). The desktop window runs live; the browser path (`npm run dev`)
-replays the bundled fixtures in `static/fixtures/`.
+the run (POLAR NIGHT). **✦ new loop** opens the Tuning Console's recipe gallery — four generic
+blueprints plus two external recipes, **Work a backlog (BMAD)** (`loop-bmad`) and **QA a web
+app** (`loop-qa`); a generic loop can run in any repo on disk (*where it runs* → `--cwd`), and
+**✦ Create & start** ignites it in one click. Toggle **Planetarium** (ambient) or **Rewind**
+(scrub a replay). **Settings** (⚙ / `Ctrl+,`) tune the app — a full **light theme**, per-loop
+defaults, notifications, and multi-provider **BYOK** keys (stored in your OS keychain). The
+desktop window runs live; the browser path (`npm run dev`) replays the bundled fixtures in
+`static/fixtures/`.
 
 ### Browser only (no Rust, fastest to look at)
 ```bash
@@ -70,12 +73,17 @@ Two further demos — **`roman`** and **`calc`** — ship as **replay** fixtures
 are pre-recorded runs for the in-app Rewind/Planetarium, not live seeds. The **BMAD** adapter
 is supported and exercised by the demo fixture `static/fixtures/bmad-log.jsonl`.
 
+New loops don't have to be hand-authored: the Tuning Console's recipe gallery creates
+generic loops (pointable at any repo via `--cwd`) and real **BMAD** / **QA** loops
+(`loop-bmad` / `loop-qa` against one of your own repos), seeded from your Settings ▸ Loops &
+Defaults and startable in one click (**✦ Create & start**).
+
 ## Verification
 
-- **87** Rust `#[test]`s (`cargo test`) plus a **9-case cross-language reducer-parity** suite
+- **89** Rust `#[test]`s (`cargo test`) plus a **9-case cross-language reducer-parity** suite
   (`src-tauri/tests/golden_parity.rs`) that asserts the Rust reducer matches committed
   `RunState` goldens.
-- **233** Vitest tests across 12 files under `src/lib` — including `reduce.golden.test.ts`
+- **236** Vitest tests across 12 files under `src/lib` — including `reduce.golden.test.ts`
   (the TS reducer asserts the **same** goldens, so any drift between the Rust and TS reducers
   fails a test), the light-theme WCAG-contrast suites, and the new alerts / blueprints /
   settings suites.
