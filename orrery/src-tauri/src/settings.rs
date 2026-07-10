@@ -56,10 +56,22 @@ fn settings_path() -> Option<PathBuf> {
 
 /// Read + parse `settings.json`. `None` when the config dir is unknown, the file is absent, or
 /// the JSON is malformed — every caller treats that as "no settings" (fall back to defaults).
+///
+/// tauri-plugin-store's `save()` is a plain `fs::write` (NOT temp+rename), so a read can race a
+/// concurrent save and catch a half-written file. One short retry closes that window; a file
+/// that STAYS malformed (e.g. crash mid-write) still falls back to "no settings".
 fn read_settings_value() -> Option<Value> {
     let path = settings_path()?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str::<Value>(&text).ok()
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(75));
+        }
+        let text = std::fs::read_to_string(&path).ok()?;
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            return Some(v);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +153,11 @@ fn keychain_get(account: &str) -> Option<String> {
 
 #[tauri::command]
 pub fn keychain_set(account: String, secret: String) -> Result<(), String> {
+    // An empty secret would pass build_byok_env's "secret is stored" gate yet inject nothing
+    // (value_for filters empty values), leaving a gateway scrubbed with no credentials at all.
+    if secret.trim().is_empty() {
+        return Err("secret must not be empty".to_string());
+    }
     let entry = keyring::Entry::new(KEYRING_SERVICE, &account).map_err(|e| e.to_string())?;
     // NOTE: never log `secret`.
     entry.set_password(&secret).map_err(|e| e.to_string())
@@ -254,13 +271,17 @@ const PROVIDER_MATRIX: &[MatrixEntry] = &[
         scrub: &[],
         keychain_account: Some("orrery/openrouter/api-key"),
     },
+    // Cloud modes carry NO keychain account: bedrock/vertex authenticate via the ambient
+    // AWS/GCP credential chain (aws configure / gcloud ADC), which the child inherits. The
+    // matrix only injects the routing flags + region/project, so a stored secret would be a
+    // dead gate that silently disabled the mode for ambient-auth users.
     MatrixEntry {
         provider: "bedrock",
         runner: "claude",
         mode: "cloud",
         inject: &["CLAUDE_CODE_USE_BEDROCK", "AWS_REGION"],
         scrub: &["ANTHROPIC_API_KEY"],
-        keychain_account: Some("orrery/bedrock/creds"),
+        keychain_account: None,
     },
     MatrixEntry {
         provider: "vertex",
@@ -268,7 +289,7 @@ const PROVIDER_MATRIX: &[MatrixEntry] = &[
         mode: "cloud",
         inject: &["CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID"],
         scrub: &["ANTHROPIC_API_KEY"],
-        keychain_account: Some("orrery/vertex/creds"),
+        keychain_account: None,
     },
     MatrixEntry {
         provider: "local",
@@ -315,14 +336,18 @@ fn value_for(
     }
 }
 
+/// `(inject pairs, scrub keys)` — the spawn-time env delta `control::spawn_detached` applies.
+type EnvDelta = (Vec<(String, String)>, Vec<String>);
+
 /// Pure BYOK env builder (the auditable core, unit-tested): given a resolved instance and a secret
 /// lookup, return `(inject pairs, scrub keys)`.
 ///
-/// Fallback rules (all map to `([], [])` = inherit today's env):
-///   * unsupported (provider, runner, mode);
-///   * a secret-backed mode (`keychainAccount = Some`) whose secret is NOT stored — we would
-///     otherwise scrub the inherited keys and inject nothing, leaving the runner with no
-///     credentials at all, which is strictly worse than doing nothing.
+/// Fallback rules — each maps to `([], [])`, i.e. inherit today's env:
+///   * an unsupported (provider, runner, mode) triple;
+///   * a secret-backed mode (`keychainAccount = Some`) whose secret is NOT stored — scrubbing
+///     the inherited keys while injecting nothing would leave the runner with no credentials
+///     at all, strictly worse than doing nothing.
+///
 /// No-secret modes (subscription/cloud/local) always apply their inject + scrub.
 fn build_byok_env(
     provider: &str,
@@ -332,7 +357,7 @@ fn build_byok_env(
     region: Option<&str>,
     project_id: Option<&str>,
     secret_lookup: impl Fn(&str) -> Option<String>,
-) -> (Vec<(String, String)>, Vec<String>) {
+) -> EnvDelta {
     let rule = match provider_rule(provider, runner, mode) {
         Some(r) => r,
         None => return (Vec::new(), Vec::new()),
@@ -378,7 +403,7 @@ fn instance_by_id(settings: &Value, id: &str) -> Option<Value> {
 fn byok_env_for_instance(
     inst: &Value,
     secret_lookup: &impl Fn(&str) -> Option<String>,
-) -> (Vec<(String, String)>, Vec<String>) {
+) -> EnvDelta {
     let field = |k: &str| inst.get(k).and_then(|v| v.as_str());
     build_byok_env(
         field("provider").unwrap_or(""),
@@ -395,11 +420,8 @@ fn byok_env_for_instance(
 /// settings tree and a secret lookup, try the DEFAULT instance first, then the FALLBACK instance.
 /// An env with at least one inject or scrub key is a real result; empty/empty is "no credentials
 /// applied" and triggers the fallthrough (a subscription's scrub-only result still counts as real).
-fn byok_env_from(
-    settings: &Value,
-    secret_lookup: impl Fn(&str) -> Option<String>,
-) -> (Vec<(String, String)>, Vec<String>) {
-    let resolved = |key: &str| -> Option<(Vec<(String, String)>, Vec<String>)> {
+fn byok_env_from(settings: &Value, secret_lookup: impl Fn(&str) -> Option<String>) -> EnvDelta {
+    let resolved = |key: &str| -> Option<EnvDelta> {
         instance_pointer(settings, key)
             .and_then(|id| instance_by_id(settings, &id))
             .map(|inst| byok_env_for_instance(&inst, &secret_lookup))
@@ -415,7 +437,7 @@ fn byok_env_from(
 /// unsupported combo, or a secret-backed mode with no stored secret → empty/empty), falls through to
 /// the FALLBACK instance before giving up. Returns `(inject pairs, scrub keys)`; empty/empty means
 /// inherit today's env. NEVER logs a secret. `control::spawn_detached` applies the result.
-pub fn byok_env() -> (Vec<(String, String)>, Vec<String>) {
+pub fn byok_env() -> EnvDelta {
     let settings = match read_settings_value() {
         Some(v) => v,
         None => return (Vec::new(), Vec::new()),
@@ -519,14 +541,25 @@ pub fn byok_auth_status(instance: Value) -> ByokAuthStatus {
 fn strip_secrets(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            // Mirrors SECRET_FIELDS in settingsIo.ts — this list is the ONLY stripper on the
+            // export fallback path (contents: None), so keep it a superset, never a subset.
             const DENY: &[&str] = &[
+                "key",
                 "secret",
                 "apikey",
                 "api_key",
                 "password",
+                "passwd",
+                "auth",
                 "token",
                 "authtoken",
                 "auth_token",
+                "credential",
+                "credentials",
+                "accesskey",
+                "access_key",
+                "privatekey",
+                "private_key",
             ];
             map.retain(|k, _| !DENY.contains(&k.to_lowercase().as_str()));
             for v in map.values_mut() {
@@ -643,8 +676,9 @@ pub fn watch_settings(channel: tauri::ipc::Channel<Value>) -> Result<(), String>
 
     let join = std::thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
-        // 200ms debounce — the store writes atomically (temp + rename); we watch the DIR (not the
-        // file) so a rename-in-place still fires. The JS side also debounces its merge.
+        // 200ms debounce — the store's save() is a plain fs::write (see read_settings_value), so
+        // one save can produce a burst of events; we watch the DIR (not the file) so an editor
+        // that replaces-by-rename still fires. The JS side dedupes self-echoes of its own saves.
         let mut debouncer = match new_debouncer(
             Duration::from_millis(200),
             move |res: DebounceEventResult| {
@@ -661,8 +695,9 @@ pub fn watch_settings(channel: tauri::ipc::Channel<Value>) -> Result<(), String>
         {
             return;
         }
-        // Seed the mtime so the first real change is detected — and so we never emit our OWN /
-        // no-op writes (an event whose mtime equals what we last saw is skipped).
+        // Seed the mtime so pre-existing state doesn't fire an event at watch start. An event
+        // whose mtime equals the last seen one (duplicate notification) is skipped; the app's
+        // own saves DO change mtime and are re-emitted — the JS merge is idempotent on them.
         let mut last_mtime: Option<SystemTime> = std::fs::metadata(&path2)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -801,7 +836,8 @@ mod tests {
 
     #[test]
     fn bedrock_cloud_injects_flag_and_region_and_scrubs_api_key() {
-        // cloud mode still has a keychainAccount (creds) — secret required to apply.
+        // cloud mode needs NO keychain secret — auth comes from the ambient AWS credential
+        // chain the child inherits; the matrix only injects the routing flag + region.
         let (inject, scrub) = build_byok_env(
             "bedrock",
             "claude",
@@ -809,7 +845,7 @@ mod tests {
             None,
             Some("us-east-1"),
             None,
-            with_secret("aws-creds"),
+            no_secret,
         );
         assert_eq!(
             inject_set(&inject),
@@ -844,7 +880,7 @@ mod tests {
             None,
             Some("us-central1"),
             Some("my-gcp-project"),
-            with_secret("gcp-creds"),
+            no_secret,
         );
         assert_eq!(
             inject_set(&inject),
@@ -863,12 +899,37 @@ mod tests {
             None,
             Some("us-central1"),
             Some("  "),
-            with_secret("gcp-creds"),
+            no_secret,
         );
         assert_eq!(
             inject_set(&inject_none),
             s(&[("CLAUDE_CODE_USE_VERTEX", "1"), ("CLOUD_ML_REGION", "us-central1")]),
         );
+    }
+
+    #[test]
+    fn keychain_set_rejects_empty_secret() {
+        // Guard fires before any keyring access, so this never touches the real OS keychain.
+        assert!(keychain_set("orrery/test/never-written".into(), "".into()).is_err());
+        assert!(keychain_set("orrery/test/never-written".into(), "   ".into()).is_err());
+    }
+
+    #[test]
+    fn strip_secrets_covers_the_ts_deny_superset() {
+        // The Rust list is the only stripper on export's contents:None path — keep it a
+        // superset of settingsIo.ts SECRET_FIELDS. `hasSecret` must survive (exact-name match).
+        let mut v: Value = serde_json::json!({
+            "ai": { "instances": [{ "id": "x", "hasSecret": true, "accessKey": "AKIA…",
+                     "credentials": "blob", "privateKey": "p", "auth": "a", "key": "k" }] },
+            "passwd": "hunter2"
+        });
+        strip_secrets(&mut v);
+        let inst = &v["ai"]["instances"][0];
+        assert_eq!(inst["hasSecret"], Value::Bool(true));
+        for gone in ["accessKey", "credentials", "privateKey", "auth", "key"] {
+            assert!(inst.get(gone).is_none(), "{gone} must be stripped");
+        }
+        assert!(v.get("passwd").is_none());
     }
 
     #[test]

@@ -205,6 +205,14 @@
     if (account) {
       await keychainDelete(account);
       presence = { ...presence, [account]: false };
+      // The account is shared per provider/mode, so the delete affects every sibling
+      // instance too — sync their persisted hasSecret mirrors rather than leaving them
+      // claiming a credential that no longer exists.
+      for (const i of store.data.ai.instances) {
+        if (i.hasSecret && accountFor(i) === account) {
+          await store.updateInstance(i.id, { hasSecret: false });
+        }
+      }
     }
   }
 
@@ -484,6 +492,13 @@
           </div>
         {:else if draft.mode === 'local'}
           <p class="hint">No credential needed — this runner talks to your local endpoint directly.</p>
+        {:else if draft.mode === 'cloud'}
+          <p class="hint">
+            No key stored here — the loop inherits your ambient
+            {draft.provider === 'bedrock'
+              ? 'AWS credential chain (aws configure / SSO)'
+              : 'Google Cloud ADC (gcloud auth application-default login)'} at launch.
+          </p>
         {:else}
           <div class="signin">
             <p class="hint">
