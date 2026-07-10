@@ -107,7 +107,9 @@ loop-stop --state-dir examples/hello/.loop --cancel
 ## BMAD Headless Pattern
 
 `loop-bmad` drives a multi-story BMAD epic pipeline. It needs a project root and can also read
-its settings from a `loop.json` file with a `bmad` block.
+its settings from a `loop.json` file with a `bmad` block. (In the desktop app, the Tuning
+Console's **Work a backlog (BMAD)** recipe authors this loop for you; the same exists for
+`loop-qa` as **QA a web app**.)
 
 ```bash
 loop-bmad --project-root . --state-dir .loop --loop-json loop.json

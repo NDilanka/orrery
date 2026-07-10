@@ -17,18 +17,18 @@ Orrery is a desktop app (Tauri v2 + Svelte 5 + PixiJS) for running coding agents
 | | |
 |---|---|
 | ![Observatory view: one loop's instruments, gate state, and cost horizon](docs/assets/observatory.png) | ![Cosmos view: every loop as a star system](docs/assets/cosmos.png) |
-| ![Tuning Console: author a loop.json in the app](docs/assets/tuning-console.png) | ![Cosmos on a phone via the LAN server](docs/assets/cosmos-mobile.png) |
+| ![Tuning Console: a recipe gallery authors generic, BMAD, and QA loops](docs/assets/tuning-console.png) | ![Cosmos on a phone via the LAN server](docs/assets/cosmos-mobile.png) |
 
 ## Install
 
 Prebuilt bundles ship with every release — grab one from the
-[latest release](https://github.com/NDilanka/orrery/releases/latest) (currently v0.3.0):
+[latest release](https://github.com/NDilanka/orrery/releases/latest) (currently v0.4.0):
 
 | OS | Download |
 |---|---|
-| **Windows** | `orrery_0.3.0_x64_en-US.msi` (or `orrery_0.3.0_x64-setup.exe`) |
-| **macOS** | `orrery_0.3.0_aarch64.dmg` (Apple Silicon) · `orrery_0.3.0_x64.dmg` (Intel) |
-| **Linux** | `orrery_0.3.0_amd64.AppImage` (portable) · `.deb` · `.rpm` |
+| **Windows** | `orrery_0.4.0_x64_en-US.msi` (or `orrery_0.4.0_x64-setup.exe`) |
+| **macOS** | `orrery_0.4.0_aarch64.dmg` (Apple Silicon) · `orrery_0.4.0_x64.dmg` (Intel) |
+| **Linux** | `orrery_0.4.0_amd64.AppImage` (portable) · `.deb` · `.rpm` |
 
 > **macOS:** the builds are unsigned, so Gatekeeper will balk the first time.
 > Right-click the app → **Open** (once), or clear the quarantine flag:
@@ -130,7 +130,13 @@ Loops are defined by a `loop.json` ([`orrery/PROTOCOL.md`](orrery/PROTOCOL.md) �
 | `bmad` | template | drives a [BMAD-method](https://github.com/bmad-code-org/BMAD-METHOD) project through a multi-story epic pipeline |
 | `webapp-qa` | template | the AC-driven QA loop against a web app |
 
-`roman` and `calc` ship as replay-only fixtures for Rewind/Planetarium. The repo-root [`examples/hello/`](examples/hello/) is the engine-side copy of the same example ([walkthrough](examples/hello/README.md)). To write your own loop — or a whole new driver — start with [`engine/README.md`](engine/README.md) ("Writing a new loop driver") and PROTOCOL §7.
+You rarely need to hand-write a `loop.json`: in the app, **✦ new loop** opens a recipe
+gallery — four generic blueprints (Fix until green, Build + verify, Explore with me, Blank)
+plus two recipes that drive one of your own repos, **Work a backlog (BMAD)** (`loop-bmad`)
+and **QA a web app** (`loop-qa`). A generic loop can target any repo on disk (*where it
+runs* → `--cwd`), and **✦ Create & start** ignites the new loop in one click.
+
+`roman` and `calc` ship as replay-only fixtures for Rewind/Planetarium. The repo-root [`examples/hello/`](examples/hello/) is the engine-side copy of the same example ([walkthrough](examples/hello/README.md)). To hand-write a loop — or a whole new driver — start with [`engine/README.md`](engine/README.md) ("Writing a new loop driver") and PROTOCOL §7.
 
 ## Project layout
 
@@ -145,7 +151,7 @@ run-orrery.bat   one-click launchers (venv setup + desktop app)
 run-orrery.sh
 ```
 
-Tested: 631 engine pytest tests, 233 Vitest tests, 87 Rust `#[test]`s, 9 Playwright e2e (5 smoke + 4 settings), plus 9-case golden-corpus parity between the two reducers.
+Tested: 631 engine pytest tests, 236 Vitest tests, 89 Rust `#[test]`s, 9 Playwright e2e (5 smoke + 4 settings), plus 9-case golden-corpus parity between the two reducers.
 
 ## The why
 
