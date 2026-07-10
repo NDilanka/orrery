@@ -283,8 +283,8 @@
   --auditor-white: oklch(0.42 0.03 250); /* verifier beam / audit pulse — dark on light */
 
   /* retired-hue neutrals that were near-white on dark must darken to read on light */
-  --brass: oklch(0.52 0.055 85); /* certification/id accent — muted dark gold */
-  --frost: oklch(0.5 0.045 265); /* quota crystal / rewind frame — dark cool */
+  --brass: oklch(0.52 0.015 85); /* certification/id accent — near-neutral warmth, mirrors dark's retired gold (chrome stays monochrome) */
+  --frost: oklch(0.5 0.025 265); /* quota crystal / rewind frame — near-neutral cool, mirrors dark's C 0.02 */
   --plasma-cyan: oklch(0.55 0.02 265);
   --cache-teal: oklch(0.55 0.02 200);
   --spectral-haiku: oklch(0.62 0.02 265); /* model heat: identity by brightness, */

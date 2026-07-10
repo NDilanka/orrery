@@ -178,13 +178,17 @@ export const PROVIDER_MATRIX: ProviderMatrixEntry[] = [
     keychainAccount: 'orrery/openrouter/api-key',
     supported: true,
   },
+  // Cloud modes carry NO keychain account: bedrock/vertex authenticate via the ambient
+  // AWS/GCP credential chain (aws configure / gcloud ADC), which the spawned child inherits.
+  // Only the routing flag + region/project are injected — a stored secret would be a dead
+  // gate that silently disabled the mode for ambient-auth users (mirrors settings.rs).
   {
     provider: 'bedrock',
     runner: 'claude',
     mode: 'cloud',
     inject: ['CLAUDE_CODE_USE_BEDROCK', 'AWS_REGION'],
     scrub: ['ANTHROPIC_API_KEY'],
-    keychainAccount: 'orrery/bedrock/creds',
+    keychainAccount: null,
     supported: true,
   },
   {
@@ -193,7 +197,7 @@ export const PROVIDER_MATRIX: ProviderMatrixEntry[] = [
     mode: 'cloud',
     inject: ['CLAUDE_CODE_USE_VERTEX', 'CLOUD_ML_REGION', 'ANTHROPIC_VERTEX_PROJECT_ID'],
     scrub: ['ANTHROPIC_API_KEY'],
-    keychainAccount: 'orrery/vertex/creds',
+    keychainAccount: null,
     supported: true,
   },
   {

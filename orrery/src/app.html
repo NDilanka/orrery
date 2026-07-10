@@ -25,6 +25,11 @@
           if (appearance.density === 'compact') {
             document.documentElement.dataset.density = 'compact';
           }
+          // motion as well: a user-forced 'reduced' (or forced 'full' under OS-reduce)
+          // must hold from the first frame; absent = system (CSS media query decides).
+          if (appearance.motion === 'reduced' || appearance.motion === 'full') {
+            document.documentElement.dataset.motion = appearance.motion;
+          }
         } catch (e) {
           document.documentElement.dataset.theme = 'dark';
         }

@@ -8,11 +8,19 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // runner it must be mocked (and browser=false keeps init() off the DOM path).
 vi.mock('$app/environment', () => ({ browser: false }));
 
-import { REGISTRY, DEFAULTS, defaultFor, type Settings } from './schema';
+// Spy on keychainDelete so the shared-account tests can assert when it fires
+// (the real fn is a Tauri no-op here, but we need call visibility).
+vi.mock('./keychain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./keychain')>();
+  return { ...actual, keychainDelete: vi.fn(async () => {}) };
+});
+
+import { REGISTRY, DEFAULTS, defaultFor, type Settings, type ProviderInstance } from './schema';
 import type { SettingsBackend } from './backend';
 import { searchSettings } from './search';
 import { redactSecrets, validateImport } from './settingsIo';
-import { settingsStore } from '../stores/settings.svelte';
+import { keychainDelete } from './keychain';
+import { settingsStore, mergeSettings } from '../stores/settings.svelte';
 
 // ── search ───────────────────────────────────────────────────────────────────
 
@@ -74,6 +82,34 @@ describe('validateImport', () => {
     expect(merged.general.cosmosPollMs).toBe(DEFAULTS.general.cosmosPollMs); // defaulted
     expect(merged.appearance.theme).toBe(DEFAULTS.appearance.theme); // whole section defaulted
     expect((merged as Record<string, unknown>).bogusTopLevel).toBeUndefined(); // unknown dropped
+  });
+});
+
+// ── mergeSettings type guard ──────────────────────────────────────────────────
+
+describe('mergeSettings', () => {
+  it('drops wrong-typed values instead of replacing sections or scalars', () => {
+    const merged = mergeSettings({
+      version: 1,
+      appearance: 'dark', // string over a section object (hand-edited settings.json)
+      general: { lanPort: '9000', confirmDestructive: 'yes' }, // wrong scalar types
+      notifications: { alertOn: 'all' }, // string over an array
+    });
+    expect(merged.appearance).toEqual(DEFAULTS.appearance);
+    expect(merged.general.lanPort).toBe(DEFAULTS.general.lanPort);
+    expect(merged.general.confirmDestructive).toBe(DEFAULTS.general.confirmDestructive);
+    expect(merged.notifications.alertOn).toEqual(DEFAULTS.notifications.alertOn);
+  });
+
+  it('accepts matching types, including the nullable-string pointers', () => {
+    const merged = mergeSettings({
+      general: { loopsDir: 'D:/loops', lanPort: 9000 },
+      ai: { defaultInstanceId: 'abc' },
+    });
+    expect(merged.general.loopsDir).toBe('D:/loops');
+    expect(merged.general.lanPort).toBe(9000);
+    expect(merged.ai.defaultInstanceId).toBe('abc');
+    expect(merged.ai.fallbackInstanceId).toBeNull();
   });
 });
 
@@ -149,5 +185,24 @@ describe('settingsStore', () => {
   it('resolvedTheme resolves an explicit theme without a media query', () => {
     void settingsStore.set('appearance.theme', 'light');
     expect(settingsStore.resolvedTheme).toBe('light');
+  });
+
+  it('removeInstance keeps a shared keychain account until its last user is gone', async () => {
+    // anthropic claude+aider apiKey instances share orrery/anthropic/api-key by design.
+    const shared: Omit<ProviderInstance, 'id'> = {
+      name: 'claude key',
+      runner: 'claude',
+      provider: 'anthropic',
+      mode: 'apiKey',
+    };
+    const a = await settingsStore.addInstance(shared);
+    const b = await settingsStore.addInstance({ ...shared, name: 'aider key', runner: 'aider' });
+    vi.mocked(keychainDelete).mockClear();
+
+    await settingsStore.removeInstance(a);
+    expect(keychainDelete).not.toHaveBeenCalled(); // sibling still owns the account
+
+    await settingsStore.removeInstance(b);
+    expect(keychainDelete).toHaveBeenCalledWith('orrery/anthropic/api-key');
   });
 });

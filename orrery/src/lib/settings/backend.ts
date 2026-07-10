@@ -81,13 +81,20 @@ class TauriBackend implements SettingsBackend {
 
   async load(): Promise<Settings | null> {
     const store = await this.ensure();
-    return (await store.get<Settings>(ROOT_KEY)) ?? null;
+    const settings = (await store.get<Settings>(ROOT_KEY)) ?? null;
+    // Refresh the FOUC mirror on load/reload too — not just save — so an out-of-band
+    // settings.json edit (or a cleared webview localStorage) can't leave the mirror
+    // stale and reintroduce the theme flash the mirror exists to prevent.
+    if (settings) writeSyncMirror(settings);
+    return settings;
   }
 
   async reload(): Promise<Settings | null> {
     const store = await this.ensure();
     await store.reload();
-    return (await store.get<Settings>(ROOT_KEY)) ?? null;
+    const settings = (await store.get<Settings>(ROOT_KEY)) ?? null;
+    if (settings) writeSyncMirror(settings);
+    return settings;
   }
 
   async save(settings: Settings): Promise<void> {

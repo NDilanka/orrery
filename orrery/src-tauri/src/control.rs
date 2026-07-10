@@ -501,17 +501,37 @@ pub fn clone_loop(loops_dir: String, id: String, new_id: String) -> Result<LoopD
 
 /// `delete_loop(loopsDir, id)` — remove `loops/<id>/` and its loop.json. Idempotent
 /// on a missing directory. Only ever removes a single validated loop directory.
+///
+/// The UI's stronger confirm explicitly offers deleting a RUNNING loop, so honor it: a live
+/// engine would otherwise keep running orphaned, and on Windows its open handles (run.out,
+/// log.jsonl) make `remove_dir_all` fail partway. Killing here is the one sanctioned exception
+/// to the cooperative-stop-only rule — the state a kill could corrupt is being deleted anyway.
 #[tauri::command]
 pub fn delete_loop(loops_dir: String, id: String) -> Result<(), String> {
     if !is_safe_loop_id(&id) {
         return Err(format!("invalid loop id {id:?}"));
     }
-    let dir = PathBuf::from(&loops_dir).join(&id);
-    match std::fs::remove_dir_all(&dir) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("remove {dir:?}: {e}")),
+    let loops = PathBuf::from(&loops_dir);
+    let dir = loops.join(&id);
+    if let Ok(def) = load_loop_def(&loops, &id) {
+        if let Some(pid) = find_running_pid(&guard_spec(&def)) {
+            kill_process_tree(pid);
+        }
     }
+    // Handles can outlive the kill by a beat (children flushing redirected output); retry the
+    // removal briefly before reporting failure instead of leaving a half-deleted directory.
+    let mut last_err = String::new();
+    for attempt in 0..10 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    Err(format!("remove {dir:?}: {last_err}"))
 }
 
 // ===========================================================================
@@ -708,6 +728,49 @@ fn find_running_pid(spec: &GuardSpec) -> Option<u32> {
         }
     }
     None
+}
+
+/// Kill `pid` and its transitive children, then wait briefly for the root to disappear so the
+/// caller can reclaim its files. Used ONLY by `delete_loop` — everywhere else stopping is
+/// cooperative (STOP flag). Best-effort: a pid that already exited is simply skipped.
+fn kill_process_tree(root: u32) {
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+    let sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
+    );
+    let root_pid = Pid::from_u32(root);
+    let mut victims = vec![root_pid];
+    // Transitive children from the snapshot's parent links, to a fixpoint.
+    loop {
+        let before = victims.len();
+        for (pid, proc) in sys.processes() {
+            if let Some(parent) = proc.parent() {
+                if victims.contains(&parent) && !victims.contains(pid) {
+                    victims.push(*pid);
+                }
+            }
+        }
+        if victims.len() == before {
+            break;
+        }
+    }
+    // Children first, so nothing re-parents or respawns under a still-live root.
+    for pid in victims.iter().rev() {
+        if let Some(proc) = sys.process(*pid) {
+            let _ = proc.kill();
+        }
+    }
+    for _ in 0..20 {
+        let alive = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        )
+        .process(root_pid)
+        .is_some();
+        if !alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// Resolve a loop's start `program` to an absolute path when it is a bare command name (e.g.
@@ -2251,10 +2314,11 @@ mod tests {
         .expect("spawn no-op pwsh");
         assert!(pid > 0, "captured a real PID");
 
-        // Wait briefly for the child to flush + exit, then confirm run.out got the marker.
+        // Wait for the child to flush + exit, then confirm run.out got the marker. The window
+        // is generous (15s) because pwsh cold-start on a loaded CI runner can exceed 5s.
         let out = state_dir.join("run.out");
         let mut content = String::new();
-        for _ in 0..50 {
+        for _ in 0..150 {
             if let Ok(s) = std::fs::read_to_string(&out) {
                 if s.contains("ORRERY_SPAWN_OK") {
                     content = s;

@@ -35,7 +35,11 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * Deep-merge a (possibly partial / stale) persisted tree OVER DEFAULTS so that
  * missing or newly-added keys always fall back to their default. Arrays and
  * scalars from the source REPLACE the default wholesale (never element-merged).
- * Unknown keys not present in DEFAULTS are DROPPED. `version` is forced to 1.
+ * Unknown keys not present in DEFAULTS are DROPPED, and a value whose runtime
+ * type disagrees with its default's is dropped too — settings.json is openly
+ * hand-editable (openSettingsFile + the hot-reload watcher), and a stray
+ * `"appearance": "dark"` must not replace a whole section for every consumer.
+ * `version` is forced to 1.
  */
 export function mergeSettings(persisted: unknown): Settings {
   const out = structuredClone(DEFAULTS);
@@ -44,9 +48,14 @@ export function mergeSettings(persisted: unknown): Settings {
       if (!(key in src)) continue;
       const t = target[key];
       const s = src[key];
-      if (isPlainObject(t) && isPlainObject(s)) {
-        merge(t, s);
-      } else if (s !== undefined) {
+      if (isPlainObject(t)) {
+        if (isPlainObject(s)) merge(t, s);
+      } else if (Array.isArray(t)) {
+        if (Array.isArray(s)) target[key] = s;
+      } else if (t === null) {
+        // the null defaults are all nullable-string fields (loopsDir, instance pointers)
+        if (s === null || typeof s === 'string') target[key] = s;
+      } else if (typeof s === typeof t) {
         target[key] = s;
       }
     }
@@ -92,16 +101,11 @@ class SettingsStore implements SettingsStoreApi {
   async init(injected?: SettingsBackend): Promise<() => void> {
     this.backend = injected ?? makeBackend();
 
-    try {
-      const persisted = await this.backend.load();
-      if (persisted) this.data = mergeSettings(persisted);
-    } catch {
-      /* first run / unreadable → keep DEFAULTS */
-    }
-    this.loaded = true;
-
     const teardowns: Array<() => void> = [];
 
+    // Wire the OS media mirrors BEFORE the async backend load: consumers like the Pixi
+    // canvases read `reducedMotion` from the first frame, and an OS reduced-motion user
+    // must not get full animation while the (possibly slow) store load is in flight.
     if (browser && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
       this.schemeMql = window.matchMedia('(prefers-color-scheme: dark)');
       this.schemeDark = this.schemeMql.matches;
@@ -118,6 +122,14 @@ class SettingsStore implements SettingsStoreApi {
       this.motionMql.addEventListener?.('change', onMotion);
       teardowns.push(() => this.motionMql?.removeEventListener?.('change', onMotion));
     }
+
+    try {
+      const persisted = await this.backend.load();
+      if (persisted) this.data = mergeSettings(persisted);
+    } catch {
+      /* first run / unreadable → keep DEFAULTS */
+    }
+    this.loaded = true;
 
     // hot-reload: react to external edits of settings.json (Tauri only).
     if (browser && hasTauri()) {
@@ -320,10 +332,14 @@ class SettingsStore implements SettingsStoreApi {
     // orphaned default/fallback pointers must not dangle
     if (this.data.ai.defaultInstanceId === id) await this.set('ai.defaultInstanceId', null);
     if (this.data.ai.fallbackInstanceId === id) await this.set('ai.fallbackInstanceId', null);
-    // drop its keychain secret + presence mirror
+    // drop its keychain secret + presence mirror — but ONLY when no surviving instance
+    // shares the account (accounts are deliberately shared per provider/mode, e.g.
+    // anthropic claude+aider both live under orrery/anthropic/api-key; deleting one
+    // instance must not destroy the sibling's credential).
     if (inst) {
       const account = accountFor(inst);
-      if (account) {
+      const stillUsed = account !== null && next.some((i) => accountFor(i) === account);
+      if (account && !stillUsed) {
         await keychainDelete(account);
         const mirror = { ...this.keychain };
         delete mirror[account];
