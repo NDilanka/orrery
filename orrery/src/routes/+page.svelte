@@ -525,11 +525,13 @@
           // run"). A SAVE (edit) or a dev-mode no-op create stays at the Cosmos rather than
           // dead-mounting a transport-less System.
           if (id && ctx.mode === 'create' && ctx.persisted) {
+            // ✦ Create & start: park a one-shot intent BEFORE the System mounts; RunControlBar
+            // consumes it once the transport is up and fires its own start path, so a failed
+            // auto-start surfaces exactly like a failed hand-clicked ✦ Start (error line, stall
+            // timer) instead of rejecting unseen. Plain ✦ Create loop leaves startAfterCreate
+            // false — the deliberate create≠start split for the default path is preserved.
+            if (ctx.startAfterCreate) sessionStore.requestAutostart();
             await enterSystem(id);
-            // ✦ Create & start: enterSystem has mounted the transport, so fire the very same
-            // start control ✦ Start uses. Plain ✦ Create loop leaves startAfterCreate false and
-            // stops here — the deliberate create≠start split for the default path is preserved.
-            if (ctx.startAfterCreate) void sessionStore.control('start');
           }
         }}
       />

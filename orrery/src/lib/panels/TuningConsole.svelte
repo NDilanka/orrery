@@ -455,6 +455,10 @@
           if (typeof q.app === 'string') qaApp = q.app;
           if (typeof q.storageState === 'string') qaStorageState = q.storageState;
           if (typeof q.seedSummary === 'string') qaSeedSummary = q.seedSummary;
+          // The saved ceiling must round-trip, else every edit-save silently resets it to the
+          // $state default. An absent key means UNCAPPED (ignite only emits it when > 0) → 0.
+          qaCostCeiling =
+            typeof q.costCeilingUsd === 'number' && q.costCeilingUsd > 0 ? q.costCeilingUsd : 0;
         } else {
           // generic loop: prefill from the engine block + preserve any external --cwd target
           const c = argVal('--cwd');

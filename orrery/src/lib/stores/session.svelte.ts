@@ -46,6 +46,12 @@ class SessionStore {
   });
   /** A7 ws freshness badge (only populated when the WebSocket transport is active). */
   wsStatus = $state<WsStatus | null>(null);
+  /** One-shot ✦ Create & start intent. The Tuning Console can't start the run itself — the
+   * new System's transport isn't mounted yet when the CTA is clicked — so it parks the intent
+   * here and RunControlBar consumes it once a real transport is up, firing through its own
+   * start path (pending/slow/stalled/error) instead of a fire-and-forget control() whose
+   * rejection nobody would see. */
+  autostartPending = $state(false);
   /** observe-only when web/no-token (ws transport says so) — disables answer/control. */
   observeOnly = $derived(this.wsStatus?.observeOnly ?? false);
 
@@ -132,6 +138,17 @@ class SessionStore {
 
   async control(action: string): Promise<void> {
     await this.transport?.control(action);
+  }
+
+  requestAutostart(): void {
+    this.autostartPending = true;
+  }
+
+  /** Read-and-clear, so a parked intent can never leak into a later System mount. */
+  consumeAutostart(): boolean {
+    const v = this.autostartPending;
+    this.autostartPending = false;
+    return v;
   }
 
   // A8 — an answer fn the QAConsole/DecisionSheet can call (present on tauri + ws; replay no-ops)
