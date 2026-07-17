@@ -282,7 +282,9 @@
         resolution: Math.min(window.devicePixelRatio || 1, 2),
       });
       if (destroyed) {
-        app.destroy(true);
+        // teardown may have already run during `await app.init()` and set `app = null` after
+        // destroying it — guard so this cleanup path never TypeErrors on a null app.
+        app?.destroy(true);
         return;
       }
       host.appendChild(app.canvas);
@@ -1423,6 +1425,16 @@
             v.container.destroy({ children: true });
             planetPool.delete(key);
           }
+        }
+        // Prune the per-key bookkeeping maps alongside the pool — these are keyed the same way
+        // (planet key) but were never cleaned up, so over a long-lived run (many stories churned
+        // through the orbit set) they grew without bound. eased angle + the edge-detection prior
+        // values for a body that left the orbit set are dead weight; drop them.
+        for (const m of [planetAngle, prevCertified, prevStrikes, prevVerdictPass] as Map<
+          string,
+          unknown
+        >[]) {
+          for (const key of m.keys()) if (!activeKeys.has(key)) m.delete(key);
         }
         lastPpos.clear();
         if (tierOne) {

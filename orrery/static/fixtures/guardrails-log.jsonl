@@ -1,0 +1,14 @@
+{"event":"start","target":"guardrails-demo","branch":"auto/guardrails","baselinePass":5}
+{"event":"gate","cum":0.0,"green":false,"pass":5,"fail":3,"total":8,"baselinePass":5}
+{"event":"iter","iter":1,"cost":0.31,"cum":0.31,"pass":6,"total":8,"best":5,"changed":true,"stale":0,"plateau":0,"regress":0,"action":"continue","reason":"6/8 passing"}
+{"event":"gate","cum":0.31,"green":false,"pass":6,"fail":2,"total":8,"baselinePass":5}
+{"event":"iter","iter":2,"cost":0.29,"cum":0.6,"pass":7,"total":8,"best":6,"changed":true,"stale":0,"plateau":0,"regress":0,"action":"continue","reason":"7/8 passing"}
+{"event":"parse_error","iter":2}
+{"event":"gate","cum":0.6,"green":false,"pass":7,"fail":1,"total":8,"baselinePass":5}
+{"event":"iter","iter":3,"cost":0.33,"cum":0.93,"pass":8,"total":8,"best":7,"changed":true,"stale":0,"plateau":0,"regress":0,"action":"continue","reason":"8/8 green"}
+{"event":"gate","cum":0.93,"green":true,"pass":8,"fail":0,"total":8,"baselinePass":5}
+{"event":"iter","iter":4,"cost":0.28,"cum":1.21,"pass":6,"total":8,"best":8,"changed":true,"stale":0,"plateau":1,"regress":1,"action":"rollback","reason":"regressed to 6/8"}
+{"event":"gate","cum":1.21,"green":false,"pass":6,"fail":2,"total":8,"baselinePass":5}
+{"event":"plateau","item":"iter","k":3}
+{"event":"stop","reason":"plateau: no progress after 3 strikes, handing off","green":false,"iter":4,"cum":1.21,"bestPass":8}
+{"event":"handoff","item":"iter","reason":"stuck at 6/8 after regression; needs a human","consecutive":3}

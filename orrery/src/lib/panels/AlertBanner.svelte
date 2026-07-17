@@ -5,6 +5,7 @@
   // notifications need a Tauri plugin — deferred, see the U4 report), no flashing (reduced
   // motion drops even the slide-in entrance).
 
+  import { onDestroy } from 'svelte';
   import { alertStore, type RunAlert } from '../stores/alerts.svelte';
   import { uiStore } from '../stores/ui.svelte';
   import { settingsStore } from '../stores/settings.svelte';
@@ -56,14 +57,25 @@
     if (hasNew && settingsStore.data.notifications.sound) playChime();
   });
 
+  // A single reused AudioContext (lazily created on the first chime) instead of one per alert —
+  // a bad night of many alerts would otherwise spin up (and race to close) dozens of contexts,
+  // and browsers cap how many can exist at once. Closed once on component teardown.
+  let audioCtx: AudioContext | null = null;
+  function getAudioCtx(): AudioContext | null {
+    if (audioCtx) return audioCtx;
+    const Ctx =
+      typeof window !== 'undefined'
+        ? (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
+        : undefined;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+    return audioCtx;
+  }
+
   function playChime(): void {
     try {
-      const Ctx =
-        typeof window !== 'undefined'
-          ? (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
-          : undefined;
-      if (!Ctx) return;
-      const ctx = new Ctx();
+      const ctx = getAudioCtx();
+      if (!ctx) return;
       // a context created outside a user gesture can start 'suspended' (autoplay policy)
       // and silently swallow the blip — nudge it awake; a refusal just means no chime.
       if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
@@ -81,17 +93,27 @@
         osc.start(t0);
         osc.stop(t0 + 0.12);
       });
-      // free the context once the blip (~230ms) has played out
-      setTimeout(() => void ctx.close().catch(() => {}), 400);
+      // the context is NOT closed per-blip anymore — it's reused (see getAudioCtx) and torn
+      // down once in onDestroy, so no stray close-timer outlives the component.
     } catch {
       /* audio unavailable / blocked — a missing chime is never fatal */
     }
   }
 
+  onDestroy(() => {
+    void audioCtx?.close().catch(() => {});
+    audioCtx = null;
+  });
+
   let sorted = $derived(
     [...alertStore.alerts].sort((a, b) => SEVERITY_RANK[a.kind] - SEVERITY_RANK[b.kind]),
   );
   let overflow = $derived(sorted.length > MAX_VISIBLE);
+  // Collapse the "show less" state once the overflow tail is gone (alerts dismissed/cleared) —
+  // otherwise `expanded` stays true and the next time the stack overflows it opens pre-expanded.
+  $effect(() => {
+    if (!overflow) expanded = false;
+  });
   let visible = $derived(expanded ? sorted : sorted.slice(0, MAX_VISIBLE));
   let hidden = $derived(sorted.slice(MAX_VISIBLE));
   // never hue-alone: the summary's tint is a shorthand for the WORST kind in the hidden

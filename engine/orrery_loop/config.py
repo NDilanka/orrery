@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orrery_loop.configkeys import resolve, warn_unknown_keys
+from orrery_loop.configkeys import coerce_float, coerce_int, resolve, warn_unknown_keys
 
 # Defaults for Get-ModelForPhase (loopcore.ps1 ~223).
 _MODEL_DEFAULTS = {
@@ -312,7 +312,10 @@ _COST_KNOWN_KEYS = {"ceilingUsd", "ceiling_usd", "alertPct", "alert_pct"}
 def _cost_from(d: dict[str, Any]) -> CostConfig:
     warn_unknown_keys(d, _COST_KNOWN_KEYS, "engine.cost")
     return CostConfig(
-        ceiling_usd=float(resolve(d, "ceilingUsd", "ceiling_usd", default=_DEFAULT_CEILING_USD)),
+        ceiling_usd=coerce_float(
+            resolve(d, "ceilingUsd", "ceiling_usd", default=_DEFAULT_CEILING_USD),
+            _DEFAULT_CEILING_USD, "engine.cost", "ceilingUsd",
+        ),
         alert_pct=list(resolve(d, "alertPct", "alert_pct", default=list(_DEFAULT_ALERT_PCT))),
     )
 
@@ -333,20 +336,29 @@ _STOP_KNOWN_KEYS = {
 def _stop_from(d: dict[str, Any]) -> StopConfig:
     warn_unknown_keys(d, _STOP_KNOWN_KEYS, "engine.stop")
     return StopConfig(
-        max_iters=int(resolve(d, "maxIters", "max_iters", default=_DEFAULT_MAX_ITERS)),
-        stagnation_limit=int(
-            resolve(d, "stagnationLimit", "stagnation_limit", default=_DEFAULT_STAGNATION_LIMIT)
+        max_iters=coerce_int(
+            resolve(d, "maxIters", "max_iters", default=_DEFAULT_MAX_ITERS),
+            _DEFAULT_MAX_ITERS, "engine.stop", "maxIters",
         ),
-        plateau_limit=int(
-            resolve(d, "plateauLimit", "plateau_limit", default=_DEFAULT_PLATEAU_LIMIT)
+        stagnation_limit=coerce_int(
+            resolve(d, "stagnationLimit", "stagnation_limit", default=_DEFAULT_STAGNATION_LIMIT),
+            _DEFAULT_STAGNATION_LIMIT, "engine.stop", "stagnationLimit",
         ),
-        regress_limit=int(
-            resolve(d, "regressLimit", "regress_limit", default=_DEFAULT_REGRESS_LIMIT)
+        plateau_limit=coerce_int(
+            resolve(d, "plateauLimit", "plateau_limit", default=_DEFAULT_PLATEAU_LIMIT),
+            _DEFAULT_PLATEAU_LIMIT, "engine.stop", "plateauLimit",
+        ),
+        regress_limit=coerce_int(
+            resolve(d, "regressLimit", "regress_limit", default=_DEFAULT_REGRESS_LIMIT),
+            _DEFAULT_REGRESS_LIMIT, "engine.stop", "regressLimit",
         ),
         graceful_at_phase=bool(
             resolve(d, "gracefulAtPhase", "graceful_at_phase", default=_DEFAULT_GRACEFUL_AT_PHASE)
         ),
-        token_ceiling=int(resolve(d, "tokenCeiling", "token_ceiling", default=0)),
+        token_ceiling=coerce_int(
+            resolve(d, "tokenCeiling", "token_ceiling", default=0),
+            0, "engine.stop", "tokenCeiling",
+        ),
     )
 
 

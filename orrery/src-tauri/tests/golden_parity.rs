@@ -84,6 +84,16 @@ fn parity_engine_polish_bmad() {
     assert_golden("engine-polish", "bmad", "engine-polish-log.jsonl", None, "engine-polish.bmad.json");
 }
 #[test]
+fn parity_guardrails_generic() {
+    // generic-adapter coverage for four documented events that occur ZERO times across the other
+    // fixtures: a story-less `gate` (folds into the synthetic "iter" item), `plateau` (sets the
+    // iter item's strikes), `parse_error` (counted only), and a TERMINAL `handoff` (→ status
+    // 'handoff' → restState 'handoff-beacon'). Also exercises `start` (cumUsd reset) + a generic
+    // `stop{green:false}`. Without this case a reducer edit to any of the four would pass parity
+    // while diverging in production.
+    assert_golden("guardrails", "generic", "guardrails-log.jsonl", None, "guardrails.generic.json");
+}
+#[test]
 fn parity_failed_dark_bmad() {
     // a BMAD stop{ok:false} that ENDS the log (here: retro halted after the epic's only story
     // was already merged) must produce status 'error' + restState 'failed-dark' — and must
@@ -99,7 +109,7 @@ fn parity_failed_dark_bmad() {
 fn regenerate_goldens() {
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     std::fs::create_dir_all(&out).unwrap();
-    let cases: [(&str, &str, &str, Option<&str>, &str); 9] = [
+    let cases: [(&str, &str, &str, Option<&str>, &str); 10] = [
         ("demo", "bmad", "demo-events.jsonl", None, "demo.bmad.json"),
         ("bmad", "bmad", "bmad-log.jsonl", Some("checkpoint.json"), "bmad.bmad.json"),
         ("roman", "generic", "roman-log.jsonl", None, "roman.generic.json"),
@@ -109,6 +119,7 @@ fn regenerate_goldens() {
         ("metrics", "generic", "metrics-log.jsonl", None, "metrics.generic.json"),
         ("engine-polish", "bmad", "engine-polish-log.jsonl", None, "engine-polish.bmad.json"),
         ("failed-dark", "bmad", "failed-dark-log.jsonl", None, "failed-dark.bmad.json"),
+        ("guardrails", "generic", "guardrails-log.jsonl", None, "guardrails.generic.json"),
     ];
     for (lid, ad, fx, cp, g) in cases {
         let v = reduce_fixture(lid, ad, fx, cp);

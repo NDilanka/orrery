@@ -1,7 +1,8 @@
 // WebSocket transport for the WEB / MOBILE client (A7). Used when the SvelteKit
 // SPA is served by the Rust LAN server (axum `lan.rs`) inside a normal browser
 // over http(s) — i.e. NOT Tauri (no upstream Channel), NOT dev replay (no live
-// stateDir). It connects same-origin to `/ws?loop=<id>&token=<t>`, receives the
+// stateDir). It connects same-origin to `/ws?loop=<id>` with the token carried in
+// the `orrery-token.<t>` WebSocket subprotocol (kept out of the URL), receives the
 // same `Delta` JSON the Tauri Channel emits ({kind:'snapshot'|'state'|'event'}),
 // and feeds the store through the existing reduce path (adapters → apply →
 // finalize), so the reducer is shared verbatim with desktop.
@@ -104,12 +105,17 @@ export class WsTransport implements Transport {
     if (typeof WebSocket === 'undefined') return; // SSR / no-ws env: inert
     this.emitStatus('connecting');
     const params = new URLSearchParams({ loop: this.cfg.loopId });
-    if (this.token) params.set('token', this.token);
     const url = `${wsOrigin(this.origin)}/ws?${params.toString()}`;
 
     let ws: WebSocket;
     try {
-      ws = new WebSocket(url);
+      // Send the token as a WebSocket subprotocol (`orrery-token.<token>`) rather than a `?token=`
+      // query param, so the secret never lands in server access logs, proxy history, or browser
+      // history. The LAN server echoes the selected subprotocol to complete the RFC 6455
+      // handshake, and still accepts the legacy `?token=` form for older phone sessions.
+      ws = this.token
+        ? new WebSocket(url, [`orrery-token.${this.token}`])
+        : new WebSocket(url);
     } catch {
       this.scheduleReconnect();
       return;

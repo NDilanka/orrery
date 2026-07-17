@@ -22,13 +22,13 @@ Orrery is a desktop app (Tauri v2 + Svelte 5 + PixiJS) for running coding agents
 ## Install
 
 Prebuilt bundles ship with every release — grab one from the
-[latest release](https://github.com/NDilanka/orrery/releases/latest) (currently v0.4.0):
+[latest release](https://github.com/NDilanka/orrery/releases/latest) (currently v0.5.0):
 
 | OS | Download |
 |---|---|
-| **Windows** | `orrery_0.4.0_x64_en-US.msi` (or `orrery_0.4.0_x64-setup.exe`) |
-| **macOS** | `orrery_0.4.0_aarch64.dmg` (Apple Silicon) · `orrery_0.4.0_x64.dmg` (Intel) |
-| **Linux** | `orrery_0.4.0_amd64.AppImage` (portable) · `.deb` · `.rpm` |
+| **Windows** | `orrery_0.5.0_x64_en-US.msi` (or `orrery_0.5.0_x64-setup.exe`) |
+| **macOS** | `orrery_0.5.0_aarch64.dmg` (Apple Silicon) · `orrery_0.5.0_x64.dmg` (Intel) |
+| **Linux** | `orrery_0.5.0_amd64.AppImage` (portable) · `.deb` · `.rpm` |
 
 > **macOS:** the builds are unsigned, so Gatekeeper will balk the first time.
 > Right-click the app → **Open** (once), or clear the quarantine flag:
@@ -114,8 +114,8 @@ The engine appends one JSON event per line to `log.jsonl` — the wire contract 
 Guardrails (details in [`engine/README.md`](engine/README.md) and [`docs/capabilities.md`](docs/capabilities.md)):
 
 - **External test gate** — the orchestrator runs your test command and reads the exit code; regex-verified stages, never the model's self-assessment.
-- **Test-integrity hash-locks** — test files are hash-locked and the test count can't silently drop; tampering triggers a handoff.
-- **Held-out verify + mutation audit** — a hidden test split the agent can't overfit to, and a probe that checks the suite would notice a wrong line.
+- **Test-integrity hash-locks** — every configured `lockGlobs` pattern is hash-locked and the test count can't silently drop; tampering triggers a handoff. Opt into `gate.lockInfra` to also lock test *infrastructure* (`conftest.py`, runner configs) — otherwise a gate-config edit is not tamper-detected.
+- **Held-out verify + mutation audit** *(opt-in)* — a hidden test split the agent can't overfit to, and a probe that checks the suite would notice a wrong line. Off by default; the out-of-box posture is exit-code gate + test-file hash-locks + count-can't-drop.
 - **Cost ceilings + quota survival** — cumulative spend caps, and a quota wall pauses the run and resumes it in the next window.
 - **Safe-stop checkpoints** — every iteration commits to git and writes a checkpoint; resume = re-run.
 - **Timeouts + decider caps** — every agent-spawning phase has a wall-clock timeout; hung processes get their whole tree killed.
@@ -151,7 +151,7 @@ run-orrery.bat   one-click launchers (venv setup + desktop app)
 run-orrery.sh
 ```
 
-Tested: 631 engine pytest tests, 236 Vitest tests, 89 Rust `#[test]`s, 9 Playwright e2e (5 smoke + 4 settings), plus 9-case golden-corpus parity between the two reducers.
+Tested: 679 engine pytest tests, 240 Vitest tests, 89 Rust `#[test]`s, 9 Playwright e2e (5 smoke + 4 settings) run in CI, plus 10-case golden-corpus parity between the two reducers.
 
 ## The why
 

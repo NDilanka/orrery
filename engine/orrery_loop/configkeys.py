@@ -19,7 +19,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Iterable
 
-__all__ = ["resolve", "warn_unknown_keys"]
+__all__ = ["resolve", "coerce_float", "coerce_int", "warn_unknown_keys"]
 
 
 def resolve(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -33,6 +33,36 @@ def resolve(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
         if k in d and d[k] is not None:
             return d[k]
     return default
+
+
+def _coerce(value: Any, default: Any, where: str, key: str, cast) -> Any:
+    """``cast(value)`` — but on a non-numeric value, WARN (stderr) and keep ``default``.
+
+    Config loading must stay lenient: a bad ``ceilingUsd`` / ``maxIters`` in ``loop.json`` (a
+    stray string, a null, a typo like ``"3.o"``) should be LOUD, not fatal. A raised
+    ``ValueError``/``TypeError`` from ``cast`` is swallowed into a one-line advisory (same style
+    as :func:`warn_unknown_keys`) and the field falls back to its default instead of crashing
+    the whole load.
+    """
+    try:
+        return cast(value)
+    except (ValueError, TypeError):
+        print(
+            f"[orrery_loop.config] '{where}': '{key}'={value!r} is not a valid "
+            f"{cast.__name__}; using default {default!r}.",
+            file=sys.stderr,
+        )
+        return default
+
+
+def coerce_float(value: Any, default: float, where: str, key: str) -> float:
+    """``float(value)`` with a lenient warn-and-default fallback (see :func:`_coerce`)."""
+    return _coerce(value, default, where, key, float)
+
+
+def coerce_int(value: Any, default: int, where: str, key: str) -> int:
+    """``int(value)`` with a lenient warn-and-default fallback (see :func:`_coerce`)."""
+    return _coerce(value, default, where, key, int)
 
 
 def warn_unknown_keys(

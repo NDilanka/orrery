@@ -30,6 +30,30 @@ def _ensure_parent(path) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
+def _atomic_write_text(path, s: str) -> None:
+    """Write ``s`` to ``path`` atomically: a same-dir temp file + ``os.replace``.
+
+    A mid-write kill can never leave a half-written (corrupt) file at ``path`` — the reader
+    sees either the old contents or the fully new ones. Mirrors
+    :func:`orrery_loop.heartbeat.write_activity`'s temp+replace pattern (same directory, so the
+    rename is on one filesystem and therefore atomic). On any failure the temp file is cleaned
+    up so a killed/aborted write leaves no stray ``*.tmp`` behind.
+    """
+    _ensure_parent(path)
+    p = os.fspath(path)
+    tmp = f"{p}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(s)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def append_event(
     log_path,
     event: dict,
@@ -60,10 +84,11 @@ def append_event(
 
 
 def write_checkpoint(path, checkpoint: dict) -> None:
-    """Write ``checkpoint`` as a single JSON object to ``path`` (indent=2 is fine)."""
-    _ensure_parent(path)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(checkpoint, fh, indent=2)
+    """Write ``checkpoint`` as a single JSON object to ``path`` (indent=2 is fine).
+
+    Atomic (temp file + ``os.replace``) so a mid-write kill can never corrupt resume state.
+    """
+    _atomic_write_text(path, json.dumps(checkpoint, indent=2))
 
 
 def read_answer_inbox(path) -> str | None:
@@ -103,10 +128,11 @@ def read_text(path) -> str | None:
 
 
 def write_text(path, s: str) -> None:
-    """Write ``s`` as a UTF-8 text file (e.g. progress.md), creating parents as needed."""
-    _ensure_parent(path)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(s)
+    """Write ``s`` as a UTF-8 text file (e.g. progress.md), creating parents as needed.
+
+    Atomic (temp file + ``os.replace``) so a mid-write kill can never corrupt the file.
+    """
+    _atomic_write_text(path, s)
 
 
 def write_run_output(path, raw: str | None) -> None:

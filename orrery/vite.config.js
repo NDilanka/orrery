@@ -23,6 +23,13 @@ export default defineConfig(async () => ({
     __ORRERY_LOOPS_DIR__: JSON.stringify(loopsDir),
   },
 
+  // Vitest: scope collection to the src unit/spec files so a bare `npx vitest run` matches
+  // `npm run test:unit` (vitest run src/lib) instead of also sweeping up e2e/*.spec.ts, which
+  // are Playwright specs that throw on import outside the Playwright runner.
+  test: {
+    include: ["src/**/*.{test,spec}.{js,ts}"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

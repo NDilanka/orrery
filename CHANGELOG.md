@@ -4,6 +4,81 @@ All notable changes to Orrery are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/). While pre-1.0, expect breaking
 changes between minor versions.
 
+## [0.5.0] — 2026-07-17
+
+A hardening release: a five-perspective code review (engine, frontend, Rust, cross-cutting
+adversarial, docs/CI) followed by fixes for everything it surfaced.
+
+### Fixed — guardrail integrity (engine)
+- **Hash-lock covers every configured `lockGlobs` pattern.** Previously only the *first*
+  glob was hash-locked — extra patterns were silently unprotected, so an agent could
+  rewrite e.g. `*.spec.ts` tests undetected in a two-glob config.
+- **A judge returning a string `failingCriteria`** (instead of a list) no longer refutes a
+  green verdict character-by-character; it's coerced to a single criterion.
+- **Quota survival can't spin forever on non-probing runners** (aider/codex): reactive
+  rate-limit waits are now capped (4 consecutive blind waits), then surface as a real
+  failure instead of an unbounded sleep-retry loop that bypassed `maxIters` and ceilings.
+- **`checkpoint.json` and text-file writes are atomic** (same-dir temp + `os.replace`),
+  so a hard kill mid-write can't corrupt resume state.
+- **The state-dir lockfile is acquired atomically** (`O_CREAT|O_EXCL`), closing the race
+  where two simultaneous starts both "won" the lock and ran concurrently.
+- **A transient `gh` failure right after a BMAD merge** no longer crashes the driver
+  mid-state-machine; post-merge PR-state lookups degrade to the handoff path. All `gh`
+  calls now carry a finite timeout (120 s).
+- **A non-numeric `ceilingUsd`/`maxIters`/… in `loop.json`** warns and keeps the default
+  instead of aborting the load with a traceback.
+
+### Fixed — desktop app (Rust)
+- **LAN observe actually works for seeded loops:** the `/ws` path resolved a relative
+  `stateDir` against the app's cwd instead of `loops/<id>/`, so phones tailing any seed
+  loop saw an empty run forever.
+- **Finished loop processes are reaped** — no more zombie accumulation over a long
+  desktop session (one per completed run).
+- **The log tailer is UTF-8-split-safe:** a multibyte character flushed across two reads
+  no longer corrupts (and silently drops) that JSONL event line.
+- **`start.program` allowlist:** loop definitions can only spawn the engine commands
+  (`loop`, `loop-bmad`, `loop-qa`, `loop-supervise`, `loop-stop`, `python`), enforced at
+  authoring and at spawn — defense-in-depth against a hostile `loop.json` landing in
+  your loops directory.
+- **LAN token moved out of the WebSocket URL** into `Sec-WebSocket-Protocol` (query
+  param still accepted, deprecated) so it can't leak via access logs or history.
+- **A restrictive CSP** replaces `csp: null` in `tauri.conf.json`.
+- Blocking log reads and thread joins moved off the LAN server's async workers;
+  fractional-timestamp ISO formatting now truncates like JS (`reduce.ts` parity).
+
+### Fixed — app UI
+- Switching loops quickly can no longer flash the previous loop's state/log into the new
+  System (transport callbacks are epoch-guarded).
+- A repeat verifier refutation of the same story re-surfaces the Verdict panel.
+- Settings: the scope switcher is keyboard-navigable (radiogroup arrow keys), and an
+  external settings change no longer gets clobbered by a focused field's later blur.
+- Command palette: keyboard selection survives live run-state ticks, and run-control
+  failures surface as a toast instead of vanishing.
+- Tuning Console / blueprints: a gate stage must have a *command* (a name alone no
+  longer authors a loop whose gate runs nothing).
+- Observatory: per-story tracking maps are pruned with the planet pool (slow leak);
+  label anchor hysteresis is a pure derived + effect; unmount-during-init can't throw.
+- Alert stack: collapse state resets when the overflow clears; the chime reuses one
+  AudioContext.
+
+### Added
+- **Golden-corpus case 10 (`guardrails`)**: generic `gate`, `handoff`, `plateau` and
+  `parse_error` events are now pinned by the Rust⇆TS reducer parity suite (they occurred
+  zero times across the previous nine cases).
+- **CI runs the Playwright e2e suite** (browser replay) alongside engine, unit and Rust
+  jobs; `PW_CHROMIUM_PATH` lets sandboxed environments point at a system Chromium.
+- PROTOCOL §3 documents the `metrics` RunState field (it was emitted by both reducers
+  but missing from the canonical interface).
+
+### Changed
+- README states the *default* guardrail posture honestly: held-out verify + mutation
+  audit are opt-in; out of the box you get exit-code gate + test-file hash-locks +
+  count-can't-drop (+ `gate.lockInfra` opt-in for runner configs).
+- `engine/pyproject.toml` reads its version from `orrery_loop.__version__` (hatchling
+  dynamic) — the two can no longer drift.
+- Bare `npx vitest run` no longer tries to collect the Playwright e2e specs.
+- Dropped unused dependencies: `@tauri-apps/plugin-opener` (npm), `regex` (Cargo).
+
 ## [0.4.0] — 2026-07-10
 
 ### Added — engine hardening from a dogfood run

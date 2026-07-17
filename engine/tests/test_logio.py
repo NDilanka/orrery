@@ -92,6 +92,29 @@ def test_checkpoint_round_trips(tmp_path):
     assert loaded == cp
 
 
+def test_checkpoint_write_is_atomic_no_stray_temp(tmp_path):
+    """write_checkpoint goes through temp + os.replace: correct content, no leftover *.tmp."""
+    path = tmp_path / "checkpoint.json"
+    write_checkpoint(path, {"stage": "iter 1", "cumUsd": 0.5})
+
+    with open(path, encoding="utf-8") as fh:
+        assert json.load(fh) == {"stage": "iter 1", "cumUsd": 0.5}
+    # no stray temp file survives a successful write
+    assert list(tmp_path.glob("*.tmp")) == []
+    # overwrite still atomic + clean
+    write_checkpoint(path, {"stage": "iter 2"})
+    with open(path, encoding="utf-8") as fh:
+        assert json.load(fh) == {"stage": "iter 2"}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_text_is_atomic_no_stray_temp(tmp_path):
+    path = tmp_path / "sub" / "progress.md"
+    write_text(path, "# Progress\n")
+    assert read_text(path) == "# Progress\n"
+    assert list((tmp_path / "sub").glob("*.tmp")) == []
+
+
 def test_answer_inbox_read_and_consume(tmp_path):
     """read returns the raw contents; consume deletes the file."""
     path = tmp_path / "answer.json"

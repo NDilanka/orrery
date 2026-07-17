@@ -280,7 +280,17 @@
   // load, so it establishes its baseline once and never fires.
   $effect(() => {
     if (cosmosStore.source !== 'tauri') return;
-    for (const l of cosmosStore.loops) alertStore.observe(l.id, l.restState, 'cosmos', undefined, alertAllowed);
+    // Skip the loop you're CURRENTLY inside: the System-sourced effect above already observes it
+    // authoritatively from the LIVE transport, whereas cosmosStore.loops here is the last polled
+    // roster snapshot (stale while you're in-system). Feeding both into the same per-loop
+    // lastRestState map lets the stale snapshot fight the live value — and, when notification
+    // settings change in-system, re-run this effect and fire a spurious alert off that stale
+    // state. In Cosmos view activeLoop is null, so this skips nothing there (zero regression to
+    // cosmos-view alerts); it only excludes the active loop while you're inside a System.
+    for (const l of cosmosStore.loops) {
+      if (l.id === activeLoop) continue;
+      alertStore.observe(l.id, l.restState, 'cosmos', undefined, alertAllowed);
+    }
   });
 
   onMount(() => {

@@ -44,17 +44,35 @@ def pid_alive(pid: int) -> bool:
 def acquire_lock(lock_path: Path) -> bool:
     """Write a pid lockfile; refuse (return False) if a LIVE lock already exists.
 
-    A stale lock (its pid is gone, or is already OUR pid from a re-entrant call) is reclaimed.
+    The create is atomic — ``os.open`` with ``O_CREAT | O_EXCL`` — so two simultaneous starts
+    can never both win the exists()-then-write race that this replaced: exactly one caller
+    creates the file, the loser gets ``FileExistsError``.
+
+    A stale lock (its pid is gone, or is already OUR pid from a re-entrant call) is reclaimed
+    on the ``FileExistsError`` path. Reclaim is best-effort and NOT fully race-free: we confirm
+    staleness by reading the recorded pid, then ``os.replace`` our pid in atomically. Two
+    processes both reclaiming the SAME stale lock at once can each succeed the replace (last
+    writer wins), so reclaim is only safe against a genuinely dead holder — the common case.
     """
-    if lock_path.exists():
+    try:
+        fd = os.open(os.fspath(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        # A lockfile already exists. Reclaim it only if the recorded pid is dead (or is ours).
         try:
             existing = int((read_text(lock_path) or "0").strip() or "0")
         except ValueError:
             existing = 0
         if existing and existing != os.getpid() and pid_alive(existing):
-            return False
-    write_text(lock_path, str(os.getpid()))
-    return True
+            return False  # a LIVE holder — refuse.
+        # Stale (dead pid / ours / unreadable): reclaim by atomically replacing the file's pid.
+        write_text(lock_path, str(os.getpid()))
+        return True
+    else:
+        try:
+            os.write(fd, str(os.getpid()).encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True
 
 
 def release_lock(lock_path: Path) -> None:

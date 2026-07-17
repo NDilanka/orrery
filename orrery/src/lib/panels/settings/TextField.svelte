@@ -16,10 +16,17 @@
   } = $props();
 
   let el = $state<HTMLInputElement | null>(null);
+  // See NumberField: track the last text we wrote so an external update while focused isn't
+  // later clobbered by the blur commit of stale field text.
+  let lastSynced = '';
 
   $effect(() => {
     const v = value == null ? '' : String(value);
-    if (el && document.activeElement !== el) el.value = v;
+    if (!el) return;
+    if (document.activeElement !== el || el.value === lastSynced) {
+      el.value = v;
+      lastSynced = v;
+    }
   });
 
   function onKeydown(e: KeyboardEvent) {

@@ -223,7 +223,9 @@
         resolution: Math.min(window.devicePixelRatio || 1, 2),
       });
       if (destroyed) {
-        app.destroy(true);
+        // teardown may have already run during `await app.init()` and set `app = null` after
+        // destroying it — guard so this cleanup path never TypeErrors on a null app.
+        app?.destroy(true);
         return;
       }
       host.appendChild(app.canvas);

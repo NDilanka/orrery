@@ -149,6 +149,8 @@ def survive(
     sleep,
     default_wait_min: int = 30,
     max_waits: int = 30,
+    blind_waits: int = 0,
+    max_blind_waits: int = 4,
     now_fn=None,
 ) -> bool:
     """Wait-and-resume around a quota limit; return True when the runner is usable again.
@@ -168,7 +170,13 @@ def survive(
 
     - **Non-probing backend**: it can't tell us when quota frees up, so emit a single fallback
       ``quota_wait_event`` (no reset known), sleep ``default_wait_min`` minutes, and return True
-      so the caller simply re-attempts the run.
+      so the caller simply re-attempts the run. To stop a PERSISTENT rate limit from making the
+      caller re-attempt forever (bypassing max_iters / cost ceilings — there is no probe to ever
+      clear it), these fallback waits are BOUNDED: ``blind_waits`` is the count of consecutive
+      fallback waits already spent in this retry sequence, and once it reaches ``max_blind_waits``
+      survive returns False WITHOUT waiting, so the caller falls into its normal quota-failure
+      path. The caller owns the counter (incrementing it after each fallback wait, resetting it
+      when a run succeeds); a fresh retry sequence starts at ``blind_waits=0``.
 
     ``emit`` (event sink), ``sleep`` (seconds -> None) and ``now_fn`` (-> datetime) are injected
     so tests are deterministic — no real clock, no real sleep, no real ``claude``.
@@ -211,9 +219,14 @@ def survive(
             status = runner.probe_quota()
         return False
 
-    # Non-probing backend: one fallback wait, then let the caller re-attempt.
+    # Non-probing backend: one bounded fallback wait, then let the caller re-attempt. Once the
+    # caller has already spent max_blind_waits consecutive fallback waits, a persistent limit is
+    # no longer worth blindly re-waiting on — give up (return False) so the caller's quota-failure
+    # path runs instead of looping forever past max_iters / cost ceilings.
+    if blind_waits >= max_blind_waits:
+        return False
     emit(quota_hit_event(label, cum, None))
     wait = default_wait_min * 60
-    emit(quota_wait_event(label, cum, wait, 1, reset_type=None, now=now_fn()))
+    emit(quota_wait_event(label, cum, wait, blind_waits + 1, reset_type=None, now=now_fn()))
     sleep(wait)
     return True

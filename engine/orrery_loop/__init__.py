@@ -6,4 +6,4 @@ calls, no I/O — every function is deterministic and unit-tested for parity aga
 authoritative PowerShell source.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"

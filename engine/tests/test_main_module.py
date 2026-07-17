@@ -13,7 +13,14 @@ import sys
 
 import pytest
 
+import orrery_loop
 import orrery_loop.cli as cli
+
+
+def test_package_version_is_current():
+    # __init__.py's __version__ is the single source of truth (pyproject reads it via
+    # [tool.hatch.version]); pin it so the two can't silently drift apart again.
+    assert orrery_loop.__version__ == "0.5.0"
 
 
 def test_module_entry_help_exits_0_with_usage():

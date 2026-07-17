@@ -221,6 +221,10 @@ class ResilientRunner(AgentRunner):
         # at exactly ONE non-resume fallback if a resumed attempt errors non-quota (never loops).
         resume: str | None = None
         fresh_fallback_used = False
+        # Consecutive blind (non-probing) quota fallback waits. survive() bounds these so a
+        # persistent rate limit on a non-probing backend can't spin this while-True forever; a
+        # successful (non-quota) attempt returns out of the loop, resetting the count next call.
+        blind_waits = 0
         while True:
             call_kwargs = dict(kwargs)
             # Inject the fallback-model chain only when configured AND the caller didn't already set
@@ -267,10 +271,15 @@ class ResilientRunner(AgentRunner):
                 sleep=self._sleep,
                 default_wait_min=self._default_wait_min,
                 max_waits=self._max_waits,
+                blind_waits=blind_waits,
             )
             if not recovered:
                 # Give up — surface the quota-limited result so the phase stops.
                 return res
+            # Count a non-probing fallback wait toward survive()'s blind-wait cap; a probing
+            # backend clears via its own probe loop and never accrues here.
+            if not getattr(self._base, "supports_quota_probe", False):
+                blind_waits += 1
             # recovered -> retry. If this quota-limited attempt carried a session id (and the
             # backend supports --resume), continue the SAME session; else re-run the call.
             sid = getattr(res, "session_id", None)

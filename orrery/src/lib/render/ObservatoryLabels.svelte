@@ -174,7 +174,12 @@
     return 'var(--status-idle-core)';
   }
 
-  const laidOut = $derived.by<Laid[]>(() => {
+  // PURE layout pass: computes both the placed labels AND the next-frame anchor map, WITHOUT
+  // mutating `lastAnchor` (the hysteresis memory). Committing that memory is a side effect, so it
+  // moved to the $effect below — a $derived must not write shared state or it recomputes with a
+  // stale/partial view under Svelte's batching. Reading `lastAnchor` here is fine: it's a plain
+  // let (no reactive edge), so this pass sees last frame's decision exactly as before.
+  const laidOut = $derived.by<{ items: Laid[]; nextAnchor: Map<string, Anchor> }>(() => {
     const bodies = [...labels.bodies].sort((a, c) => labelPriority(a) - labelPriority(c));
     const placed: Rect[] = [];
 
@@ -254,8 +259,14 @@
       }
     }
 
-    lastAnchor = nextAnchor;
-    return out;
+    return { items: out, nextAnchor };
+  });
+
+  // Commit the hysteresis memory as a side effect (never inside the derived above). Runs after
+  // each layout pass; `lastAnchor` is a plain let, so this write creates no reactive loop back
+  // into the derived — it simply parks the decision for the next frame to read.
+  $effect(() => {
+    lastAnchor = laidOut.nextAnchor;
   });
 </script>
 
@@ -275,7 +286,7 @@
        current gets the full/undimmed treatment (+ the claimed-vs-verified trust glyph),
        others are small/faded (Task 3 declutter); a body that lost the anchor contest
        renders as a dot instead of stacking illegible text (M2.8) -->
-  {#each laidOut as item (item.key)}
+  {#each laidOut.items as item (item.key)}
     {#if item.dropped}
       <div
         class="dot"

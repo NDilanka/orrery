@@ -144,6 +144,25 @@ describe('verify.enabled — the AC-driven anti-false-green pass (foot-gun catch
   });
 });
 
+describe('composeEngine — command-less gate stages are dropped', () => {
+  it('keeps only stages carrying a real command (a name-only stage never reaches loop.json)', () => {
+    const bp = BLUEPRINTS.custom;
+    const engine = composeEngine(
+      bp,
+      bp.dials,
+      {
+        acceptanceCriteria: ['tests pass'],
+        gateStages: [
+          { name: 'real', command: 'bun test' },
+          { name: 'name-only', command: '   ' },
+        ],
+      },
+      'TASK.md',
+    );
+    expect(engine.gate.stages).toEqual([{ name: 'real', command: 'bun test' }]);
+  });
+});
+
 describe('deriveFromDials — each dial moves a real, monotonic, engine-consumed bundle', () => {
   it('ambition: thrift end is cheap+short+cool, ambition end is pricier+longer+hot', () => {
     const thrift = deriveFromDials({ ambition: 0, patience: 0.5, autonomy: 0.5 });
@@ -374,6 +393,20 @@ describe('validateDraft', () => {
       ['existing-loop'],
     );
     expect(good.ok).toBe(true);
+  });
+
+  it('rejects a name-only gate stage — a gate with no command can never verify anything', () => {
+    const bad = validateDraft(
+      {
+        id: 'my-loop',
+        name: 'My loop',
+        acceptanceCriteria: ['tests pass'],
+        gateStages: [{ name: 'test', command: '   ' }],
+      },
+      [],
+    );
+    expect(bad.ok).toBe(false);
+    expect(bad.errors.some((e) => /gate stage/i.test(e))).toBe(true);
   });
 
   const validBase = {

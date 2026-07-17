@@ -15,12 +15,23 @@ export default defineConfig({
   // keep CI honest but don't fail a local run for a stray .only
   forbidOnly: false,
   fullyParallel: false,
+  // One worker: all specs share a single reused `vite dev` server driving a
+  // WebGL/Pixi-heavy scene, and the timing-sensitive replay specs (cursor
+  // advance/settle) flake under the contention of parallel workers hammering
+  // that one server. The suite is small and fully serial by design anyway.
+  workers: 1,
   retries: 0,
   reporter: [['list']],
 
   use: {
     baseURL,
     trace: 'retain-on-failure',
+    // Sandboxed/CI containers often ship a system Chromium instead of the
+    // exact browser build this @playwright/test version would download.
+    // Point PW_CHROMIUM_PATH at it to skip `npx playwright install`.
+    ...(process.env.PW_CHROMIUM_PATH
+      ? { launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH } }
+      : {}),
   },
 
   // lean: chromium only

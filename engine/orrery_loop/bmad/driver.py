@@ -1872,6 +1872,16 @@ def _process_story(
     # `gh pr merge --delete-branch` performs internally — aborting the merge mid-flight.
     gitutil.discard_worktree(repo)
     _checkout(repo, config.merge_base)
+
+    # A transient `gh` failure on a post-merge state lookup must NOT unwind the whole driver with
+    # no stop event: treat any PrError as "state unknown" ("") — which is never "MERGED", so every
+    # caller flows into its existing not-MERGED handoff path (a resumable halt) instead of crashing.
+    def _safe_pr_state() -> str:
+        try:
+            return pr.pr_state(branch=branch, cwd=str(repo))
+        except pr.PrError:
+            return ""
+
     try:
         pr.merge_pr(branch=branch, base=config.merge_base, cwd=str(repo))
     except pr.PrError as e:
@@ -1882,7 +1892,7 @@ def _process_story(
         # path (which pulls merge_base, so the next story sees this one as merged) instead of
         # halting — otherwise the loop re-opens + re-merges the SAME story on every resume (this is
         # exactly what merged story 5-1 twice and would have kept opening duplicate PRs).
-        if pr.pr_state(branch=branch, cwd=str(repo)) != "MERGED":
+        if _safe_pr_state() != "MERGED":
             emit(bmad_stop_event(
                 False,
                 f"auto-merge for {target.key} failed: {e}. Resolve it (conflicts / required review "
@@ -1905,13 +1915,13 @@ def _process_story(
     # would stack/lose work, so we confirm state == MERGED before continuing. On a branch-protected
     # base the merge lands a few seconds later — poll up to merge_wait_sec for it before halting so
     # the loop rolls into the next story (config; 0 = strict immediate halt = parity).
-    state = pr.pr_state(branch=branch, cwd=str(repo))
+    state = _safe_pr_state()
     if state != "MERGED" and config.merge_wait_sec > 0:
         deadline = time.monotonic() + config.merge_wait_sec
         while state in ("QUEUED", "OPEN", "BLOCKED", "") and time.monotonic() < deadline:
             time.sleep(5)
             gitutil._git(["pull", "origin", config.merge_base], repo)
-            state = pr.pr_state(branch=branch, cwd=str(repo))
+            state = _safe_pr_state()
     if state != "MERGED":
         waited = (
             f" Waited {config.merge_wait_sec}s for it to land."

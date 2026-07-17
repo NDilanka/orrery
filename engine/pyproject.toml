@@ -4,11 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orrery-loop"
-version = "0.4.0"
+dynamic = ["version"]
 description = "Pure, testable harness logic for the Orrery loop engine (Python port of loopcore.ps1)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["psutil>=5.9", "pyyaml>=6"]
+
+# Single source of truth for the version: orrery_loop/__init__.py's __version__ (hatchling reads
+# it), so the package metadata and `orrery_loop.__version__` can never drift apart again.
+[tool.hatch.version]
+path = "orrery_loop/__init__.py"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
