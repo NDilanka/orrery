@@ -27,7 +27,9 @@ vi.mock('./cosmos.svelte', () => ({
 }));
 
 import { sessionStore } from './session.svelte';
+import { runStore } from './run.svelte';
 import type { Transport } from '../transport';
+import type { RunState } from '../types';
 
 // A controllable mock Transport. `pending` = true holds `start()` unresolved until the test
 // calls `resolveStart()`, so the test can land right in the middle of mountLoop's second await.
@@ -115,6 +117,50 @@ describe('SessionStore.mountLoop re-entrancy guard', () => {
 
     expect(sessionStore.transportKind).toBeNull();
     expect(t1.stop).toHaveBeenCalled();
+  });
+
+  it('a stale transport A whose start() is still streaming cannot write state into the store the newer mount B owns', async () => {
+    // Capture the onState closure each createTransport call is handed, so the test can drive
+    // it exactly the way a real transport (a Tauri watcher / replay tick) would, from OUTSIDE
+    // mountLoop — this is what the epoch guard on the callbacks must neutralise for the stale one.
+    const captured: Array<(s: RunState) => void> = [];
+    const base = structuredClone(runStore.state);
+    const withStatus = (status: RunState['run']['status']): RunState => ({
+      ...base,
+      run: { ...base.run, status },
+    });
+
+    // transport A ('demo'): start() stays pending so its mount is still "in flight" — and thus
+    // superseded — when B lands.
+    const { transport: tA, resolveStart: resolveStartA } = makeTransport('tauri', true);
+    createTransportMock.mockImplementationOnce((_choice, opts) => {
+      captured.push(opts.onState);
+      return tA;
+    });
+    const pA = sessionStore.mountLoop('demo');
+
+    // transport B ('bmad'): resolves immediately and becomes the mounted System.
+    const { transport: tB } = makeTransport('replay', false);
+    createTransportMock.mockImplementationOnce((_choice, opts) => {
+      captured.push(opts.onState);
+      return tB;
+    });
+    await sessionStore.mountLoop('bmad');
+
+    const [onStateA, onStateB] = captured;
+    // B is the current mount — its callback writes through.
+    onStateB(withStatus('running'));
+    expect(runStore.state.run.status).toBe('running');
+
+    // A is superseded — its late emission must be DROPPED, not clobber B's state.
+    onStateA(withStatus('error'));
+    expect(runStore.state.run.status).toBe('running');
+
+    resolveStartA();
+    await pA;
+    // even after A's start() finally resolves, a further stale emission is still ignored.
+    onStateA(withStatus('stopped'));
+    expect(runStore.state.run.status).toBe('running');
   });
 
   it('unmountLoop supersedes an in-flight mountLoop', async () => {

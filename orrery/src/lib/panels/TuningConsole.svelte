@@ -857,7 +857,10 @@
     if (i === 1) {
       return (
         acceptanceCriteria.some((a) => a.trim()) &&
-        gateStages.some((s) => s.command.trim() || s.name.trim())
+        // Require at least one stage with a real COMMAND: a name-only stage produces a gate
+        // that runs an empty command (mirrors validateDraft in blueprints.ts). A named-but-
+        // empty stage is not a runnable gate.
+        gateStages.some((s) => s.command.trim())
       );
     }
     return true;

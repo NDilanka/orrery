@@ -430,6 +430,13 @@ fn write_loop_def(loops_dir: &Path, id: &str, mut def: Value) -> Result<LoopDef,
     let parsed: LoopDef = serde_json::from_value(def.clone())
         .map_err(|e| format!("invalid loop definition: {e}"))?;
 
+    // Defense-in-depth: refuse to persist a loop whose start.program isn't an allowlisted engine,
+    // so a hostile/mistyped program is rejected at author time (not just at spawn time). Mirrors
+    // the `start_with_spec` gate. Shared by create/update/clone (all funnel through here).
+    if let Some(start) = &parsed.start {
+        validate_program_allowed(&start.program)?;
+    }
+
     let dir = loops_dir.join(id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir:?}: {e}"))?;
     let path = loop_json_path(loops_dir, id);
@@ -549,7 +556,15 @@ pub fn delete_loop(loops_dir: String, id: String) -> Result<(), String> {
 //
 // SECURITY: we only ever spawn the program/args declared in the loop's own loop.json (or
 // the checkpoint `resume` string the engine itself wrote). The frontend cannot inject a
-// command. `mode` is validated against {phase,story,now}.
+// command. `mode` is validated against {phase,story,now}. As defense-in-depth against a
+// hostile loop.json that lands in loops/<id>/ out-of-band (a synced folder, a hand-edit, a
+// malicious clone/import), the start `program` is ALSO allowlisted — at spawn time (every
+// start/resume funnels through `start_with_spec`) AND at create/update validation. Its file
+// stem (basename minus a `.exe`/`.cmd`/`.bat`/`.ps1` launcher extension) must be one of the
+// loop engine's own console scripts (loop, loop-bmad, loop-qa, loop-supervise, loop-stop) or
+// `python`/`python3` (templates may invoke `python -m orrery_loop`); anything else (a shell,
+// `/bin/sh`, an arbitrary interpreter) is refused by name. See `validate_program_allowed` /
+// `ALLOWED_PROGRAM_STEMS`.
 
 /// Load `loops/<id>/loop.json` into a `LoopDef`.
 fn load_loop_def(loops_dir: &Path, loop_id: &str) -> Result<LoopDef, String> {
@@ -733,6 +748,14 @@ fn find_running_pid(spec: &GuardSpec) -> Option<u32> {
 /// Kill `pid` and its transitive children, then wait briefly for the root to disappear so the
 /// caller can reclaim its files. Used ONLY by `delete_loop` — everywhere else stopping is
 /// cooperative (STOP flag). Best-effort: a pid that already exited is simply skipped.
+///
+/// PID-REUSE CAVEAT: this is inherently best-effort. Between the moment `delete_loop` resolved
+/// `pid` (via a sysinfo scan) and the moment we `kill()` here, the original process could have
+/// exited and the OS could have RECYCLED that pid onto an unrelated new process — which we would
+/// then kill by mistake. The window is tiny and the same snapshot supplies both the pid and its
+/// parent links, but the OS can reuse a pid the instant it's freed, so this can never be made
+/// fully race-free. Accepted because `delete_loop` is an explicit, confirmed, destructive action
+/// on a loop whose state is being removed anyway; nothing else in the app kills by pid.
 fn kill_process_tree(root: u32) {
     use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
     let sys = System::new_with_specifics(
@@ -797,6 +820,55 @@ fn resolve_program(program: &str, base_dir: &Path) -> String {
     program.to_string()
 }
 
+/// Allowlist of program file stems a loop's `start.program` may spawn (defense-in-depth). A
+/// hostile loop.json dropped into `loops/<id>/` could otherwise name ANY executable and have it
+/// spawned verbatim on Start/Resume, so we pin the executable to the loop engine's own console
+/// scripts (`loop`, `loop-bmad`, `loop-qa`, `loop-supervise`, `loop-stop`) plus `python`/`python3`
+/// (a template may invoke `python -m orrery_loop`).
+const ALLOWED_PROGRAM_STEMS: &[&str] = &[
+    "loop",
+    "loop-bmad",
+    "loop-qa",
+    "loop-supervise",
+    "loop-stop",
+    "python",
+    "python3",
+];
+
+/// The allowlist stem of a `start.program`: its basename, lowercased, with a trailing
+/// `.exe`/`.cmd`/`.bat`/`.ps1` launcher extension removed. ONLY those extensions are stripped
+/// (via `file_stem`-style logic that would strip ANY extension) so a program named `loop.sh`
+/// keeps its `.sh` and can't masquerade as the allowed `loop`. Works on both separators so a
+/// Windows path (`C:\\x\\loop.exe`) is handled on every platform.
+fn program_allow_stem(program: &str) -> String {
+    let norm = program.replace('\\', "/");
+    let base = Path::new(&norm)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    for ext in [".exe", ".cmd", ".bat", ".ps1"] {
+        if let Some(stripped) = base.strip_suffix(ext) {
+            return stripped.to_string();
+        }
+    }
+    base
+}
+
+/// Enforce the `start.program` allowlist (defense-in-depth). `Ok(())` when the program's stem is
+/// allowed; otherwise an `Err` naming the offending program and its resolved stem.
+fn validate_program_allowed(program: &str) -> Result<(), String> {
+    let stem = program_allow_stem(program);
+    if ALLOWED_PROGRAM_STEMS.contains(&stem.as_str()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "program {program:?} is not allowed (resolved stem {stem:?}); allowed engines: {}",
+            ALLOWED_PROGRAM_STEMS.join(", ")
+        ))
+    }
+}
+
 /// Spawn `program` + `args` as a DETACHED child, redirecting stdout+stderr to
 /// `<stateDir>/run.out` so the existing tailer can read the transcript. We do NOT wait on
 /// the child. Returns its PID.
@@ -859,7 +931,17 @@ fn spawn_detached(
     let child = cmd
         .spawn()
         .map_err(|e| format!("spawn {program} {args:?}: {e}"))?;
-    Ok(child.id())
+    let pid = child.id();
+    // Reap the detached child on a throwaway thread so a finished loop doesn't linger as a zombie
+    // (Unix keeps an unwaited child in the process table until its parent waits) until app exit.
+    // Fire-and-forget: we never use the exit status here — start/stop is cooperative — and the
+    // thread is cheap and cross-platform (a no-op wait on Windows). The child is already in its own
+    // process group, so this reaper never affects its lifecycle.
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 /// Global registry of per-loop-id locks. `start_with_spec`'s guard-then-spawn (sysinfo scan,
@@ -902,6 +984,11 @@ fn start_with_spec(
     // no `.await` point exists to hold it across.
     let lock = loop_lock(loop_id);
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    // Defense-in-depth: even though create/update validate loop.json, a loop.json can land in
+    // loops/<id>/ out-of-band (a synced folder, a hand-edit, a checkpoint `resume` string). Refuse
+    // to spawn anything but an allowlisted engine program before we scan/spawn anything.
+    validate_program_allowed(&spec.program)?;
 
     let guard = guard_spec(def);
     if let Some(_existing) = find_running_pid(&guard) {
@@ -1594,6 +1681,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_program_allowlist_accepts_engines_and_rejects_shells() {
+        // Allowed bare console-script names (the loop engine's own entrypoints + python).
+        for ok in ["loop", "loop-bmad", "loop-qa", "loop-supervise", "loop-stop", "python", "python3"] {
+            assert!(validate_program_allowed(ok).is_ok(), "should allow bare {ok:?}");
+        }
+
+        // Allowed as an ABSOLUTE path into a bundled venv, on both separators, incl. a .exe suffix.
+        assert!(validate_program_allowed("/repo/.venv/bin/loop-bmad").is_ok());
+        assert!(validate_program_allowed("C:\\repo\\.venv\\Scripts\\loop.exe").is_ok());
+        assert!(validate_program_allowed("/usr/bin/python3").is_ok());
+
+        // Rejected: a real shell, an absolute /bin/sh, a `sh -c` style program, and a lookalike
+        // that only strips a launcher extension (not `.sh`).
+        for bad in ["sh", "/bin/sh", "bash", "cmd", "powershell", "pwsh", "node", "loop.sh"] {
+            let err = validate_program_allowed(bad).unwrap_err();
+            assert!(err.contains("not allowed"), "{bad:?} -> {err}");
+            assert!(err.contains(bad), "error must name the offending program {bad:?}: {err}");
+        }
+    }
+
+    #[test]
     fn create_loop_round_trips_and_list_reads_it_back() {
         let tmp = TmpDir::new("crud");
         let loops_dir = tmp.path().to_string_lossy().to_string();
@@ -1607,7 +1715,7 @@ mod tests {
             "adapter": "generic",
             "stateDir": ".loop",
             "logFile": "log.jsonl",
-            "start": { "program": "pwsh", "args": ["-NoProfile", "-File", "loop.ps1"] },
+            "start": { "program": "loop", "args": ["--loop-json", "loop.json", "--state-dir", ".loop"] },
             "engine": {
                 "task": "TASK.md",
                 "models": { "discover": "haiku", "execute": "sonnet", "judge": "haiku", "hard": "opus" },

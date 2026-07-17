@@ -8,12 +8,16 @@
 //!
 //! Routes:
 //!   * `GET /`                       — the built SPA (`../build`) via tower-http `ServeDir`.
-//!   * `GET /ws?loop=<id>&token=<t>` — a WebSocket streaming `Delta`s for a loop. **REQUIRES the
+//!   * `GET /ws?loop=<id>`           — a WebSocket streaming `Delta`s for a loop. **REQUIRES the
 //!                                     token** (R5 — previously observe worked without one, which
 //!                                     let anyone on the network stream run state by guessing a
 //!                                     short loop id).
 //!   * `POST /api/control`           — start/stop/resume/answer. **REQUIRES the token.**
 //!   * `GET /api/health`             — unauthenticated liveness probe.
+//!
+//! The `/ws` token rides the `Sec-WebSocket-Protocol` header as `orrery-token.<t>` (echoed back to
+//! complete the RFC 6455 handshake) so it never leaks into logs/proxy history; a `?token=<t>`
+//! query is still accepted as a deprecated fallback for older phone sessions.
 //!
 //! SECURITY: the server only runs after `start_lan_server`. EVERY route except `/api/health`
 //! requires the token (constant-time-ish compare). Loop ids are validated as plain path
@@ -151,16 +155,25 @@ pub fn lan_ipv4() -> Ipv4Addr {
     Ipv4Addr::UNSPECIFIED
 }
 
-/// Resolve a loop's `(stateDir, adapter, logFile)` from `loops/<id>/loop.json`.
+/// Resolve a loop's `(stateDir, adapter, logFile)` from `loops/<id>/loop.json`. A RELATIVE
+/// `stateDir` (every seed ships `".loop"`) is resolved under the loop's OWN dir
+/// (`loops/<id>`), mirroring control.rs `state_dir_of`/`resolve_under`. Without this the LAN
+/// `/ws` path resolved `.loop` against the SERVER PROCESS cwd, so phones observed an empty run
+/// while the desktop (which resolves under the loop dir) saw the real one. An ABSOLUTE `stateDir`
+/// is used verbatim.
 fn resolve_loop(loops_dir: &PathBuf, loop_id: &str) -> Result<(PathBuf, String, Option<String>), String> {
     if !is_safe_loop_id(loop_id) {
         return Err(format!("invalid loop id {loop_id:?}"));
     }
-    let p = loops_dir.join(loop_id).join("loop.json");
+    let base = loops_dir.join(loop_id);
+    let p = base.join("loop.json");
     let text = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
     let def: crate::model::LoopDef =
         serde_json::from_str(&text).map_err(|e| format!("parse {p:?}: {e}"))?;
-    Ok((PathBuf::from(def.state_dir), def.adapter, def.log_file))
+    // Resolve relative-under-loop-dir, absolute-verbatim — the exact contract control.rs uses.
+    let sd = PathBuf::from(&def.state_dir);
+    let state_dir = if sd.is_absolute() { sd } else { base.join(sd) };
+    Ok((state_dir, def.adapter, def.log_file))
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +213,9 @@ pub fn start_lan_server(
     };
     let bind_addr = SocketAddr::new(bind_ip, port);
 
-    // The advertised url uses the detected LAN ip even when we bound 0.0.0.0, so the QR is reachable.
+    // The advertised url uses the detected LAN ip (the same ip we bind above); when detection
+    // failed we bound 127.0.0.1 and advertise that too — we NEVER bind 0.0.0.0, so the advertised
+    // host always matches the actual bind surface.
     let host_for_url = if lan_ip.is_unspecified() {
         Ipv4Addr::LOCALHOST
     } else {
@@ -305,27 +320,65 @@ async fn health_handler() -> impl IntoResponse {
 struct WsQuery {
     #[serde(rename = "loop")]
     loop_id: String,
+    /// DEPRECATED token transport (kept for older phone sessions): prefer the
+    /// `Sec-WebSocket-Protocol: orrery-token.<t>` header, which keeps the secret out of the URL.
     token: Option<String>,
 }
 
-/// `GET /ws?loop=<id>&token=<t>` — watch a loop. REQUIRES the token (R5): anyone on the network
-/// who can reach the port could previously stream run state by guessing a short loop id, with no
-/// auth at all. Resolves the loop, runs the same tail+reduce+watch pipeline as `watch_run`, and
-/// forwards each `Delta` as a JSON text frame.
+/// The `Sec-WebSocket-Protocol` subprotocol prefix carrying the LAN token: `orrery-token.<token>`.
+const PROTO_TOKEN_PREFIX: &str = "orrery-token.";
+
+/// Extract the token from a `Sec-WebSocket-Protocol` header of the form `orrery-token.<token>`
+/// (possibly among other comma-separated offered subprotocols). Returns the raw token (prefix
+/// stripped), or `None` when no such subprotocol was offered. Keeping the token in a subprotocol
+/// header rather than the `?token=` query keeps it out of access logs, proxies, and browser
+/// history.
+fn subprotocol_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers
+        .get(axum::http::header::SEC_WEBSOCKET_PROTOCOL)?
+        .to_str()
+        .ok()?;
+    raw.split(',')
+        .map(|s| s.trim())
+        .find_map(|p| p.strip_prefix(PROTO_TOKEN_PREFIX))
+        .map(|t| t.to_string())
+}
+
+/// `GET /ws?loop=<id>` — watch a loop. REQUIRES the token (R5): anyone on the network who can
+/// reach the port could previously stream run state by guessing a short loop id, with no auth at
+/// all. The token arrives via the `Sec-WebSocket-Protocol: orrery-token.<t>` header (preferred —
+/// out of the URL) or a deprecated `?token=<t>` query fallback. Resolves the loop, runs the same
+/// tail+reduce+watch pipeline as `watch_run`, and forwards each `Delta` as a JSON text frame.
 async fn ws_handler(
     State(state): State<AppState>,
     Query(q): Query<WsQuery>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Prefer the token from the subprotocol header; fall back to the deprecated query param.
+    let proto_token = subprotocol_token(&headers);
+    let token = proto_token.as_deref().or(q.token.as_deref()).unwrap_or("");
     // Token gate FIRST — same constant-time-ish compare as `/api/control`, before we even touch
     // the loop registry or upgrade the connection.
-    if !token_eq(q.token.as_deref().unwrap_or(""), &state.token) {
+    if !token_eq(token, &state.token) {
         return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
     }
     // Resolve before upgrading so a bad loop id closes the handshake cleanly.
     match resolve_loop(&state.loops_dir, &q.loop_id) {
         Ok((state_dir, adapter, log_file)) => {
-            ws.on_upgrade(move |socket| stream_loop(socket, state_dir, adapter, log_file))
+            match proto_token {
+                // Token came via the subprotocol → echo that exact subprotocol back so the browser
+                // handshake completes (RFC 6455 §4.2.2: the server's selected subprotocol MUST be
+                // one the client offered). `String: Into<Cow<'static, str>>`, so a runtime value is
+                // fine here.
+                Some(tok) => {
+                    let selected = format!("{PROTO_TOKEN_PREFIX}{tok}");
+                    ws.protocols([selected])
+                        .on_upgrade(move |socket| stream_loop(socket, state_dir, adapter, log_file))
+                }
+                // Token came via the query fallback → no subprotocol to echo.
+                None => ws.on_upgrade(move |socket| stream_loop(socket, state_dir, adapter, log_file)),
+            }
         }
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
@@ -337,7 +390,21 @@ async fn ws_handler(
 async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String, log_file: Option<String>) {
     // 1) initial snapshot — reuse the shared reducer pipeline; keep the live reducer + consumed
     // length so the tail below feeds it ONLY new lines instead of re-reducing from scratch.
-    let (mut live, consumed_len) = control::build_live_pub(&state_dir, &adapter, log_file.as_deref());
+    // `build_live_pub` reads + reduces the WHOLE on-disk log synchronously — on this 2-worker
+    // runtime that would block a worker for the entire read, so run it on the blocking pool.
+    let (mut live, consumed_len) = {
+        let sd = state_dir.clone();
+        let ad = adapter.clone();
+        let lf = log_file.clone();
+        match tokio::task::spawn_blocking(move || {
+            control::build_live_pub(&sd, &ad, lf.as_deref())
+        })
+        .await
+        {
+            Ok(v) => v,
+            Err(_) => return, // the build task panicked/was cancelled — close the socket
+        }
+    };
     if send_delta(&mut socket, Delta::Snapshot { state: live.state() }).await.is_err() {
         return;
     }
@@ -423,9 +490,11 @@ async fn stream_loop(mut socket: WebSocket, state_dir: PathBuf, adapter: String,
         }
     }
 
-    // tear down the watcher thread
+    // tear down the watcher thread. `handle.join()` blocks until the watcher notices the stop flag
+    // on its next poll tick (~50ms), so run it on the blocking pool rather than parking a worker of
+    // this 2-worker runtime.
     stop.store(true, Ordering::Relaxed);
-    let _ = handle.join();
+    let _ = tokio::task::spawn_blocking(move || handle.join()).await;
 }
 
 /// Serialize + send a `Delta` as a JSON text frame.
@@ -549,10 +618,41 @@ mod tests {
         let (state_dir, adapter, log_file) = resolve_loop(&loops_dir, "hello").expect("resolve hello");
         assert_eq!(adapter, "generic");
         assert_eq!(log_file.as_deref(), Some("log.jsonl"));
-        assert!(state_dir.to_string_lossy().contains(".loop"));
+        // The seed's relative ".loop" must resolve to an ABSOLUTE path UNDER loops/hello (not the
+        // server-process cwd), exactly as the desktop control path resolves it — otherwise phones
+        // tail a nonexistent `./.loop` and observe an empty run.
+        let want = loops_dir.join("hello").join(".loop");
+        assert_eq!(state_dir, want, "relative stateDir must resolve under the loop's own dir");
+        assert!(state_dir.is_absolute(), "resolved stateDir must be absolute: {state_dir:?}");
 
         // a traversal id is refused before any read
         assert!(resolve_loop(&loops_dir, "../evil").is_err());
+    }
+
+    #[test]
+    fn subprotocol_token_extracts_from_sec_websocket_protocol() {
+        use axum::http::{header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, HeaderValue};
+
+        // sole offered subprotocol
+        let mut h = HeaderMap::new();
+        h.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static("orrery-token.deadbeef"));
+        assert_eq!(subprotocol_token(&h).as_deref(), Some("deadbeef"));
+
+        // among other offered subprotocols (browsers may offer several, comma+space separated)
+        let mut h2 = HeaderMap::new();
+        h2.insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("chat, orrery-token.abc123, superchat"),
+        );
+        assert_eq!(subprotocol_token(&h2).as_deref(), Some("abc123"));
+
+        // no orrery-token subprotocol → None (falls back to the ?token= query at the call site)
+        let mut h3 = HeaderMap::new();
+        h3.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static("chat"));
+        assert_eq!(subprotocol_token(&h3), None);
+
+        // absent header → None
+        assert_eq!(subprotocol_token(&HeaderMap::new()), None);
     }
 
     #[test]

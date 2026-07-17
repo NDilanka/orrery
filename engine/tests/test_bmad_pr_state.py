@@ -107,3 +107,23 @@ def test_pr_url_empty_when_no_pr(monkeypatch):
     _stub_proc(monkeypatch, _FakeResult(returncode=1, stderr="no pull requests found"))
 
     assert pr.pr_url(branch="feat/story-x", cwd=".") == ""
+
+
+def test_gh_calls_use_a_finite_timeout(monkeypatch):
+    # Every `gh` call must pass a FINITE timeout (not the unbounded 0) so a hung `gh` — an auth
+    # prompt, a network stall — can't block a phase forever.
+    seen_kwargs: list[dict] = []
+
+    def fake_run(argv, *args, **kwargs):
+        seen_kwargs.append(kwargs)
+        return _FakeResult(returncode=0, stdout="MERGED\n")
+
+    monkeypatch.setattr(pr.proc, "run_with_timeout", fake_run)
+
+    assert pr.GH_TIMEOUT_SEC == 120
+    pr.pr_state(branch="b", cwd=".")          # via _run_gh
+    pr.create_pr(branch="b", base="d", title="t", body="y", cwd=".")  # via _run_gh
+    pr.pr_url(branch="b", cwd=".")            # direct proc call
+    for kw in seen_kwargs:
+        assert kw.get("timeout_sec") == pr.GH_TIMEOUT_SEC
+        assert kw["timeout_sec"] not in (0, None)

@@ -105,15 +105,26 @@ class SessionStore {
       this.transportKind = null;
       return;
     }
+    // Epoch-guard EVERY transport callback: a transport keeps a live reference to these
+    // closures, so a superseded mount (fast loop-switch/unmount) whose start() is still
+    // streaming — or a Tauri watcher that fires once more after stop() — must not write the
+    // OLD loop's state/status/playback into the stores the NEWER mount now owns. Each closure
+    // compares the captured `epoch` against the current `mountEpoch` and drops stale writes.
     const transport = createTransport(withBase(choice), {
-      onState: (s) => runStore.set(s),
-      onWsStatus: (st) => (this.wsStatus = st),
+      onState: (s) => {
+        if (this.mountEpoch === epoch) runStore.set(s);
+      },
+      onWsStatus: (st) => {
+        if (this.mountEpoch === epoch) this.wsStatus = st;
+      },
     });
     this.transport = transport;
     this.transportKind = transport.kind;
     if (isPlayback(transport)) {
       this.playback = transport;
-      transport.onPlayback((p) => (this.playbackState = p));
+      transport.onPlayback((p) => {
+        if (this.mountEpoch === epoch) this.playbackState = p;
+      });
     } else if (uiStore.mode === 'rewind') {
       // Rewind needs a scrubbable run; a live feed can't scrub → fall back.
       uiStore.setMode('observatory');

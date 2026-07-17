@@ -20,6 +20,11 @@ from __future__ import annotations
 
 from orrery_loop import proc
 
+# Finite wall-clock cap for every `gh` call. Unbounded (0) let a hung `gh` — an auth prompt, a
+# network stall, GitHub not responding — block a phase forever; 120s is generous for a PR
+# create/merge/view yet still terminates a wedged call so the driver can surface it.
+GH_TIMEOUT_SEC = 120
+
 
 class PrError(RuntimeError):
     """A ``gh`` invocation failed (non-zero exit). Carries the trimmed combined output."""
@@ -27,7 +32,11 @@ class PrError(RuntimeError):
 
 def _run_gh(argv: list[str], *, cwd) -> str:
     """Run ``gh <argv>`` in ``cwd``; return trimmed stdout or raise :class:`PrError`."""
-    res = proc.run_with_timeout(["gh", *argv], cwd=str(cwd) if cwd is not None else None)
+    res = proc.run_with_timeout(
+        ["gh", *argv],
+        cwd=str(cwd) if cwd is not None else None,
+        timeout_sec=GH_TIMEOUT_SEC,
+    )
     out = (res.stdout or "").strip()
     if res.returncode != 0:
         err = (res.stderr or "").strip()
@@ -103,6 +112,7 @@ def pr_url(*, branch: str, cwd) -> str:
     res = proc.run_with_timeout(
         ["gh", "pr", "view", branch, "--json", "url", "-q", ".url"],
         cwd=str(cwd) if cwd is not None else None,
+        timeout_sec=GH_TIMEOUT_SEC,
     )
     if res.returncode != 0:
         return ""

@@ -102,14 +102,19 @@ def _stages_for_gate(config: EngineConfig) -> list[dict]:
 
 
 def _lock_glob_set(config: EngineConfig, stages: list[dict]) -> list[str]:
-    """The hash-lock glob set: the configured lock globs PLUS any held-out stages' globs.
+    """The hash-lock glob set: ALL configured lock globs PLUS any held-out stages' globs.
 
-    With no held-out stage this is just the first configured glob (or ``"*"``) — byte-identical
-    to the prior single-glob behavior. Held-out globs are merged in (de-duped, order-stable) so
-    the hidden test files are tamper-protected (orrery_loop.verify.held_out_lock_globs).
+    Every glob in ``config.gate.lock_globs`` is included (order-stable, de-duped), so
+    configuring more than one lock glob tamper-protects them all — not just the first. When no
+    lock globs are configured the set is ``["*"]``. Held-out globs are merged in (de-duped,
+    order-stable) so the hidden test files are tamper-protected
+    (orrery_loop.verify.held_out_lock_globs).
     """
-    base = [config.gate.lock_globs[0]] if config.gate.lock_globs else ["*"]
-    out: list[str] = list(base)
+    base = list(config.gate.lock_globs) if config.gate.lock_globs else ["*"]
+    out: list[str] = []
+    for g in base:
+        if g not in out:
+            out.append(g)
     for g in held_out_lock_globs(stages):
         if g not in out:
             out.append(g)
@@ -429,6 +434,11 @@ def _run_loop_body(
         # (blocking) execute call, mirroring ResilientRunner (orrery_loop.bmad.driver) so the UI has the
         # same freshness signal for a generic loop's execute phase as it does for BMAD phases.
         result = None
+        # Consecutive blind (non-probing) quota fallback waits spent this iteration. A non-probing
+        # backend can't tell us when quota frees, so survive() would otherwise return True forever
+        # on a persistent limit and this retry loop would `continue` past max_iters / cost ceilings.
+        # We bound it: after survive()'s cap it returns False and we take the quota-failure path.
+        blind_waits = 0
         while True:
             with Heartbeat(state / "activity.json", phase="execute", story=f"iter {it}", repo=work):
                 result = runner.run(
@@ -446,15 +456,20 @@ def _run_loop_body(
                 print(f"  [TIMEOUT] iter {it} killed (hung runner)")
                 result = None
                 break
-            if result.quota_limited or (result.is_error and result.quota_limited):
+            if result.quota_limited:
                 recovered = survive(
                     runner,
                     label=f"iter {it}",
                     cum=cum,
                     emit=emit,
                     sleep=time.sleep,
+                    blind_waits=blind_waits,
                 )
                 if recovered:
+                    # Count a non-probing fallback wait toward the blind-wait cap; a probing
+                    # backend clears via its own probe loop, so it never accrues here.
+                    if not getattr(runner, "supports_quota_probe", False):
+                        blind_waits += 1
                     continue  # retry the SAME iteration — no iter consumed
                 # Could not recover -> terminate. loop.ps1 (660-663) emits NO handoff in the
                 # quota path; it just stops. We mirror that for wire parity so the reducer's

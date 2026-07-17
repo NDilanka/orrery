@@ -92,7 +92,12 @@ def parse_verdict(raw_text: str | None, item: str | None, model: str | None) -> 
         if fc is None:
             fc = obj.get("failing_criteria")
         if fc:
-            failing = [str(x) for x in fc]
+            # A list is the contract (judges MUST return a list). But a bare string like
+            # "spec failing" must NOT be iterated char-by-char (which would mint dozens of
+            # single-char criteria and always refute a pass); treat any non-empty string as a
+            # SINGLE criterion. Falsy fc ("none" is truthy but "" / [] / None are not) already
+            # short-circuited above, so an empty/absent value stays [].
+            failing = [str(x) for x in fc] if isinstance(fc, list) else [str(fc)]
 
         if obj.get("evidence") is not None:
             evidence = str(obj["evidence"])

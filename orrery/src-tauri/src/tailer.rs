@@ -24,12 +24,15 @@ use std::time::SystemTime;
 /// platform/filesystem doesn't report a creation time.
 const ANCHOR_LEN: usize = 64;
 
-/// Per-path tail cursor: byte offset + a buffer holding an unterminated trailing line, plus the
-/// file-identity fingerprint (creation time / anchor bytes) captured at the last read.
+/// Per-path tail cursor: byte offset + a RAW byte buffer holding an unterminated trailing line,
+/// plus the file-identity fingerprint (creation time / anchor bytes) captured at the last read.
+/// The partial is bytes (not a `String`) so a multibyte UTF-8 char straddling a read boundary is
+/// carried undecoded to the next read instead of being lossily decoded mid-sequence (which
+/// silently corrupted the line — a `�` replacement char the watcher's serde parse then dropped).
 #[derive(Debug, Default)]
 struct Cursor {
     offset: u64,
-    partial: String,
+    partial: Vec<u8>,
     created: Option<SystemTime>,
     anchor: Option<Vec<u8>>,
 }
@@ -143,36 +146,32 @@ impl Tailer {
         let read = file.read_to_end(&mut buf)?;
         cursor.offset += read as u64;
 
-        // Decode lossily so a half-written multibyte sequence at the boundary doesn't crash us;
-        // the bytes themselves stay accounted for by the offset, but a truly partial UTF-8 char
-        // at the very end is rare in JSONL (newline-terminated ASCII-ish). We append decoded text
-        // to the held partial and split on '\n'.
-        let chunk = String::from_utf8_lossy(&buf);
-        cursor.partial.push_str(&chunk);
+        // Split on b'\n' at the BYTE level: prepend any carried (incomplete) bytes from the last
+        // read, then decode ONLY complete lines (lossily, per line — a genuinely malformed byte
+        // inside a finished line still can't crash us). A trailing unterminated line — which may
+        // end mid-multibyte-char — is carried RAW to the next read, so a UTF-8 sequence straddling
+        // a read boundary is reassembled before it's ever decoded, instead of being lossily
+        // decoded mid-sequence (which corrupted the line and the watcher then silently dropped it).
+        let mut data = std::mem::take(&mut cursor.partial);
+        data.extend_from_slice(&buf);
 
         let mut lines = Vec::new();
-        // Split, keeping the last element (after the final '\n', possibly empty) as the new partial.
-        let ends_with_nl = cursor.partial.ends_with('\n');
-        let mut parts: Vec<&str> = cursor.partial.split('\n').collect();
-
-        // If the buffer ends with '\n', the last part is "" and there's no held partial.
-        // Otherwise the last part is the unterminated line to hold.
-        let held = if ends_with_nl {
-            parts.pop(); // drop the trailing empty
-            String::new()
-        } else {
-            parts.pop().unwrap_or("").to_string()
-        };
-
-        for p in parts {
-            // strip a trailing '\r' (Windows CRLF tolerance) and skip blank lines
-            let line = p.strip_suffix('\r').unwrap_or(p);
-            if !line.is_empty() {
-                lines.push(line.to_string());
+        let mut start = 0usize;
+        for i in 0..data.len() {
+            if data[i] == b'\n' {
+                let mut line = &data[start..i];
+                // strip a trailing '\r' (Windows CRLF tolerance) and skip blank lines
+                if line.last() == Some(&b'\r') {
+                    line = &line[..line.len() - 1];
+                }
+                if !line.is_empty() {
+                    lines.push(String::from_utf8_lossy(line).into_owned());
+                }
+                start = i + 1;
             }
         }
-
-        cursor.partial = held;
+        // Carry the remaining (unterminated) bytes — possibly a partial multibyte char — forward.
+        cursor.partial = data[start..].to_vec();
         Ok((lines, rotated))
     }
 
@@ -195,13 +194,45 @@ mod tests {
     }
 
     fn append(path: &Path, s: &str) {
+        append_bytes(path, s.as_bytes());
+    }
+
+    fn append_bytes(path: &Path, bytes: &[u8]) {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .unwrap();
-        f.write_all(s.as_bytes()).unwrap();
+        f.write_all(bytes).unwrap();
         f.flush().unwrap();
+    }
+
+    #[test]
+    fn multibyte_char_split_across_reads_decodes_intact() {
+        // "café\n" — the é is 0xC3 0xA9 in UTF-8. Append the line in two halves that split é down
+        // the MIDDLE (first read ends on 0xC3, second starts on 0xA9), simulating a write flushed
+        // between two `read_new` polls. The old per-read `from_utf8_lossy` turned the dangling
+        // 0xC3 into a replacement char and advanced past it, corrupting the line; the raw carry
+        // buffer must instead reassemble the char and decode the line intact.
+        let path = tmp_path("multibyte_split");
+        let mut t = Tailer::new();
+
+        let full = "café\n".as_bytes().to_vec(); // c a f 0xC3 0xA9 \n  (6 bytes)
+        assert_eq!(full.len(), 6);
+
+        // First read sees only "caf" + the leading byte of é (0xC3) — no complete line yet.
+        append_bytes(&path, &full[..4]);
+        let (l1, r1) = t.read_new(&path).unwrap();
+        assert!(l1.is_empty(), "no complete line while the char is still split: {l1:?}");
+        assert!(!r1);
+
+        // Second read supplies the trailing byte of é (0xA9) + the newline → the line completes.
+        append_bytes(&path, &full[4..]);
+        let (l2, r2) = t.read_new(&path).unwrap();
+        assert_eq!(l2, vec!["café".to_string()], "the split multibyte char must decode intact");
+        assert!(!r2);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

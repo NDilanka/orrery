@@ -47,6 +47,10 @@
   function close() {
     runStore.selectItem(null);
     autoKey = null;
+    // Reset the refute latch too: without this, a SECOND refute of the SAME item never
+    // re-opens the card (the `lv.key !== lastRefuted` guard stays satisfied). Clearing it on
+    // close means the next `verdict{pass:false}` for that key is treated as fresh and re-surfaces.
+    lastRefuted = null;
   }
 </script>
 

@@ -5,10 +5,10 @@
 > Confidence and verification votes are noted inline. Sources at the end.
 >
 > *Historical design essay — the **why** behind Orrery. What it describes now ships as the
-> Python engine in [`engine/`](engine/) plus the [`orrery/`](orrery/) visualizer; machine
+> Python engine in [`engine/`](../engine/) plus the [`orrery/`](../orrery/) visualizer; machine
 > paths and a private project name were scrubbed for the public release, so a few references
 > read generically (`demo-project`, `/path/to/project`). To **run** it, see the
-> [README](README.md).*
+> [README](../README.md).*
 
 ---
 

@@ -1,0 +1,129 @@
+{
+  "cache": {
+    "hitRatio": 0.0,
+    "warm": false
+  },
+  "cost": {
+    "alertPct": null,
+    "ceilingUsd": null,
+    "cumUsd": 1.21,
+    "ratePerMin": 6.0,
+    "series": [
+      {
+        "cum": 0.0,
+        "t": 1000.0
+      },
+      {
+        "cum": 0.31,
+        "t": 2000.0
+      },
+      {
+        "cum": 0.31,
+        "t": 3000.0
+      },
+      {
+        "cum": 0.6,
+        "t": 4000.0
+      },
+      {
+        "cum": 0.6,
+        "t": 6000.0
+      },
+      {
+        "cum": 0.93,
+        "t": 7000.0
+      },
+      {
+        "cum": 0.93,
+        "t": 8000.0
+      },
+      {
+        "cum": 1.21,
+        "t": 9000.0
+      },
+      {
+        "cum": 1.21,
+        "t": 10000.0
+      },
+      {
+        "cum": 1.21,
+        "t": 12000.0
+      }
+    ]
+  },
+  "currentItem": "iter",
+  "events": 14,
+  "groups": {},
+  "items": {
+    "guardrails-demo": {
+      "certified": false,
+      "costAttributed": 0.0,
+      "gate": null,
+      "ghost": null,
+      "group": null,
+      "index": 0,
+      "key": "guardrails-demo",
+      "lastEventTs": 0.0,
+      "pr": null,
+      "smoke": null,
+      "status": "backlog",
+      "strikeBudget": 3,
+      "strikes": 0
+    },
+    "iter": {
+      "certified": false,
+      "costAttributed": 1.21,
+      "gate": {
+        "baselinePass": 5,
+        "fail": 2,
+        "green": false,
+        "pass": 6,
+        "total": 8
+      },
+      "ghost": null,
+      "group": null,
+      "index": 0,
+      "key": "iter",
+      "lastEventTs": 10000.0,
+      "pr": null,
+      "smoke": null,
+      "status": "in-progress",
+      "strikeBudget": 3,
+      "strikes": 3
+    }
+  },
+  "loopId": "guardrails",
+  "metrics": null,
+  "phase": {
+    "label": "stop",
+    "model": null,
+    "name": null,
+    "sixPhase": "decide"
+  },
+  "questions": [],
+  "quota": {
+    "active": false,
+    "label": null,
+    "probe": 0,
+    "resetAt": null,
+    "resetType": null,
+    "resumeAt": null,
+    "waitSec": 0
+  },
+  "run": {
+    "branch": "auto/guardrails",
+    "cumUsd": 1.21,
+    "lastEventAt": "1970-01-01T00:00:13.000Z",
+    "mergeBase": "main",
+    "pid": null,
+    "restState": "handoff-beacon",
+    "resumeCmd": null,
+    "stage": null,
+    "startedAt": "1970-01-01T00:00:00.000Z",
+    "status": "handoff",
+    "stopPending": null,
+    "target": "guardrails-demo",
+    "updatedAt": null
+  },
+  "verdicts": {}
+}

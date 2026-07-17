@@ -381,6 +381,10 @@ export function composeEngine(
   // exactly the kind of foot-gun this wave exists to catch, so `enabled` tracks
   // "has the user described at least one criterion" automatically.
   const hasCriteria = destination.acceptanceCriteria.some((c) => c.trim().length > 0);
+  // Drop stages with no command — a name-only row would emit a gate that runs an empty command
+  // (validateDraft blocks this at ignite time; this is the belt-and-braces at compose time so a
+  // programmatically-built draft can't slip an empty-command stage into loop.json either).
+  const stages = destination.gateStages.filter((s) => s.command.trim().length > 0);
   return {
     task,
     models: derived.models,
@@ -391,9 +395,7 @@ export function composeEngine(
     allowedTools: blueprint.base.allowedTools ?? COMMON_TOOLS,
     permissionMode: derived.permissionMode,
     gate: {
-      stages: destination.gateStages.length
-        ? destination.gateStages
-        : blueprint.base.gate?.stages ?? [],
+      stages: stages.length ? stages : blueprint.base.gate?.stages ?? [],
       lockGlobs: blueprint.base.gate?.lockGlobs ?? [],
     },
     cost: derived.cost,
@@ -733,8 +735,10 @@ export function validateDraft(
     errors.push('Id must be letters, digits, “-” or “_” (1–64 chars).');
   else if (existingIds.includes(input.id)) errors.push(`A loop “${input.id}” already exists.`);
   if (!input.name.trim()) errors.push('Give the loop a name.');
-  if (input.gateStages.filter((s) => s.command.trim() || s.name.trim()).length === 0)
-    errors.push('Add at least one gate stage (the test gate).');
+  // Require a stage with a real COMMAND: a name-only stage would compose a gate that runs an
+  // empty command (a no-op "gate" that can never actually verify anything).
+  if (input.gateStages.filter((s) => s.command.trim()).length === 0)
+    errors.push('Add at least one gate stage with a test command.');
   if (input.acceptanceCriteria.filter((a) => a.trim()).length === 0)
     errors.push('Describe at least one acceptance criterion.');
   if (input.numeric) errors.push(...validateNumericBounds(input.numeric));

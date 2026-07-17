@@ -10,13 +10,21 @@ insertion order.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from orrery_loop.config import GateConfig
+from orrery_loop.core import _hash_map_over, _lock_glob_set
 from orrery_loop.hashlock import (
     compare_hash_map,
     hash_map_digest,
 )
 from orrery_loop.hashlock import test_hash as hash_digest_for
 from orrery_loop.hashlock import test_hash_map as build_hash_map
+
+
+def _cfg(gate: GateConfig):
+    """A minimal stand-in exposing just the ``.gate`` attribute ``_lock_glob_set`` reads."""
+    return SimpleNamespace(gate=gate)
 
 
 def _write(p: Path, text: str) -> None:
@@ -146,6 +154,53 @@ def test_none_baseline_treats_all_as_added():
     r = compare_hash_map(None, cur)
     assert r["added"] == ["a.test.ts"]
     assert r["tampered"] is True
+
+
+# === _lock_glob_set (HASH-LOCK: lock ALL configured lockGlobs) =========================
+
+
+def test_lock_glob_set_includes_all_configured_globs():
+    # Regression: the old code used only lock_globs[0], silently dropping every extra glob
+    # from tamper detection. Now ALL configured globs are in the lock set, order-stable.
+    cfg = _cfg(GateConfig(stages=[], lock_globs=["*.test.ts", "*.spec.ts", "tests/**/*.py"]))
+    assert _lock_glob_set(cfg, []) == ["*.test.ts", "*.spec.ts", "tests/**/*.py"]
+
+
+def test_lock_glob_set_dedupes_order_stable():
+    cfg = _cfg(GateConfig(stages=[], lock_globs=["*.test.ts", "*.spec.ts", "*.test.ts"]))
+    assert _lock_glob_set(cfg, []) == ["*.test.ts", "*.spec.ts"]
+
+
+def test_lock_glob_set_empty_defaults_to_star():
+    cfg = _cfg(GateConfig(stages=[], lock_globs=[]))
+    assert _lock_glob_set(cfg, []) == ["*"]
+
+
+def test_lock_glob_set_merges_held_out_after_all_configured():
+    cfg = _cfg(GateConfig(stages=[], lock_globs=["*.test.ts", "*.spec.ts"]))
+    stages = [
+        {"name": "hidden", "held_out": True, "lock_globs": ["*.hidden", "*.spec.ts"]},
+    ]
+    # All configured globs first, then the held-out glob(s), de-duped (*.spec.ts not repeated).
+    assert _lock_glob_set(cfg, stages) == ["*.test.ts", "*.spec.ts", "*.hidden"]
+
+
+def test_all_configured_globs_reach_the_hash_map(tmp_path: Path):
+    # End-to-end: two DIFFERENT lock globs each match a file; both files must appear in the
+    # merged hash map (the old first-glob-only behavior lost the second file entirely).
+    _write(tmp_path / "a.test.ts", "test('a', () => {})\n")
+    _write(tmp_path / "b.spec.ts", "test('b', () => {})\n")
+    cfg = _cfg(GateConfig(stages=[], lock_globs=["*.test.ts", "*.spec.ts"]))
+    globs = _lock_glob_set(cfg, [])
+    hmap = _hash_map_over(globs, tmp_path)
+    assert set(hmap.keys()) == {"a.test.ts", "b.spec.ts"}
+
+
+def test_lock_infra_globs_merged_when_enabled():
+    cfg = _cfg(GateConfig(stages=[], lock_globs=["*.test.ts"], lock_infra=True))
+    out = _lock_glob_set(cfg, [])
+    assert out[0] == "*.test.ts"
+    assert "conftest.py" in out  # curated infra glob merged in
 
 
 def test_end_to_end_real_files(tmp_path: Path):

@@ -143,6 +143,36 @@ def test_token_ceiling_parsed_both_spellings():
     assert from_loop_json({"engine": {"stop": {}}}).stop.token_ceiling == 0
 
 
+# --- lenient numeric coercion (config load stays loud, not fatal) ----------
+
+
+def test_bad_ceiling_usd_falls_back_to_default_and_warns(capsys):
+    # A non-numeric ceilingUsd used to crash load with ValueError. Now it warns + keeps default.
+    cfg = from_loop_json({"engine": {"cost": {"ceilingUsd": "lots"}}})
+    assert cfg.cost.ceiling_usd == 3.00  # default preserved
+    err = capsys.readouterr().err
+    assert "ceilingUsd" in err and "engine.cost" in err
+
+
+def test_bad_max_iters_falls_back_to_default_and_warns(capsys):
+    cfg = from_loop_json({"engine": {"stop": {"maxIters": "seven"}}})
+    assert cfg.stop.max_iters == 15  # default preserved
+    err = capsys.readouterr().err
+    assert "maxIters" in err and "engine.stop" in err
+
+
+def test_bad_token_ceiling_falls_back_to_default_and_warns(capsys):
+    cfg = from_loop_json({"engine": {"stop": {"tokenCeiling": "big"}}})
+    assert cfg.stop.token_ceiling == 0
+    assert "tokenCeiling" in capsys.readouterr().err
+
+
+def test_valid_numeric_strings_still_coerce():
+    # A numeric STRING is still accepted (float("3.5") / int("9")), no warning path.
+    assert from_loop_json({"engine": {"cost": {"ceilingUsd": "3.5"}}}).cost.ceiling_usd == 3.5
+    assert from_loop_json({"engine": {"stop": {"maxIters": "9"}}}).stop.max_iters == 9
+
+
 def test_accepts_engine_block_directly():
     # passing just the engine sub-dict (no "engine" wrapper) also works
     cfg = from_loop_json({"task": "OTHER.md", "maxTurns": 7})

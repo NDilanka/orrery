@@ -93,6 +93,49 @@ def test_prose_wrapped_bare_object():
     assert v["failingCriteria"] == ["a"]
 
 
+# --- string failingCriteria: one criterion, never char-by-char --------------
+
+
+def test_string_failing_criteria_is_single_criterion_and_refutes():
+    # Regression: a STRING failingCriteria was iterated char-by-char (dozens of 1-char
+    # "criteria") — still refuting a pass, but with garbage detail. Now it's ONE criterion.
+    raw = '{ "pass": true, "failingCriteria": "spec still failing" }'
+    v = parse_verdict(raw, item="k", model="haiku")
+    assert v["failingCriteria"] == ["spec still failing"]
+    assert v["pass"] is False  # non-empty -> refutes the pass
+
+
+def test_string_none_failing_criteria_treated_as_one_criterion_and_refutes():
+    # Deliberate rule: any NON-EMPTY string is one criterion (judges must return a LIST). We do
+    # NOT special-case "none" with an NLP heuristic, so "none" refutes — documented contract.
+    raw = '{ "pass": true, "failingCriteria": "none" }'
+    v = parse_verdict(raw, item="k", model="haiku")
+    assert v["failingCriteria"] == ["none"]
+    assert v["pass"] is False
+
+
+def test_empty_string_failing_criteria_keeps_pass():
+    # Falsy ("") short-circuits -> [] -> a clean pass survives.
+    raw = '{ "pass": true, "failingCriteria": "" }'
+    v = parse_verdict(raw, item="k", model="haiku")
+    assert v["failingCriteria"] == []
+    assert v["pass"] is True
+
+
+def test_null_failing_criteria_keeps_pass():
+    raw = '{ "pass": true, "failingCriteria": null }'
+    v = parse_verdict(raw, item="k", model="haiku")
+    assert v["failingCriteria"] == []
+    assert v["pass"] is True
+
+
+def test_list_failing_criteria_multi_element_preserved():
+    raw = '{ "pass": false, "failingCriteria": ["a", "b"] }'
+    v = parse_verdict(raw, item="k", model="haiku")
+    assert v["failingCriteria"] == ["a", "b"]
+    assert v["pass"] is False
+
+
 # =====================================================================
 # 2. FROZEN-CONTRACT EXTRACTOR
 # =====================================================================

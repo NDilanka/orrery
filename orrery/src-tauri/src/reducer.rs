@@ -26,7 +26,11 @@ const COST_SERIES_CAP: usize = 2000;
 /// literal `Z`, byte-identical to JS's `new Date(t).toISOString()` (mirrored in reduce.ts's
 /// `isoFromTs`) so `startedAt`/`lastEventAt` stay in cross-language golden parity.
 fn iso_from_ts(ts: f64) -> String {
-    DateTime::<Utc>::from_timestamp_millis(ts.round() as i64)
+    // TRUNCATE toward zero (not round): JS `new Date(t)` coerces `t` with ToIntegerOrInfinity,
+    // which truncates, so a fractional-ms `ts` must match that or `startedAt`/`lastEventAt` would
+    // drift a millisecond off `reduce.ts`. Goldens use integer `_t`, so they're unaffected either
+    // way; this keeps parity for any real (fractional) wall-clock stamp.
+    DateTime::<Utc>::from_timestamp_millis(ts.trunc() as i64)
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .unwrap_or_default()
 }
@@ -1086,6 +1090,15 @@ mod tests {
 
     const BMAD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/bmad-log.jsonl");
     const GENERIC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/generic-log.jsonl");
+
+    #[test]
+    fn iso_from_ts_truncates_toward_zero_like_js() {
+        // JS `new Date(t).toISOString()` truncates a fractional `t` (ToIntegerOrInfinity), so
+        // 1500.9 → 1500ms (NOT 1501 as `round()` would give). Parity with reduce.ts's isoFromTs.
+        assert_eq!(iso_from_ts(1500.9), "1970-01-01T00:00:01.500Z");
+        assert_eq!(iso_from_ts(1999.999), "1970-01-01T00:00:01.999Z");
+        assert_eq!(iso_from_ts(0.0), "1970-01-01T00:00:00.000Z");
+    }
 
     #[test]
     fn bmad_reduces_to_expected_state() {

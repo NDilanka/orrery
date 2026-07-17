@@ -216,7 +216,7 @@ Ordered by leverage-to-effort. Every "adopt now" item is **additive and default-
 ---
 
 ## Verification (how each change is proven end-to-end)
-Run `python -m pytest engine/tests -q` after each change (baseline: 631/632 per `README.md:145`).
+Run `python -m pytest engine/tests -q` after each change (baseline: the full suite green — see the "Tested:" line in the root `README.md` for the current count).
 Per-item acceptance tests are listed inline above. Additionally, drive a real `examples/hello` loop
 (`loop --loop-json examples/hello/loop.json --dry-run` first, then a live short run) to confirm:
 A1 catches an infra-file edit; A2 stops on a token ceiling with the stub runner; A3's judge prompt

@@ -85,3 +85,28 @@ jobs:
 
       - name: Rust tests (cargo test)
         run: cargo test --manifest-path orrery/src-tauri/Cargo.toml
+
+  e2e:
+    name: e2e (playwright, browser replay)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: orrery/package-lock.json
+
+      - name: Install JS deps
+        working-directory: orrery
+        run: npm ci
+
+      - name: Install Playwright chromium
+        working-directory: orrery
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright e2e (browser replay, no Tauri)
+        working-directory: orrery
+        run: npm run test:e2e

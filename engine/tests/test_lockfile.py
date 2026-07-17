@@ -44,6 +44,27 @@ def test_acquire_is_reentrant_for_our_own_pid(tmp_path):
     assert lockfile.acquire_lock(lock_path) is True
 
 
+def test_second_acquire_fails_while_first_holds_then_stale_reclaim(tmp_path, monkeypatch):
+    # Atomic O_CREAT|O_EXCL acquire: with the lockfile already present and its holder LIVE, a
+    # second (different-pid) start is refused — it can't win the old exists()-then-write race.
+    lock_path = tmp_path / "lock"
+
+    monkeypatch.setattr(os, "getpid", lambda: 111)
+    assert lockfile.acquire_lock(lock_path) is True
+    assert lock_path.read_text(encoding="utf-8").strip() == "111"
+
+    # a different, LIVE process tries to acquire the same lock -> refused, holder untouched.
+    monkeypatch.setattr(os, "getpid", lambda: 222)
+    monkeypatch.setattr(lockfile, "pid_alive", lambda pid: pid == 111)
+    assert lockfile.acquire_lock(lock_path) is False
+    assert lock_path.read_text(encoding="utf-8").strip() == "111"
+
+    # once the holder dies, the stale lock is reclaimed by the next acquirer.
+    monkeypatch.setattr(lockfile, "pid_alive", lambda pid: False)
+    assert lockfile.acquire_lock(lock_path) is True
+    assert lock_path.read_text(encoding="utf-8").strip() == "222"
+
+
 def test_release_removes_our_own_lock_but_not_someone_elses(tmp_path):
     lock_path = tmp_path / "lock"
     lockfile.acquire_lock(lock_path)

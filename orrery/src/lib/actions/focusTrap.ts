@@ -42,7 +42,10 @@ export function focusTrap(node: HTMLElement, opts: FocusTrapOptions) {
     const first = items[0];
     const last = items[items.length - 1];
     const active = document.activeElement as HTMLElement | null;
-    if (e.shiftKey && (active === first || !node.contains(active))) {
+    // `active === node` is the case where initialFocus() returned null and focus landed on the
+    // dialog container itself: it sits BEFORE the first focusable item, so a Shift+Tab from here
+    // must wrap to the last item, not escape the dialog. Treat it as the first boundary.
+    if (e.shiftKey && (active === first || active === node || !node.contains(active))) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && active === last) {

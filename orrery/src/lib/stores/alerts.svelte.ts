@@ -111,6 +111,21 @@ class AlertStore {
   private lastRestState = new Map<string, RestState>();
 
   /**
+   * Generic one-off chrome notice (same fire-and-forget shape as `lastQuotaResume`): a bit of
+   * text a fire-and-forget action wants surfaced after it has already navigated away. `seq`
+   * monotonically increments so Toast.svelte can edge-detect even a repeated message. Today's
+   * one caller is the CommandPalette, whose run-control rows close the palette immediately —
+   * so a rejected control() (AlreadyRunning, engine missing) has no inline surface of its own
+   * and would otherwise vanish; RunControlBar surfaces the same failures inline instead.
+   */
+  lastNotice = $state<{ message: string; seq: number } | null>(null);
+  private noticeSeq = 0;
+
+  notify(message: string): void {
+    this.lastNotice = { message, seq: ++this.noticeSeq };
+  }
+
+  /**
    * Feed one loop's freshly-observed restState. Call this only from a live (non-replay)
    * source — see the module comment above.
    *
@@ -170,6 +185,8 @@ class AlertStore {
     this.lastRestState.clear();
     this.lastQuotaResume = null;
     this.quotaResumeSeq = 0;
+    this.lastNotice = null;
+    this.noticeSeq = 0;
   }
 }
 

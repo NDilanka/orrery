@@ -211,6 +211,10 @@ interface RunState {
   cache: { hitRatio: number; warm: boolean };
   questions: Qa[];
   verdicts: Record<string, Verdict>; // by item key, latest
+  metrics: Metrics|null;             // generic flavor of `metrics` (§2). ALWAYS serialized (null until
+                                     // the event fires) — unlike the engine-v3 optionals below, this
+                                     // field predates the omit-until-fired convention and both reducers
+                                     // emit it unconditionally, so goldens pin `"metrics": null`.
   // engine-v3 additive fields (§2). OMITTED from the wire until their event fires, so a state with
   // none of these events serializes byte-identically to an older reducer's (keeps goldens stable).
   verifies?: Record<string, { verdict: 'pass'|'refute'|'skipped'|'inconclusive'; reason: string|null; cum: number }>;      // `verify` event, by story
@@ -240,6 +244,9 @@ interface WorkItem{
 interface Qa     { id: string; kind: 'review'|'retro'; turn: number; q: string; a: string|null;
                    summary: string|null; answeredBy: 'agent'|'ui'|null; epic?: string; }
 interface Verdict{ pass: boolean; failingCriteria: string[]; evidence?: string; nextAction?: string; model?: string; }
+interface Metrics{ firstTryGreen: boolean; itersToGreen: number|null; costToGreen: number|null;
+                   rollbacks: number; regressionRate: number; totalIters: number;
+                   totalCost: number; finalGreen: boolean; }   // generic flavor of the §2 `metrics` event
 ```
 
 ---

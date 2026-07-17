@@ -18,6 +18,7 @@
   // against +page.svelte's own window-level Escape branch.
 
   import { focusTrap } from '../actions/focusTrap';
+  import { alertStore } from '../stores/alerts.svelte';
   import { runStore } from '../stores/run.svelte';
   import { sessionStore } from '../stores/session.svelte';
   import { uiStore } from '../stores/ui.svelte';
@@ -64,6 +65,15 @@
     run: () => void;
   }
 
+  // Run-control rows close the palette immediately, so a rejected control() (AlreadyRunning,
+  // engine missing, …) has no inline surface here the way RunControlBar.fire() does. Route the
+  // rejection to the app-wide notice toast (alertStore.notify → Toast.svelte) so it can't vanish.
+  function runControl(action: string) {
+    void sessionStore.control(action).catch((e) => {
+      alertStore.notify(e instanceof Error ? e.message : String(e));
+    });
+  }
+
   const GROUP_ORDER: Group[] = ['actions', 'navigate', 'loops'];
   const GROUP_LABEL: Record<Group, string> = {
     actions: 'actions',
@@ -102,7 +112,7 @@
           label: '✦ Start the loop',
           group: 'actions',
           hint: 'i',
-          run: () => void sessionStore.control('start'),
+          run: () => runControl('start'),
         });
       }
       if (failed) {
@@ -112,7 +122,7 @@
             label: '↻ Resume from checkpoint',
             group: 'actions',
             hint: 'r',
-            run: () => void sessionStore.control('resume'),
+            run: () => runControl('resume'),
           });
         }
         rows.push({
@@ -120,7 +130,7 @@
           label: '✦ Restart fresh',
           group: 'actions',
           hint: 'i',
-          run: () => void sessionStore.control('start'),
+          run: () => runControl('start'),
         });
       }
       if (running && !failed) {
@@ -130,21 +140,21 @@
           group: 'actions',
           hint: 'b',
           disabled: stopPending != null,
-          run: () => void sessionStore.control('stop:phase'),
+          run: () => runControl('stop:phase'),
         });
         rows.push({
           id: 'brake-story',
           label: 'Brake · story',
           group: 'actions',
           disabled: stopPending != null,
-          run: () => void sessionStore.control('stop:story'),
+          run: () => runControl('stop:story'),
         });
         rows.push({
           id: 'stop-now',
           label: '⛔ Stop now',
           group: 'actions',
           disabled: stopPending === 'now',
-          run: () => void sessionStore.control('stop:now'),
+          run: () => runControl('stop:now'),
         });
       }
       if (stopPending != null) {
@@ -152,7 +162,7 @@
           id: 'cancel-brake',
           label: 'Cancel brake',
           group: 'actions',
-          run: () => void sessionStore.control('cancel-stop'),
+          run: () => runControl('cancel-stop'),
         });
       }
       if (!failed && (banked || s.run.resumeCmd)) {
@@ -161,7 +171,7 @@
           label: '↻ Resume',
           group: 'actions',
           hint: 'r',
-          run: () => void sessionStore.control('resume'),
+          run: () => runControl('resume'),
         });
       }
     }
@@ -286,11 +296,37 @@
   );
   const activeIndex = $derived(filtered.length ? Math.min(selectedIndex, filtered.length - 1) : 0);
 
-  // reset selection to the first ENABLED row whenever the filtered set changes (a new query, or
-  // the underlying state making a row appear/disappear/disable out from under the cursor)
+  // The row id the user currently has selected — the STABLE identity of the selection across
+  // `filtered` recomputes. `filtered` rebuilds on every live run-state tick (buildRows reads
+  // runStore.state), so keying the reset on the index alone yanked the cursor back to the top
+  // mid-navigation. Tracked as a plain let (no reactive dep) and updated by `select()`.
+  let selectedId: string | null = null;
+  let lastQuery = ''; // mirrors query's initial value; updated inside the reconcile effect
+
+  // User-driven selection: move the cursor AND remember which logical row it lands on.
+  function select(i: number) {
+    selectedIndex = i;
+    selectedId = filtered[i]?.id ?? null;
+  }
+
+  // Reconcile the selection when the filtered set changes. Reset to the first enabled row ONLY
+  // when the query changed or the previously-selected row disappeared / became disabled;
+  // otherwise keep pointing at the SAME row even though a run-state tick may have shifted its
+  // index, so keyboard navigation isn't yanked mid-flight.
   $effect(() => {
-    const firstEnabled = filtered.findIndex((r) => !r.disabled);
-    selectedIndex = firstEnabled >= 0 ? firstEnabled : 0;
+    const rows = filtered; // dep: recompute reconciliation whenever the row set changes
+    const q = query; // dep: a new query always resets to the top
+    const queryChanged = q !== lastQuery;
+    lastQuery = q;
+
+    const idx = selectedId != null ? rows.findIndex((r) => r.id === selectedId) : -1;
+    if (!queryChanged && idx >= 0 && !rows[idx].disabled) {
+      selectedIndex = idx;
+    } else {
+      const firstEnabled = rows.findIndex((r) => !r.disabled);
+      selectedIndex = firstEnabled >= 0 ? firstEnabled : 0;
+      selectedId = rows[selectedIndex]?.id ?? null;
+    }
   });
 
   function nextIndex(from: number, dir: 1 | -1): number {
@@ -313,10 +349,10 @@
   function onInputKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      selectedIndex = nextIndex(activeIndex, 1);
+      select(nextIndex(activeIndex, 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      selectedIndex = nextIndex(activeIndex, -1);
+      select(nextIndex(activeIndex, -1));
     } else if (e.key === 'Enter') {
       e.preventDefault();
       execute(filtered[activeIndex]);
@@ -365,7 +401,7 @@
             class="row"
             class:active={i === activeIndex}
             class:disabled={r.disabled}
-            onmouseenter={() => (selectedIndex = i)}
+            onmouseenter={() => select(i)}
             onclick={() => execute(r)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); execute(r); } }}
           >

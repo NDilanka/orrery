@@ -161,3 +161,68 @@ def test_survive_non_probing_single_fallback_wait_returns_true():
     wait = [e for e in rec.events if e["event"] == "quota-wait"][0]
     assert wait["waitSec"] == 15 * 60
     assert wait["resetType"] == ""  # unknown reset type serializes as empty string
+
+
+# --- non-probing backend: the blind-wait cap (QUOTA fix) -------------------
+
+
+def test_non_probing_returns_false_once_blind_wait_cap_reached():
+    # A persistent rate limit on a non-probing backend must NOT let the caller retry forever.
+    # At/over the cap survive() returns False WITHOUT sleeping -> the caller's failure path runs.
+    runner = FakeRunner([], supports_quota_probe=False)
+    rec = Recorder()
+    ok = survive(
+        runner,
+        label="aider",
+        cum=0.0,
+        emit=rec.emit,
+        sleep=rec.sleep,
+        blind_waits=4,
+        max_blind_waits=4,
+        now_fn=_now,
+    )
+    assert ok is False
+    assert rec.sleeps == []  # no wait once capped
+    assert rec.kinds() == []  # no hit/wait events emitted on the capped path
+
+
+def test_non_probing_waits_up_to_but_not_past_the_cap():
+    # Simulate the caller's retry loop: survive() keeps waiting (True) until blind_waits hits
+    # the cap, then returns False. A total of max_blind_waits waits, then termination.
+    runner = FakeRunner([], supports_quota_probe=False)
+    rec = Recorder()
+    cap = 4
+    results = []
+    blind = 0
+    for _ in range(cap + 3):  # loop more than the cap to prove it terminates
+        ok = survive(
+            runner,
+            label="aider",
+            cum=0.0,
+            emit=rec.emit,
+            sleep=rec.sleep,
+            blind_waits=blind,
+            max_blind_waits=cap,
+            now_fn=_now,
+        )
+        results.append(ok)
+        if not ok:
+            break
+        blind += 1
+    # exactly `cap` successful blind waits, then a terminating False.
+    assert results == [True, True, True, True, False]
+    assert len(rec.sleeps) == cap
+
+
+def test_non_probing_success_resets_the_blind_wait_counter():
+    # The caller resets its counter on a successful (non-quota) attempt: a FRESH retry sequence
+    # starting at blind_waits=0 waits again rather than being permanently poisoned by an
+    # earlier burst that approached the cap.
+    runner = FakeRunner([], supports_quota_probe=False)
+    rec = Recorder()
+    # near the cap -> still waits (3 < 4)
+    assert survive(runner, label="a", cum=0.0, emit=rec.emit, sleep=rec.sleep,
+                   blind_waits=3, max_blind_waits=4, now_fn=_now) is True
+    # ...caller then had a success and reset to 0 -> waits again, cap not tripped.
+    assert survive(runner, label="a", cum=0.0, emit=rec.emit, sleep=rec.sleep,
+                   blind_waits=0, max_blind_waits=4, now_fn=_now) is True

@@ -462,6 +462,44 @@ def test_merge_local_cleanup_fails_but_remote_merged_is_success(tmp_path, monkey
     assert not [e for e in evts if e["event"] == "stop" and e.get("ok") is False]
 
 
+def test_post_merge_pr_state_prerror_becomes_handoff_not_crash(tmp_path, monkeypatch):
+    # The post-merge `pr.pr_state` lookup is OUTSIDE the merge try/except: a transient `gh`
+    # PrError there must NOT unwind the whole driver with no stop event. It's caught and treated
+    # as "state unknown" -> the existing not-MERGED handoff (rc 1 + a stop event), never a crash.
+    root = _init_project(tmp_path, ONE_DONE)
+    state = tmp_path / "state"
+    pr_calls: dict = {}
+    _patch_externals(monkeypatch, pr_calls=pr_calls)
+    seen = {"n": 0}
+
+    def predicate_factory(**kw):
+        def predicate(story):
+            seen["n"] += 1
+            return seen["n"] == 1
+
+        return predicate
+
+    monkeypatch.setattr(recovery, "unmerged_done_predicate", predicate_factory)
+
+    # merge_pr SUCCEEDS; only the post-merge state lookup raises (a flaky `gh pr view`).
+    def boom_state(*, branch, cwd):
+        pr_calls.setdefault("state", []).append({"branch": branch})
+        raise pr.PrError("gh pr view failed (exit 1): API rate limit / transient network error")
+
+    monkeypatch.setattr(pr, "pr_state", boom_state)
+
+    runner = MockRunner([AgentResult(raw="", text="SMOKE_PASS: verified.", cost_usd=0.5)])
+    cfg = _config(root)  # merge ON
+    rc = driver.run(cfg, runner=runner, state_dir=str(state))
+
+    assert rc == 1  # graceful handoff, not an exception
+    evts = _events(state)
+    # the not-MERGED handoff path fired a failure stop event (state read as unknown)
+    assert [e for e in evts if e["event"] == "stop" and e.get("ok") is False]
+    assert pr_calls.get("merge")  # merge WAS attempted and succeeded
+    assert pr_calls.get("state")  # the guarded post-merge lookup ran (and raised)
+
+
 ALL_DONE = (
     "development_status:\n"
     "  epic-2: done\n"

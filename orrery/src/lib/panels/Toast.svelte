@@ -19,6 +19,8 @@
   let timer: ReturnType<typeof setTimeout> | null = null;
   // last quota-resume seq we've consumed — edge-detects so a re-render never re-toasts.
   let lastSeq = -1;
+  // last generic-notice seq we've consumed (independent edge-detector; see below).
+  let lastNoticeSeq = -1;
 
   function clearTimer() {
     if (timer) {
@@ -47,6 +49,15 @@
     lastSeq = sig.seq;
     if (!settingsStore.data.notifications.quotaResumeToast) return;
     show(`${sig.loopId} resumed after quota wait`);
+  });
+
+  // Generic one-off notices (e.g. a CommandPalette run-control failure whose palette already
+  // closed). Settings-free — these are direct action feedback, not an unattended-run alert.
+  $effect(() => {
+    const sig = alertStore.lastNotice;
+    if (!sig || sig.seq === lastNoticeSeq) return;
+    lastNoticeSeq = sig.seq;
+    show(sig.message);
   });
 
   onDestroy(clearTimer);

@@ -25,12 +25,22 @@
   } = $props();
 
   let el = $state<HTMLInputElement | null>(null);
+  // The last text this effect wrote into the field — lets us tell "the user hasn't touched it
+  // since we synced" (safe to re-sync an external change) from "the user is mid-typing" (must
+  // not clobber). Without this, an external update while focused is skipped, then the eventual
+  // blur commits the STALE field text back over it.
+  let lastSynced = '';
 
-  // Sync the field to the stored value whenever it changes externally (reset / import / valid
-  // commit), but never clobber what the user is mid-typing (skip while focused).
+  // Sync the field to the stored value whenever it changes externally (reset / import / hot-
+  // reload / valid commit). Re-sync while focused ONLY when the user hasn't diverged the text
+  // (el.value === lastSynced); skip only when they've actually typed something uncommitted.
   $effect(() => {
     const v = value == null ? '' : String(value);
-    if (el && document.activeElement !== el) el.value = v;
+    if (!el) return;
+    if (document.activeElement !== el || el.value === lastSynced) {
+      el.value = v;
+      lastSynced = v;
+    }
   });
 
   function onKeydown(e: KeyboardEvent) {
