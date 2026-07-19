@@ -1,6 +1,6 @@
 # Orrery
 
-**Build, run, and *watch* autonomous Claude Code loops — rendered as a living orbital star system.**
+**Build, run, and *watch* autonomous Claude Code loops rendered as a living orbital star system.**
 
 [![CI](https://github.com/NDilanka/orrery/actions/workflows/ci.yml/badge.svg)](https://github.com/NDilanka/orrery/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/NDilanka/orrery)](https://github.com/NDilanka/orrery/releases)
