@@ -108,6 +108,9 @@
   // cheap no-op. Dark is the default and untouched: with data-theme=dark this never re-tints.
   let retintScene: (() => void) | null = null;
   $effect(() => {
+    // read BOTH the mode (light/dark) and the skin (classic/cobalt) so a flip of
+    // either re-tints the scene; the guarded function below is idempotent.
+    void settingsStore.resolvedSkin;
     if (settingsStore.resolvedTheme) retintScene?.();
   });
 
@@ -243,6 +246,9 @@
       // the store-driven path and a raw devtools/harness attribute toggle re-tint identically.
       const currentTheme = () =>
         document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      // the selectable skin (theme family); a same-lightness skin flip must re-tint too
+      const currentSkin = () =>
+        document.documentElement.dataset.skin === 'cobalt' ? 'cobalt' : 'classic';
       // WS-R (light-mode glow): the screen-blended glow layers below (the aurora wash + every
       // per-glyph corona) VANISH on the light theme — 'screen' over a near-white --void is a
       // near no-op, so state glows wash out to paper. On light they flip to 'multiply' so the
@@ -329,10 +335,13 @@
       // cross-fade to the new scene hues on their own; no per-glyph texture is baked. Guarded
       // on the live attribute so both the store effect and the observer below are idempotent.
       let appliedSceneTheme = currentTheme();
+      let appliedSkin = currentSkin();
       function applyThemeToScene() {
         const th = currentTheme();
-        if (th === appliedSceneTheme) return;
+        const sk = currentSkin();
+        if (th === appliedSceneTheme && sk === appliedSkin) return;
         appliedSceneTheme = th;
+        appliedSkin = sk;
         const t = initTheme();
         C = {
           void: t.void,
@@ -369,7 +378,7 @@
       const themeObserver = new MutationObserver(() => applyThemeToScene());
       themeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ['data-theme'],
+        attributeFilter: ['data-theme', 'data-skin'],
       });
 
       // ── layout: a balanced, CENTRED constellation that reflows on resize ──

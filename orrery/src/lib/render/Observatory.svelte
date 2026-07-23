@@ -144,6 +144,8 @@
   // Dark is the default and untouched: with data-theme=dark this never re-tints.
   let retintScene: (() => void) | null = null;
   $effect(() => {
+    // read BOTH mode and skin so a flip of either re-tints; guarded fn is idempotent.
+    void settingsStore.resolvedSkin;
     if (settingsStore.resolvedTheme) retintScene?.();
   });
 
@@ -179,6 +181,7 @@
   // dark⇄light flip re-tints the planet pairs in the SAME frame as the scene re-tint (no
   // one-frame inconsistency around the toggle) and the hot path stays DOM-free.
   let appliedSceneTheme: 'light' | 'dark' = 'dark';
+  let appliedSkin: 'classic' | 'cobalt' = 'classic';
   function scenePair(hex: number): { core: number; base: number } {
     const target = appliedSceneTheme === 'light' ? LIGHT_INK : C.void;
     return { core: muteColor(hex, target, 0.12), base: muteColor(hex, target, 0.5) };
@@ -333,6 +336,8 @@
       // a runtime dark⇄light toggle re-applies the branch. Dark is byte-identical (screen/add).
       const currentTheme = () =>
         document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      const currentSkin = () =>
+        document.documentElement.dataset.skin === 'cobalt' ? 'cobalt' : 'classic';
       const glowBlend = (): 'screen' | 'multiply' =>
         currentTheme() === 'light' ? 'multiply' : 'screen';
       const transientBlend = (): 'add' | 'normal' =>
@@ -651,10 +656,13 @@
       // is baked (the glow/particle textures are WHITE and tinted at runtime). Guarded on the
       // live attribute so both the store effect and the observer below stay idempotent.
       appliedSceneTheme = currentTheme(); // (component-scope — scenePair reads it too)
+      appliedSkin = currentSkin();
       function applyThemeToScene() {
         const th = currentTheme();
-        if (th === appliedSceneTheme) return;
+        const sk = currentSkin();
+        if (th === appliedSceneTheme && sk === appliedSkin) return;
         appliedSceneTheme = th;
+        appliedSkin = sk;
         const t = initTheme();
         C = {
           void: t.void,
@@ -707,7 +715,7 @@
       const themeObserver = new MutationObserver(() => applyThemeToScene());
       themeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ['data-theme'],
+        attributeFilter: ['data-theme', 'data-skin'],
       });
 
       const onResize = () => {
