@@ -311,6 +311,87 @@
   --floating-card-shadow: 0 24px 80px rgba(20, 22, 40, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   COBALT SKIN — a SELECTABLE theme family, applied only under
+   <html data-skin='cobalt'> (settingsStore.applySkin + app.html's FOUC script).
+   The whole system rides one cool hue (265): a chosen cool graphite whose accent
+   is its own desaturated ghost — NOT the pure-gray "near-black + blue pop" default.
+   The classic monochrome :root above is left byte-for-byte untouched (Classic is the
+   default), so every rule here is an ADDITIVE override that wins on the data-skin
+   attribute's specificity. The Pixi canvases re-tint on data-skin the same way they
+   do on data-theme (theme.ts re-probes these live vars). Values are WCAG-AA verified
+   against the lightest surface each text tier lands on — see docs/ui-reskin-spec.md.
+
+   IMPORTANT: every token set in the dark block below is ALSO set in the light block.
+   [data-skin='cobalt'] and [data-theme='light'] have equal specificity, so a token
+   present in only one would lose the source-order race under data-skin+data-theme;
+   the two-attribute [data-skin='cobalt'][data-theme='light'] block is the tiebreaker
+   and must be complete. Design law: --primary fills solids, --ring strokes; only
+   white breathes; amber/red stay the only alert hues; indigo never enters the canvas. */
+:root[data-skin='cobalt'] {
+  /* neutral ramp — cool graphite; chroma rises with elevation (anodized read) */
+  --n1: oklch(0.145 0.010 265);
+  --n2: oklch(0.185 0.011 265);
+  --n3: oklch(0.225 0.012 265);
+  --n4: oklch(0.275 0.013 265);
+  /* text tiers — cool; re-derived for AA headroom vs the lightest surface (n4) */
+  --em-hi: oklch(0.985 0.004 265); /* the ONE white — run/ok/liveness stay === em-hi */
+  --em-mid: oklch(0.745 0.011 265);
+  --em-low: oklch(0.655 0.013 265);
+  --em-faint: oklch(0.565 0.013 265);
+  /* accent family — fill for solids, ring for strokes */
+  --primary: oklch(0.53 0.202 265); /* CTA fill; white label 5.32:1 */
+  --primary-hover: oklch(0.47 0.19 265); /* DARKENS on hover (label 6.88:1) */
+  --primary-foreground: oklch(0.985 0.004 265);
+  --ring: oklch(0.68 0.16 265); /* every thin indigo stroke; vs n1 6.73:1 */
+  --accent-wash-hover: color-mix(in oklab, var(--ring) 10%, var(--surface-panel));
+  --accent-wash-sel: color-mix(in oklab, var(--ring) 20%, var(--surface-panel));
+  /* focus ring goes indigo (the global :focus-visible rule reads --border-focus) */
+  --border-focus: var(--ring);
+  /* cool hairlines — 3-weight (tick / line / structural), + a form-field border */
+  --hairline: oklch(0.82 0.03 265 / 8%);
+  --line-2: oklch(0.82 0.03 265 / 14%);
+  --line-tick: oklch(0.82 0.03 265 / 4%);
+  --border-input: oklch(0.82 0.03 265 / 14%);
+  /* canvas: --void kept deep & cool (#070912, unchanged); starlight ties to em-hi */
+  --starlight: oklch(0.985 0.006 265);
+  /* glass floating-card (blur/saturate added in primitives.css under the same scope) */
+  --floating-card-grad: color-mix(in srgb, var(--surface-panel) 70%, transparent);
+  --floating-card-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 1px 2px rgb(0 0 0 / 45%),
+    0 18px 48px -24px rgb(0 0 0 / 55%);
+}
+:root[data-skin='cobalt'][data-theme='light'] {
+  /* cool porcelain */
+  --n1: oklch(0.985 0.004 265);
+  --n2: oklch(0.965 0.006 265);
+  --n3: oklch(0.94 0.008 265);
+  --n4: oklch(0.915 0.010 265);
+  /* cool dark ink */
+  --em-hi: oklch(0.30 0.02 265);
+  --em-mid: oklch(0.44 0.02 265);
+  --em-low: oklch(0.50 0.02 265);
+  --em-faint: oklch(0.58 0.02 265);
+  --primary: oklch(0.50 0.216 265); /* white label 6.07:1 */
+  --primary-hover: oklch(0.44 0.21 265);
+  --primary-foreground: oklch(0.985 0.004 265);
+  --ring: oklch(0.47 0.20 265); /* vs n1 6.90:1 */
+  --accent-wash-hover: color-mix(in oklab, var(--ring) 8%, var(--surface-panel));
+  --accent-wash-sel: color-mix(in oklab, var(--ring) 16%, var(--surface-panel));
+  --border-focus: var(--ring);
+  --hairline: oklch(0.30 0.03 265 / 9%);
+  --line-2: oklch(0.30 0.03 265 / 14%);
+  --line-tick: oklch(0.30 0.03 265 / 5%);
+  --border-input: oklch(0.30 0.03 265 / 14%);
+  /* light-tuned alert cores (AA on the cool porcelain) */
+  --status-warn-core: oklch(0.49 0.13 85);
+  --status-err-core: oklch(0.505 0.19 20);
+  /* canvas light source stays a cool dark ink (stars read on the light void) */
+  --starlight: oklch(0.28 0.02 265);
+  --floating-card-grad: color-mix(in srgb, var(--surface-panel) 70%, transparent);
+  --floating-card-shadow: inset 0 1px 0 rgb(255 255 255 / 60%), 0 1px 2px rgb(0 0 0 / 12%),
+    0 18px 48px -24px rgb(20 22 40 / 22%);
+}
+
 /* base obsidian theme */
 html,
 body {

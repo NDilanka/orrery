@@ -522,6 +522,12 @@
     border-left-color: var(--em-hi);
     color: var(--text-primary);
   }
+  /* Cobalt skin — active row = a filled indigo wash, no left accent bar */
+  :global(:root[data-skin='cobalt']) .row.active {
+    background: var(--accent-wash-sel);
+    border-left-color: transparent;
+    color: var(--text-primary);
+  }
   .row.disabled {
     color: var(--text-faint);
     opacity: 0.45;
