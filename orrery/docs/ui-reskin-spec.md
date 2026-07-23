@@ -134,10 +134,11 @@ rules, `--line-tick` readout gridlines.
 
 ## Accent ripple — exact sites (repoint to `--ring` / `--accent-wash-sel`)
 - `Toggle.svelte` `.switch.on` (:40) bg → `--primary`.
-- `SettingsNav.svelte` `.navitem.active` (:95) — **flush inset edge, not a bar**:
-  `background: var(--accent-wash-sel); box-shadow: inset 2px 0 0 var(--primary)`; drop the
-  `border-left-color`; text `--em-mid`.
-- `CommandPalette.svelte` `.row.active` (:520) — same treatment.
+- `SettingsNav.svelte` `.navitem.active` (:95) — **filled wash, NO left bar** (reviewer
+  rejected the left-edge highlight): `background: var(--accent-wash-sel); color: var(--em-hi)`;
+  remove the `border-left-color`/inset-edge entirely. Optional extra definition: a full hairline
+  ring `box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 30%, transparent)`.
+- `CommandPalette.svelte` `.row.active` (:520) — same treatment (fill only, no directional edge).
 - `.slider:focus-visible` (:316,319) `var(--em-hi)` → the unified ring.
 - **Leave white (no edit):** CostQuotaStrip/LogPanel `.dot.live`, StaleBadge `.badge.live .dot`,
   Hud `.pdot.active`, ShareButton `.trigger .dot` — all read `--em-hi`/`--text-primary`, which
