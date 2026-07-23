@@ -363,3 +363,108 @@
   text-transform: uppercase;
   color: var(--em-low);
 }
+
+/* ══ COBALT skin — component anatomy (data-skin='cobalt') ══════════════════════
+   Additive overrides ONLY; every Classic rule above is untouched, so the default
+   skin is unchanged. The token values these reference come from tokens.css's
+   :root[data-skin='cobalt'] blocks. Design law: --primary fills solids, --ring
+   strokes; buttons don't lift (a glossy "reseat" instead of the mono inversion);
+   selection is a filled wash, never a left bar; only white breathes. */
+
+/* buttons — kill the Classic hover-lift + drop-shadow; primary becomes a lit key */
+:root[data-skin='cobalt'] .btn:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+:root[data-skin='cobalt'] .btn:active:not(:disabled) {
+  transform: none;
+}
+:root[data-skin='cobalt'] .btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 1px 2px rgb(0 0 0 / 24%);
+}
+:root[data-skin='cobalt'] .btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover); /* DARKENS — no colored bloom, no lift */
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 1px 2px rgb(0 0 0 / 30%);
+}
+:root[data-skin='cobalt'] .btn-primary:active:not(:disabled) {
+  background: var(--primary-hover);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 30%); /* top-light inverts → seats in */
+}
+:root[data-skin='cobalt'] .btn-ghost {
+  border-color: var(--border-input);
+}
+:root[data-skin='cobalt'] .btn-ghost:hover:not(:disabled) {
+  background: var(--accent-wash-hover);
+  border-color: color-mix(in srgb, var(--ring) 32%, var(--border-input));
+}
+/* disabled = an inert neutral plate, not a 40%-alpha ghost of the CTA */
+:root[data-skin='cobalt'] .btn:disabled {
+  opacity: 1;
+  background: var(--n3);
+  color: var(--em-faint);
+  box-shadow: none;
+}
+
+/* one unified indigo focus ring (1px surface gap + solid ring + soft bloom) */
+:root[data-skin='cobalt']
+  :where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--surface-void), 0 0 0 3px var(--ring),
+    0 0 0 6px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+:root[data-skin='cobalt'] .slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--surface-void), 0 0 0 4px var(--ring);
+}
+:root[data-skin='cobalt'] .slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--surface-void), 0 0 0 4px var(--ring);
+}
+
+/* inputs — cool border + the t3code focus ring on resting focus */
+:root[data-skin='cobalt'] .input {
+  border-color: var(--border-input);
+}
+:root[data-skin='cobalt'] .input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ring) 30%, var(--border-input));
+}
+:root[data-skin='cobalt'] .input:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 24%, transparent);
+}
+
+/* panels — borders-over-shadows: strengthen the hairline, flatten the sheen */
+:root[data-skin='cobalt'] .panel {
+  border-color: var(--line-2);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-panel) 96%, white 4%) 0%,
+    var(--surface-panel) 70%
+  );
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+:root[data-skin='cobalt'] .panel-tier-a {
+  border-color: color-mix(in srgb, var(--line-2) 70%, white 30%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%), 0 8px 24px -18px rgb(0 0 0 / 55%);
+}
+
+/* floating-card — real glass (grad/shadow tokens already glass in tokens.css) */
+:root[data-skin='cobalt'] .floating-card {
+  border-color: var(--line-2);
+  backdrop-filter: blur(20px) saturate(1.4); /* STATIC — never animate the blur */
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* seg selected — filled wash + a crisp pill edge (no bare surface step) */
+:root[data-skin='cobalt'] .seg-item[aria-selected='true'],
+:root[data-skin='cobalt'] .seg-item.selected {
+  background: var(--accent-wash-sel);
+  color: var(--em-hi);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 35%, transparent);
+}
+
+/* telemetry numerals — slashed zero (instrument credibility) on tabular readouts */
+:root[data-skin='cobalt'] .tabular,
+:root[data-skin='cobalt'] .num {
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+}

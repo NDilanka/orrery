@@ -147,6 +147,7 @@ class SettingsStore implements SettingsStoreApi {
       }
     }
 
+    this.applySkin();
     this.applyTheme();
     this.applyMotion();
     this.applyDensity();
@@ -163,6 +164,7 @@ class SettingsStore implements SettingsStoreApi {
       const fresh = await this.backend.reload();
       if (fresh) {
         this.data = mergeSettings(fresh);
+        this.applySkin();
         this.applyTheme();
         this.applyMotion();
         this.applyDensity();
@@ -211,7 +213,8 @@ class SettingsStore implements SettingsStoreApi {
   }
 
   private applySideEffects(path: string): void {
-    // live DOM side-effects; a section reset ('appearance') re-applies all three.
+    // live DOM side-effects; a section reset ('appearance') re-applies all four.
+    if (path === 'appearance.skin' || path === 'appearance') this.applySkin();
     if (path === 'appearance.theme' || path === 'appearance') this.applyTheme();
     if (path === 'appearance.motion' || path === 'appearance') this.applyMotion();
     if (path === 'appearance.density' || path === 'appearance') this.applyDensity();
@@ -249,6 +252,21 @@ class SettingsStore implements SettingsStoreApi {
       document.documentElement.dataset.density = 'compact';
     } else {
       delete document.documentElement.dataset.density;
+    }
+  }
+
+  /**
+   * Stamp data-skin on <html> so tokens.css/primitives.css can layer the Cobalt
+   * theme's token + component overrides under [data-skin='cobalt']. 'classic' (the
+   * default) leaves the attribute off, so the untouched :root cascade is Classic.
+   * The two Pixi canvases re-tint on this attribute the same way they do on data-theme.
+   */
+  private applySkin(): void {
+    if (typeof document === 'undefined') return;
+    if (this.data.appearance.skin === 'cobalt') {
+      document.documentElement.dataset.skin = 'cobalt';
+    } else {
+      delete document.documentElement.dataset.skin;
     }
   }
 
@@ -291,6 +309,7 @@ class SettingsStore implements SettingsStoreApi {
   /** Replace the entire tree (import path): merge over DEFAULTS, re-apply, persist. */
   replaceAll(next: unknown): void {
     this.data = mergeSettings(next);
+    this.applySkin();
     this.applyTheme();
     this.applyMotion();
     this.applyDensity();
@@ -302,6 +321,11 @@ class SettingsStore implements SettingsStoreApi {
   get resolvedTheme(): 'light' | 'dark' {
     const t = this.data.appearance.theme;
     return t === 'system' ? (this.schemeDark ? 'dark' : 'light') : t;
+  }
+
+  /** The active visual skin — read by the Pixi canvases so a skin flip re-tints. */
+  get resolvedSkin(): 'classic' | 'cobalt' {
+    return this.data.appearance.skin;
   }
 
   get reducedMotion(): boolean {

@@ -256,6 +256,8 @@ export interface Settings {
     startInAmbient: boolean;
   };
   appearance: {
+    /** the whole visual skin: 'classic' monochrome (default) or the 'cobalt' cool-indigo look. */
+    skin: 'classic' | 'cobalt';
     theme: 'light' | 'dark' | 'system';
     motion: 'system' | 'full' | 'reduced';
     density: 'comfortable' | 'compact';
@@ -302,6 +304,7 @@ export const DEFAULTS: Settings = {
     startInAmbient: false,
   },
   appearance: {
+    skin: 'classic', // Classic is the default; Cobalt is opt-in.
     theme: 'dark',
     motion: 'system',
     density: 'comfortable',
@@ -369,6 +372,10 @@ export interface SettingMeta {
 }
 
 // reusable option lists
+const SKIN_OPTS = [
+  { value: 'classic', label: 'Classic' },
+  { value: 'cobalt', label: 'Cobalt' },
+];
 const THEME_OPTS = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
@@ -519,11 +526,23 @@ export const REGISTRY: SettingMeta[] = [
   },
   // ── appearance ────────────────────────────────────────────────────────────
   {
-    key: 'appearance.theme',
+    key: 'appearance.skin',
     category: 'appearance',
     label: 'Theme',
-    description: 'Light, dark, or follow the system.',
-    keywords: ['theme', 'light', 'dark', 'appearance', 'color'],
+    description: 'Classic monochrome, or the Cobalt cool-indigo instrument.',
+    keywords: ['theme', 'skin', 'style', 'classic', 'cobalt', 'indigo', 'palette', 'color', 'appearance'],
+    control: 'seg',
+    options: SKIN_OPTS,
+    apply: 'instant',
+    scope: 'user',
+    backend: false,
+  },
+  {
+    key: 'appearance.theme',
+    category: 'appearance',
+    label: 'Mode',
+    description: 'Light, dark, or follow the system. Applies within either theme.',
+    keywords: ['mode', 'theme', 'light', 'dark', 'appearance', 'color'],
     control: 'seg',
     options: THEME_OPTS,
     apply: 'instant',

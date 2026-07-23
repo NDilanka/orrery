@@ -21,6 +21,11 @@
             theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           }
           document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+          // skin (theme family) before first paint so the Cobalt token overrides apply
+          // synchronously with no Classic→Cobalt flash. Absent = Classic (untouched :root).
+          if (appearance.skin === 'cobalt') {
+            document.documentElement.dataset.skin = 'cobalt';
+          }
           // density before first paint too, so compact chrome doesn't reflow (WS-A)
           if (appearance.density === 'compact') {
             document.documentElement.dataset.density = 'compact';

@@ -59,6 +59,14 @@
     background: var(--surface-void);
     transform: translate(calc(var(--sw-w) - 16px), -50%);
   }
+  /* Cobalt skin — the ON state is the indigo affordance (a white knob on the fill) */
+  :global(:root[data-skin='cobalt']) .switch.on {
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+  :global(:root[data-skin='cobalt']) .switch.on .knob {
+    background: var(--primary-foreground);
+  }
   @media (prefers-reduced-motion: reduce) {
     :global(:root:not([data-motion='full'])) .switch,
     :global(:root:not([data-motion='full'])) .knob {

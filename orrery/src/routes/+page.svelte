@@ -15,7 +15,7 @@
 
   import '$lib/render/tokens.css';
   import '$lib/render/primitives.css';
-  import '$lib/fonts'; // self-hosted Space Grotesk + JetBrains Mono (offline-safe)
+  import '$lib/fonts'; // self-hosted DM Sans + JetBrains Mono (offline-safe)
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
 

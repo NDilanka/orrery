@@ -109,6 +109,12 @@
   .navitem.active .icon {
     color: var(--em-mid);
   }
+  /* Cobalt skin — selected = a filled indigo wash, no left accent bar */
+  :global(:root[data-skin='cobalt']) .navitem.active {
+    background: var(--accent-wash-sel);
+    border-left-color: transparent;
+    color: var(--em-hi);
+  }
   .lbl {
     flex: 1;
     min-width: 0;

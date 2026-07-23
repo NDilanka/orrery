@@ -18,8 +18,9 @@ import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
 //   - close ................. `[aria-label="close settings"]`
 //   - category rail ......... buttons "General" / "Appearance" / "AI / Models"
 //                             (SettingsNav accessible labels)
-//   - theme control ......... a `radiogroup` named "Theme" with "Light"/"Dark"/
-//                             "System" radios (Segmented.svelte)
+//   - mode control .......... a `radiogroup` named "Mode" with "Light"/"Dark"/
+//                             "System" radios (Segmented.svelte). ("Theme" now
+//                             names the Classic/Cobalt skin picker.)
 //   - resolved theme ........ `document.documentElement.dataset.theme`
 //                             (settingsStore.applyTheme)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ test.describe('orrery — settings overlay (browser, no Tauri)', () => {
     expect(consoleErrors, `console.error while open: ${consoleErrors.join(' | ')}`).toEqual([]);
   });
 
-  test('2 · Appearance → Theme=Light applies to the document, then back to Dark', async ({
+  test('2 · Appearance → Mode=Light applies to the document, then back to Dark', async ({
     page,
   }) => {
     const { pageErrors } = collectErrors(page);
@@ -112,7 +113,9 @@ test.describe('orrery — settings overlay (browser, no Tauri)', () => {
     const darkWhite = await readEmHi(page);
 
     await dialog.getByRole('button', { name: 'Appearance' }).click();
-    const theme = dialog.getByRole('radiogroup', { name: 'Theme' });
+    // the light/dark control is the "Mode" radiogroup ("Theme" now selects the
+    // Classic/Cobalt skin — see appearance.skin in settings/schema.ts).
+    const theme = dialog.getByRole('radiogroup', { name: 'Mode' });
     await expect(theme).toBeVisible({ timeout: 5_000 });
 
     // flip to Light: the resolved theme attribute AND the theme tokens actually change.
