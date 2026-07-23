@@ -164,7 +164,9 @@
   --border-focus: var(--em-hi); /* M4.1 — white double-ring; was var(--plasma-cyan) */
 
   /* ── typography ── */
-  --font-grotesk: "Space Grotesk", "Inter", system-ui, "Segoe UI", sans-serif;
+  /* name kept (legacy — repointed off Space Grotesk in the t3code reskin); value
+     is now DM Sans so its ~16 consumers inherit the new face with no edits. */
+  --font-grotesk: "DM Sans Variable", "DM Sans", "Inter", system-ui, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", ui-monospace,
     "Consolas", monospace;
   --num: var(--font-mono); /* alias — was a byte-for-byte duplicate family stack */
