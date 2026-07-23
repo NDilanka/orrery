@@ -1,5 +1,14 @@
 # Orrery UI Reskin — Refined Spec (t3code design language, v2)
 
+> **SHIPPED as a selectable theme, not an in-place replacement.** The look below is
+> implemented as the **"Cobalt"** skin, applied under `<html data-skin='cobalt'>` and
+> layered as additive overrides on top of the untouched Classic `:root`. Users switch via
+> Settings → Appearance → **Theme** (Classic / Cobalt); Classic is the default. So where this
+> doc says "repoint `:root`", the real code scopes the same values under
+> `:root[data-skin='cobalt']` (+ its `[data-theme='light']` twin). `theme.ts` FALLBACK is
+> therefore left as Classic (the default); the canvases re-probe live vars on a skin flip.
+> Setting axis: `appearance.skin` (schema.ts) → `data-skin` (settings store + app.html FOUC).
+
 Re-skin orrery's **DOM chrome** to read as t3code — a cool near-monochrome with a single
 indigo affordance — while preserving the information architecture, the three-altitude
 metaphor, the Pixi canvases, and orrery's "running = white light" semantics.
